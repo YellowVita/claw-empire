@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
 
+const RUN_WITH_SHELL = process.platform === "win32";
+
 function isDisabled() {
   const raw = String(process.env.REMOTION_RUNTIME_BOOTSTRAP ?? "1")
     .trim()
@@ -13,6 +15,7 @@ function runPnpm(args, label) {
     const output = execFileSync("pnpm", args, {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
+      shell: RUN_WITH_SHELL,
     });
     return { ok: true, output: output.trim(), label };
   } catch (error) {
