@@ -5,6 +5,9 @@ import { seedDefaultWorkflowPacks } from "./workflow-pack-seeds.ts";
 type DbLike = Pick<DatabaseSync, "exec" | "prepare">;
 
 export function applyDefaultSeeds(db: DbLike): void {
+  const DEFAULT_GEMINI_MODEL = "gemini-3.1-pro-preview";
+  const LEGACY_GEMINI_MODEL = "gemini-3-pro-preview";
+
   seedDefaultWorkflowPacks(db);
 
   const deptCount = (db.prepare("SELECT COUNT(*) as cnt FROM departments").get() as { cnt: number }).cnt;
@@ -99,7 +102,7 @@ export function applyDefaultSeeds(db: DbLike): void {
             subModel: "gpt-5.3-codex",
             subModelReasoningLevel: "high",
           },
-          gemini: { model: "gemini-3-pro-preview" },
+          gemini: { model: DEFAULT_GEMINI_MODEL },
           opencode: { model: "github-copilot/claude-sonnet-4.6" },
           copilot: { model: "github-copilot/claude-sonnet-4.6" },
           antigravity: { model: "google/antigravity-gemini-3-pro" },
@@ -155,6 +158,41 @@ export function applyDefaultSeeds(db: DbLike): void {
         "roomThemes",
         JSON.stringify(defaultRoomThemes),
       );
+    }
+
+    const providerModelConfigRow = db.prepare("SELECT value FROM settings WHERE key = 'providerModelConfig' LIMIT 1").get() as
+      | { value: string }
+      | undefined;
+    if (providerModelConfigRow?.value) {
+      try {
+        const providerModelConfig = JSON.parse(providerModelConfigRow.value) as Record<string, { model?: string }>;
+        if (providerModelConfig?.gemini?.model === LEGACY_GEMINI_MODEL) {
+          providerModelConfig.gemini = {
+            ...providerModelConfig.gemini,
+            model: DEFAULT_GEMINI_MODEL,
+          };
+          db.prepare("UPDATE settings SET value = ? WHERE key = 'providerModelConfig'").run(
+            JSON.stringify(providerModelConfig),
+          );
+        }
+      } catch {
+        /* ignore malformed provider config */
+      }
+    }
+
+    const cliModelsCacheRow = db.prepare("SELECT value FROM settings WHERE key = 'cli_models_cache' LIMIT 1").get() as
+      | { value: string }
+      | undefined;
+    if (cliModelsCacheRow?.value) {
+      try {
+        const cliModelsCache = JSON.parse(cliModelsCacheRow.value) as Record<string, Array<{ slug?: string }>>;
+        const hasLegacyGeminiCache = (cliModelsCache.gemini ?? []).some((model) => model.slug === LEGACY_GEMINI_MODEL);
+        if (hasLegacyGeminiCache) {
+          db.prepare("DELETE FROM settings WHERE key = 'cli_models_cache'").run();
+        }
+      } catch {
+        /* ignore malformed cli model cache */
+      }
     }
   }
 

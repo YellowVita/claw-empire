@@ -12,6 +12,12 @@ interface CliModelInfoServer {
   defaultReasoningLevel?: string;
 }
 
+const PREFERRED_GEMINI_MODEL: CliModelInfoServer = {
+  slug: "gemini-3.1-pro-preview",
+  displayName: "Gemini 3.1 Pro Preview",
+};
+const LEGACY_GEMINI_MODEL_SLUG = "gemini-3-pro-preview";
+
 export function registerModelRoutes(ctx: RuntimeContext): void {
   const { app, db, exchangeCopilotToken, getPreferredOAuthAccounts, execWithTimeout } = ctx;
   let cachedModels = ctx.cachedModels;
@@ -115,9 +121,79 @@ export function registerModelRoutes(ctx: RuntimeContext): void {
     }
   }
 
+  function findCommandPath(command: string): string {
+    const locator = process.platform === "win32" ? "where.exe" : "which";
+    const output = execFileSync(locator, [command], {
+      stdio: "pipe",
+      timeout: 5000,
+      encoding: "utf8",
+    });
+    const match = output
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find(Boolean);
+    return match ?? "";
+  }
+
+  function findGeminiModelConfigPath(startDir: string): string {
+    let dir = startDir;
+    const relativeCandidates = [
+      path.join("node_modules", "@google", "gemini-cli-core", "dist", "src", "config", "defaultModelConfigs.js"),
+      path.join(
+        "node_modules",
+        "@google",
+        "gemini-cli",
+        "node_modules",
+        "@google",
+        "gemini-cli-core",
+        "dist",
+        "src",
+        "config",
+        "defaultModelConfigs.js",
+      ),
+    ];
+
+    for (let i = 0; i < 10; i++) {
+      for (const relativeCandidate of relativeCandidates) {
+        const candidate = path.join(dir, relativeCandidate);
+        if (fs.existsSync(candidate)) return candidate;
+      }
+      const parent = path.dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+
+    return "";
+  }
+
+  function normalizeGeminiModels(models: CliModelInfoServer[]): CliModelInfoServer[] {
+    const normalized: CliModelInfoServer[] = [];
+    const seen = new Set<string>();
+
+    for (const model of models) {
+      const next =
+        model.slug === LEGACY_GEMINI_MODEL_SLUG
+          ? {
+              ...model,
+              slug: PREFERRED_GEMINI_MODEL.slug,
+              displayName: PREFERRED_GEMINI_MODEL.displayName,
+            }
+          : model;
+      if (seen.has(next.slug)) continue;
+      seen.add(next.slug);
+      normalized.push(next);
+    }
+
+    if (!seen.has(PREFERRED_GEMINI_MODEL.slug)) {
+      normalized.unshift(PREFERRED_GEMINI_MODEL);
+    }
+
+    return normalized;
+  }
+
   function fetchGeminiModels(): CliModelInfoServer[] {
     const FALLBACK: CliModelInfoServer[] = [
-      { slug: "gemini-3-pro-preview", displayName: "Gemini 3 Pro Preview" },
+      PREFERRED_GEMINI_MODEL,
       { slug: "gemini-3-flash-preview", displayName: "Gemini 3 Flash Preview" },
       { slug: "gemini-2.5-pro", displayName: "Gemini 2.5 Pro" },
       { slug: "gemini-2.5-flash", displayName: "Gemini 2.5 Flash" },
@@ -125,36 +201,11 @@ export function registerModelRoutes(ctx: RuntimeContext): void {
     ];
 
     try {
-      const geminiPath = execFileSync("which", ["gemini"], {
-        stdio: "pipe",
-        timeout: 5000,
-        encoding: "utf8",
-      }).trim();
+      const geminiPath = findCommandPath("gemini");
       if (!geminiPath) return FALLBACK;
 
       const realPath = fs.realpathSync(geminiPath);
-      let dir = path.dirname(realPath);
-      let configPath = "";
-      for (let i = 0; i < 10; i++) {
-        const candidate = path.join(
-          dir,
-          "node_modules",
-          "@google",
-          "gemini-cli-core",
-          "dist",
-          "src",
-          "config",
-          "defaultModelConfigs.js",
-        );
-        if (fs.existsSync(candidate)) {
-          configPath = candidate;
-          break;
-        }
-        const parent = path.dirname(dir);
-        if (parent === dir) break;
-        dir = parent;
-      }
-
+      const configPath = findGeminiModelConfigPath(path.dirname(realPath));
       if (!configPath) return FALLBACK;
 
       const content = fs.readFileSync(configPath, "utf8");
@@ -167,7 +218,7 @@ export function registerModelRoutes(ctx: RuntimeContext): void {
         models.push({ slug, displayName: slug });
       }
 
-      return models.length > 0 ? models : FALLBACK;
+      return models.length > 0 ? normalizeGeminiModels(models) : FALLBACK;
     } catch {
       return FALLBACK;
     }

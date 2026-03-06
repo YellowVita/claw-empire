@@ -400,7 +400,7 @@ export const DEFAULT_SETTINGS: CompanySettings = {
       subModel: "gpt-5.3-codex",
       subModelReasoningLevel: "high",
     },
-    gemini: { model: "gemini-3-pro-preview" },
+    gemini: { model: "gemini-3.1-pro-preview" },
     opencode: { model: "github-copilot/claude-sonnet-4.6" },
     copilot: { model: "github-copilot/claude-sonnet-4.6" },
     antigravity: { model: "google/antigravity-gemini-3-pro" },
