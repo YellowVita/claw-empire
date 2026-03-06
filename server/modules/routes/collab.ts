@@ -12,6 +12,7 @@ import { initializeCollabLanguagePolicy } from "./collab/language-policy.ts";
 import { initializeProjectResolution, type DelegationOptions } from "./collab/project-resolution.ts";
 import { initializeSubtaskDelegation } from "./collab/subtask-delegation.ts";
 import { createTaskDelegationHandler } from "./collab/task-delegation.ts";
+import { resolveMentionDelegationScope } from "./collab/mention-delegation-scope.ts";
 import { getDepartmentForPack, readActiveOfficeWorkflowPackKey } from "../workflow/packs/department-scope.ts";
 
 export function registerRoutesPartB(ctx: RuntimeContext): RouteCollabExports {
@@ -561,11 +562,11 @@ export function registerRoutesPartB(ctx: RuntimeContext): RouteCollabExports {
 
   /** Handle mention-based delegation: create task in mentioned department */
   function handleMentionDelegation(originLeader: AgentRow, targetDeptId: string, ceoMessage: string, lang: Lang): void {
-    const crossLeader = findTeamLeader(targetDeptId);
+    const { workflowPackKey, candidateAgentIds } = resolveMentionDelegationScope(db as any, originLeader.id, targetDeptId);
+    const crossLeader = findTeamLeader(targetDeptId, candidateAgentIds);
     if (!crossLeader) return;
-    const crossDeptName = getDeptName(targetDeptId);
+    const crossDeptName = getDeptName(targetDeptId, workflowPackKey);
     const crossLeaderName = lang === "ko" ? crossLeader.name_ko || crossLeader.name : crossLeader.name;
-    const originLeaderName = lang === "ko" ? originLeader.name_ko || originLeader.name : originLeader.name;
     const taskTitle = ceoMessage.length > 60 ? ceoMessage.slice(0, 57) + "..." : ceoMessage;
 
     // Origin team leader sends mention request to target team leader
@@ -597,7 +598,7 @@ export function registerRoutesPartB(ctx: RuntimeContext): RouteCollabExports {
     const ackDelay = 1500 + Math.random() * 1000;
     setTimeout(() => {
       // Use the full delegation flow for the target department
-      handleTaskDelegation(crossLeader, ceoMessage, "");
+      handleTaskDelegation(crossLeader, ceoMessage, "", { workflowPackKey });
     }, ackDelay);
   }
 

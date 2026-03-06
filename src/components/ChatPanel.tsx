@@ -8,6 +8,10 @@ import type { DecisionOption } from "./chat/decision-request";
 import ChatComposer from "./chat-panel/ChatComposer";
 import ChatMessageList from "./chat-panel/ChatMessageList";
 import ChatPanelHeader from "./chat-panel/ChatPanelHeader";
+import {
+  isMessageVisibleInAnnouncementView,
+  isMessageVisibleInDirectAgentChat,
+} from "./chat-panel/message-visibility";
 import { useDecisionReplyHandlers } from "./chat-panel/useDecisionReply";
 import {
   ROLE_LABELS,
@@ -61,7 +65,7 @@ export function ChatPanel({
   onClose,
 }: ChatPanelProps) {
   const [input, setInput] = useState("");
-  const [mode, setMode] = useState<ChatMode>(selectedAgent ? "task" : "announcement");
+  const [mode, setMode] = useState<ChatMode>(selectedAgent ? "chat" : "announcement");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const spriteMap = useMemo(() => buildSpriteMap(agents), [agents]);
@@ -90,7 +94,6 @@ export function ChatPanel({
       ? selectedAgent.department.name_ko || selectedAgent.department.name
       : selectedAgent.department.name || selectedAgent.department.name_ko
     : selectedAgent?.department_id;
-  const selectedTaskId = selectedAgent?.current_task_id;
 
   // Close on Escape key
   useEffect(() => {
@@ -114,9 +117,9 @@ export function ChatPanel({
     if (!selectedAgent) {
       setMode("announcement");
     } else if (mode === "announcement") {
-      setMode("task");
+      setMode("chat");
     }
-  }, [selectedAgent]);
+  }, [selectedAgent, mode]);
 
   const isDirectiveMode = input.trimStart().startsWith("$");
   const [pendingSend, setPendingSend] = useState<PendingSendAction | null>(null);
@@ -377,18 +380,11 @@ export function ChatPanel({
     () =>
       messages.filter((msg) => {
         if (!selectedAgentId) {
-          return msg.receiver_type === "all" || msg.message_type === "announcement" || msg.message_type === "directive";
+          return isMessageVisibleInAnnouncementView(msg);
         }
-        if (selectedTaskId && msg.task_id === selectedTaskId) return true;
-        return (
-          (msg.sender_type === "ceo" && msg.receiver_type === "agent" && msg.receiver_id === selectedAgentId) ||
-          (msg.sender_type === "agent" && msg.sender_id === selectedAgentId) ||
-          msg.message_type === "announcement" ||
-          msg.message_type === "directive" ||
-          msg.receiver_type === "all"
-        );
+        return isMessageVisibleInDirectAgentChat(msg, selectedAgentId);
       }),
-    [messages, selectedAgentId, selectedTaskId],
+    [messages, selectedAgentId],
   );
 
   const decisionRequestByMessage = useMemo(() => {

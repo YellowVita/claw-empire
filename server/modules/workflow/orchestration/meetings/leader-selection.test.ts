@@ -253,4 +253,53 @@ describe("meeting leader selection - office pack scope", () => {
       db.close();
     }
   });
+
+  it("development task review leader 선정 시 foreign office-pack 팀장은 제외한다", () => {
+    const db = setupDb();
+    try {
+      db.prepare("INSERT INTO departments (id, sort_order) VALUES ('planning', 1), ('dev', 2), ('design', 3)").run();
+
+      insertLeader(db, { id: "planning-global", dept: "planning" });
+      insertLeader(db, { id: "dev-global", dept: "dev" });
+      insertLeader(db, { id: "report-seed-1", dept: "planning" });
+      insertLeader(db, { id: "report-seed-2", dept: "dev" });
+
+      db.prepare(
+        "INSERT INTO tasks (id, title, description, department_id, project_id, workflow_pack_key) VALUES (?, ?, ?, ?, ?, ?)",
+      ).run("task-dev-review", "dev review", "ship feature", "planning", null, "development");
+
+      db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run(
+        "officePackProfiles",
+        JSON.stringify({
+          report: {
+            departments: [{ id: "planning" }, { id: "dev" }],
+            agents: [
+              { id: "report-seed-1", department_id: "planning" },
+              { id: "report-seed-2", department_id: "dev" },
+            ],
+          },
+        }),
+      );
+
+      const tools = createMeetingLeaderSelectionTools({
+        db,
+        findTeamLeader: buildFindTeamLeader(db),
+        detectTargetDepartments: () => [],
+      });
+
+      const leaders = tools.getTaskReviewLeaders("task-dev-review", "planning", {
+        minLeaders: 2,
+        includePlanning: true,
+        fallbackAll: true,
+      });
+      const leaderIds = leaders.map((leader) => leader.id);
+
+      expect(leaderIds).toContain("planning-global");
+      expect(leaderIds).toContain("dev-global");
+      expect(leaderIds).not.toContain("report-seed-1");
+      expect(leaderIds).not.toContain("report-seed-2");
+    } finally {
+      db.close();
+    }
+  });
 });

@@ -139,7 +139,7 @@ export function createTaskDelegationHandler(deps: TaskDelegationDeps) {
     const ackDelay = 1000 + Math.random() * 1000;
     setTimeout(() => {
       const selectedProject = resolveProjectFromOptions(options);
-      const explicitPackKey = inferPackKeyFromAgentId(teamLeader.id);
+      const explicitPackKey = normalizeTextField(options.workflowPackKey) ?? inferPackKeyFromAgentId(teamLeader.id);
       const workflowPackKey = resolveWorkflowPackKeyForTask({
         db: db as any,
         explicitPackKey,

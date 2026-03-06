@@ -198,6 +198,39 @@ function loadOfficePackProfileFromSettings(
   }
 }
 
+function readProfileAgentIds(db: DbLike, predicate?: (packKey: WorkflowPackKey) => boolean): Set<string> {
+  const out = new Set<string>();
+  try {
+    const row = db.prepare("SELECT value FROM settings WHERE key = 'officePackProfiles' LIMIT 1").get() as
+      | { value?: unknown }
+      | undefined;
+    if (!row) return out;
+
+    const parsedRaw = typeof row.value === "string" ? safeJsonParse(row.value) : row.value;
+    const root = asObject(parsedRaw);
+    if (!root) return out;
+
+    for (const [rawPackKey, profileRaw] of Object.entries(root)) {
+      if (!isWorkflowPackKey(rawPackKey)) continue;
+      if (predicate && !predicate(rawPackKey)) continue;
+      const profile = asObject(profileRaw);
+      if (!profile || !Array.isArray(profile.agents)) continue;
+      for (const rawAgent of profile.agents) {
+        const agent = normalizeOfficePackProfileAgent(rawAgent);
+        const agentId = normalizeText(agent?.id);
+        if (agentId) out.add(agentId);
+      }
+    }
+  } catch {
+    return out;
+  }
+  return out;
+}
+
+function readNonDevelopmentProfileAgentIds(db: DbLike): Set<string> {
+  return readProfileAgentIds(db, (packKey) => packKey !== DEFAULT_WORKFLOW_PACK_KEY);
+}
+
 function selectExistingAgentIds(db: DbLike, candidateIds: string[]): string[] {
   if (candidateIds.length <= 0) return [];
   const placeholders = candidateIds.map(() => "?").join(", ");
@@ -236,20 +269,77 @@ function selectAgentIdsByDepartments(db: DbLike, departmentIds: string[]): strin
   }
 }
 
+function selectAgentIdsByPackKey(db: DbLike, packKey: WorkflowPackKey): string[] | null {
+  if (!hasAgentWorkflowPackColumn(db)) return null;
+  try {
+    const rows = db
+      .prepare(
+        `
+        SELECT id
+        FROM agents
+        WHERE COALESCE(workflow_pack_key, 'development') = ?
+      `,
+      )
+      .all(packKey) as Array<{ id?: unknown }>;
+    return rows.map((row) => normalizeText(row?.id)).filter((id): id is string => id.length > 0);
+  } catch {
+    return null;
+  }
+}
+
+function selectAgentIdsByIdPrefix(db: DbLike, prefix: string): string[] {
+  if (!prefix) return [];
+  try {
+    const rows = db.prepare("SELECT id FROM agents WHERE id LIKE ?").all(prefix) as Array<{ id?: unknown }>;
+    return rows.map((row) => normalizeText(row?.id)).filter((id): id is string => id.length > 0);
+  } catch {
+    return [];
+  }
+}
+
+function loadDevelopmentAgentScope(db: DbLike): string[] | null {
+  const foreignProfileIds = readNonDevelopmentProfileAgentIds(db);
+  const packScopedIds = selectAgentIdsByPackKey(db, DEFAULT_WORKFLOW_PACK_KEY) ?? [];
+  const filteredPackScopedIds = packScopedIds.filter((id) => !foreignProfileIds.has(id));
+  if (filteredPackScopedIds.length > 0) return filteredPackScopedIds;
+
+  try {
+    const rows = db.prepare("SELECT id FROM agents WHERE id NOT LIKE '%-seed-%'").all() as Array<{ id?: unknown }>;
+    const ids = rows
+      .map((row) => normalizeText(row?.id))
+      .filter((id): id is string => id.length > 0 && !foreignProfileIds.has(id));
+    return ids.length > 0 ? ids : null;
+  } catch {
+    return null;
+  }
+}
+
 function loadPackProfileAgentScope(db: DbLike, packKey: WorkflowPackKey): string[] | null {
-  if (packKey === "development") return null;
+  if (packKey === DEFAULT_WORKFLOW_PACK_KEY) {
+    return loadDevelopmentAgentScope(db);
+  }
 
   const profile = loadOfficePackProfileFromSettings(db, packKey);
-  if (!profile || profile.agents.length <= 0) return null;
-  const profileAgentIds = profile.agents.map((agent) => normalizeText(agent.id)).filter((id) => id.length > 0);
-  const existingIds = selectExistingAgentIds(db, profileAgentIds);
-  if (existingIds.length > 0) return existingIds;
+  if (profile && profile.agents.length > 0) {
+    const profileAgentIds = profile.agents.map((agent) => normalizeText(agent.id)).filter((id) => id.length > 0);
+    const existingIds = selectExistingAgentIds(db, profileAgentIds);
+    if (existingIds.length > 0) return existingIds;
+  }
 
-  const profileDepartmentIds = Array.from(
-    new Set(profile.agents.map((agent) => normalizeText(agent.department_id)).filter((id) => id.length > 0)),
-  );
-  const departmentScopedIds = selectAgentIdsByDepartments(db, profileDepartmentIds);
-  if (departmentScopedIds.length > 0) return departmentScopedIds;
+  const workflowPackIds = selectAgentIdsByPackKey(db, packKey);
+  if (workflowPackIds && workflowPackIds.length > 0) return workflowPackIds;
+
+  const prefixedIds = selectAgentIdsByIdPrefix(db, `${packKey}-%`);
+  if (prefixedIds.length > 0) return prefixedIds;
+
+  if (profile && profile.agents.length > 0) {
+    const profileDepartmentIds = Array.from(
+      new Set(profile.agents.map((agent) => normalizeText(agent.department_id)).filter((id) => id.length > 0)),
+    );
+    const departmentScopedIds = selectAgentIdsByDepartments(db, profileDepartmentIds);
+    if (departmentScopedIds.length > 0) return departmentScopedIds;
+  }
+
   return null;
 }
 

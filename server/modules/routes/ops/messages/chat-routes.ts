@@ -20,6 +20,24 @@ type ChatMessageRouteDeps = {
   handleMentionDelegation: RuntimeContext["handleMentionDelegation"];
 };
 
+function buildDirectAgentConversationClause(): string {
+  return `(
+    (
+      (sender_type = 'ceo' OR sender_type = 'system')
+      AND (
+        (receiver_type = 'agent' AND receiver_id = ?)
+        OR receiver_type = 'all'
+      )
+    )
+    OR (
+      sender_type = 'agent'
+      AND sender_id = ?
+      AND receiver_type = 'agent'
+      AND COALESCE(receiver_id, '') = ''
+    )
+  )`;
+}
+
 export function registerChatMessageRoutes(ctx: ChatMessageRouteCtx, deps: ChatMessageRouteDeps): void {
   const { app, db, broadcast } = ctx;
   const {
@@ -47,17 +65,19 @@ export function registerChatMessageRoutes(ctx: ChatMessageRouteCtx, deps: ChatMe
     const conditions: string[] = [];
     const params: unknown[] = [];
 
-    if (receiverType && receiverId) {
-      // Conversation with a specific agent: show messages TO and FROM that agent
-      conditions.push(
-        "((receiver_type = ? AND receiver_id = ?) OR (sender_type = 'agent' AND sender_id = ?) OR receiver_type = 'all')",
-      );
-      params.push(receiverType, receiverId, receiverId);
+    if (receiverType === "agent" && receiverId) {
+      // Direct chat should only include CEO/system broadcasts, CEO/system -> agent messages,
+      // and the selected agent's direct replies back to the CEO.
+      conditions.push(buildDirectAgentConversationClause());
+      params.push(receiverId, receiverId);
+    } else if (receiverType && receiverId) {
+      conditions.push("(receiver_type = ? AND receiver_id = ?)");
+      params.push(receiverType, receiverId);
     } else if (receiverType) {
       conditions.push("receiver_type = ?");
       params.push(receiverType);
     } else if (receiverId) {
-      conditions.push("(receiver_id = ? OR receiver_type = 'all')");
+      conditions.push("receiver_id = ?");
       params.push(receiverId);
     }
 
@@ -261,14 +281,11 @@ export function registerChatMessageRoutes(ctx: ChatMessageRouteCtx, deps: ChatMe
     }
 
     if (agentId) {
-      // Delete messages for a specific agent conversation + announcements shown in that chat
+      // Delete the same message scope shown in the direct agent chat.
       const result = db
         .prepare(
-          `DELETE FROM messages WHERE
-        (sender_type = 'ceo' AND receiver_type = 'agent' AND receiver_id = ?)
-        OR (sender_type = 'agent' AND sender_id = ?)
-        OR receiver_type = 'all'
-        OR message_type = 'announcement'`,
+          `DELETE FROM messages
+           WHERE ${buildDirectAgentConversationClause()}`,
         )
         .run(agentId, agentId);
       broadcast("messages_cleared", { scope: "agent", agent_id: agentId });

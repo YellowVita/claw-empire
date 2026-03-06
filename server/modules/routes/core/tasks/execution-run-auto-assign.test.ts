@@ -340,6 +340,55 @@ describe("selectAutoAssignableAgentForTask", () => {
     }
   });
 
+  it("development 팩은 foreign office-pack 프로필 에이전트를 범위에서 제외한다", () => {
+    const db = setupDb();
+    try {
+      insertAgent(db, { id: "agent-plan", name: "Planner", department_id: "planning", created_at: 1 });
+      insertAgent(db, { id: "agent-dev", name: "Dev", department_id: "dev", created_at: 2 });
+      insertAgent(db, { id: "report-seed-1", name: "Report Lead", department_id: "planning", created_at: 3 });
+      insertAgent(db, { id: "novel-seed-1", name: "Novel Lead", department_id: "design", created_at: 4 });
+      db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run(
+        "officePackProfiles",
+        JSON.stringify({
+          report: {
+            departments: [],
+            agents: [
+              {
+                id: "report-seed-1",
+                name: "Report Lead",
+                department_id: "planning",
+                role: "team_leader",
+                cli_provider: "codex",
+              },
+            ],
+          },
+          novel: {
+            departments: [],
+            agents: [
+              {
+                id: "novel-seed-1",
+                name: "Novel Lead",
+                department_id: "design",
+                role: "team_leader",
+                cli_provider: "codex",
+              },
+            ],
+          },
+        }),
+      );
+
+      const scope = resolveConstrainedAgentScopeForTask(db, {
+        workflow_pack_key: "development",
+        department_id: "planning",
+        project_id: null,
+      });
+
+      expect([...(scope ?? [])].sort()).toEqual(["agent-dev", "agent-plan"]);
+    } finally {
+      db.close();
+    }
+  });
+
   it("copilot 계정이 없으면 OAuth 없는 provider를 건너뛰고 다른 후보를 선택한다", () => {
     const db = setupDb();
     try {

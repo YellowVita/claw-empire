@@ -54,7 +54,7 @@ export function createDirectTaskFlow(deps: TaskFlowDeps) {
     const t = deps.nowMs();
     const taskTitle = ceoMessage.length > 60 ? `${ceoMessage.slice(0, 57)}...` : ceoMessage;
     const selectedProject = deps.resolveProjectFromOptions(options);
-    const explicitPackKey = inferPackKeyFromAgentId(agent.id);
+    const explicitPackKey = deps.normalizeTextField(options.workflowPackKey) ?? inferPackKeyFromAgentId(agent.id);
     const workflowPackKey = resolveWorkflowPackKeyForTask({
       db: deps.db as any,
       explicitPackKey,

@@ -6,6 +6,7 @@ import type { MessengerChannel } from "../../../messenger/channels.ts";
 export type DelegationOptions = {
   skipPlannedMeeting?: boolean;
   skipPlanSubtasks?: boolean;
+  workflowPackKey?: string | null;
   projectId?: string | null;
   projectPath?: string | null;
   projectContext?: string | null;
