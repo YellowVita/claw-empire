@@ -11,6 +11,16 @@ $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $rootDir = Resolve-Path (Join-Path $scriptDir "..")
 Set-Location $rootDir
 
+function Assert-LastExitCode {
+  param(
+    [string]$Action
+  )
+
+  if ($LASTEXITCODE -ne 0) {
+    throw "[Claw-Empire] $Action failed with exit code $LASTEXITCODE."
+  }
+}
+
 if (!(Test-Path "package.json") -or !(Test-Path "scripts/setup.mjs")) {
   throw "Run this script from the Claw-Empire repository."
 }
@@ -29,12 +39,15 @@ if (-not (Get-Command corepack -ErrorAction SilentlyContinue)) {
 }
 
 corepack enable | Out-Null
+Assert-LastExitCode "corepack enable"
 if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) {
   corepack prepare pnpm@latest --activate | Out-Null
+  Assert-LastExitCode "corepack prepare pnpm@latest --activate"
 }
 
 Write-Host "[Claw-Empire] Installing dependencies..."
 pnpm install
+Assert-LastExitCode "pnpm install"
 
 if (-not (Test-Path ".env")) {
   Copy-Item ".env.example" ".env"
@@ -130,7 +143,8 @@ if (openclaw) {
 
 fs.writeFileSync(envPath, content, "utf8");
 '@
-node -e $envPatchScript
+$envPatchScript | node -
+Assert-LastExitCode "patch .env"
 
 Remove-Item Env:CLAW_SETUP_PORT -ErrorAction SilentlyContinue
 Remove-Item Env:CLAW_SETUP_OPENCLAW -ErrorAction SilentlyContinue
@@ -156,6 +170,7 @@ if ($AgentsPath) {
 
 Write-Host "[Claw-Empire] Installing AGENTS.md orchestration rules..."
 & pnpm @setupArgs
+Assert-LastExitCode "pnpm setup"
 
 Write-Host ""
 Write-Host "[Claw-Empire] Setup complete."
