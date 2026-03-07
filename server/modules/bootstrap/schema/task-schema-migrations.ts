@@ -128,6 +128,7 @@ export function applyTaskSchemaMigrations(db: DbLike): void {
   }
 
   ensureOfficePackScopedDepartmentSchema(db);
+  ensureProjectReviewDecisionEventSchema(db);
 
   migrateMessagesDirectiveType(db);
   migrateLegacyTasksStatusSchema(db);
@@ -301,6 +302,104 @@ function ensureOfficePackScopedDepartmentSchema(db: DbLike): void {
         }
       }
     }
+  }
+}
+
+export function ensureProjectReviewDecisionEventSchema(db: DbLike): void {
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS project_review_decision_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        snapshot_hash TEXT,
+        event_type TEXT NOT NULL
+          CHECK(event_type IN (
+            'planning_summary',
+            'representative_pick',
+            'followup_request',
+            'start_review_meeting',
+            'start_review_meeting_blocked'
+          )),
+        summary TEXT NOT NULL,
+        selected_options_json TEXT,
+        note TEXT,
+        task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL,
+        meeting_id TEXT REFERENCES meeting_minutes(id) ON DELETE SET NULL,
+        created_at INTEGER DEFAULT (unixepoch()*1000)
+      )
+    `);
+  } catch {
+    /* already exists */
+  }
+
+  const tableRow = db
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'project_review_decision_events' LIMIT 1")
+    .get() as { sql?: string } | undefined;
+  const ddl = String(tableRow?.sql ?? "");
+  if (!ddl || ddl.includes("start_review_meeting_blocked")) return;
+
+  const legacyTable = `project_review_decision_events_legacy_${Date.now()}`;
+  db.exec("PRAGMA foreign_keys = OFF");
+  try {
+    db.exec("BEGIN");
+    db.exec(`ALTER TABLE project_review_decision_events RENAME TO ${legacyTable}`);
+    db.exec(`
+      CREATE TABLE project_review_decision_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        snapshot_hash TEXT,
+        event_type TEXT NOT NULL
+          CHECK(event_type IN (
+            'planning_summary',
+            'representative_pick',
+            'followup_request',
+            'start_review_meeting',
+            'start_review_meeting_blocked'
+          )),
+        summary TEXT NOT NULL,
+        selected_options_json TEXT,
+        note TEXT,
+        task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL,
+        meeting_id TEXT REFERENCES meeting_minutes(id) ON DELETE SET NULL,
+        created_at INTEGER DEFAULT (unixepoch()*1000)
+      )
+    `);
+    db.exec(`
+      INSERT INTO project_review_decision_events (
+        id,
+        project_id,
+        snapshot_hash,
+        event_type,
+        summary,
+        selected_options_json,
+        note,
+        task_id,
+        meeting_id,
+        created_at
+      )
+      SELECT
+        id,
+        project_id,
+        snapshot_hash,
+        event_type,
+        summary,
+        selected_options_json,
+        note,
+        task_id,
+        meeting_id,
+        created_at
+      FROM ${legacyTable}
+    `);
+    db.exec(`DROP TABLE ${legacyTable}`);
+    db.exec(
+      "CREATE INDEX IF NOT EXISTS idx_project_review_decision_events_project ON project_review_decision_events(project_id, created_at DESC)",
+    );
+    db.exec("COMMIT");
+  } catch (err) {
+    db.exec("ROLLBACK");
+    throw err;
+  } finally {
+    db.exec("PRAGMA foreign_keys = ON");
   }
 }
 

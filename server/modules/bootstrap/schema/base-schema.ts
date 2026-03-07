@@ -296,7 +296,7 @@ CREATE TABLE IF NOT EXISTS project_review_decision_events (
   project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   snapshot_hash TEXT,
   event_type TEXT NOT NULL
-    CHECK(event_type IN ('planning_summary','representative_pick','followup_request','start_review_meeting')),
+    CHECK(event_type IN ('planning_summary','representative_pick','followup_request','start_review_meeting','start_review_meeting_blocked')),
   summary TEXT NOT NULL,
   selected_options_json TEXT,
   note TEXT,
