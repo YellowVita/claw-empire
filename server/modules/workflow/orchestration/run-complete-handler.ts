@@ -6,6 +6,7 @@ import {
   resolveVideoArtifactSpecForTask,
 } from "../packs/video-artifact.ts";
 import { evaluateRemotionOnlyGateFromLogFiles } from "../packs/video-render-engine-gate.ts";
+import { resolveScopedTeamLeader } from "../packs/agent-scope.ts";
 
 type CreateRunCompleteHandlerDeps = Record<string, any>;
 
@@ -540,7 +541,15 @@ export function createRunCompleteHandler(deps: CreateRunCompleteHandlerDeps) {
       // Notify: task entering review
       if (task) {
         const lang = resolveLang(task.description ?? task.title);
-        const leader = findTeamLeader(task.department_id);
+        const leader = resolveScopedTeamLeader({
+          db: db as any,
+          findTeamLeader,
+          departmentId: task.department_id,
+          projectId: task.project_id,
+          sourceTaskId: taskId,
+          explicitPackKey: task.workflow_pack_key,
+          scope: "pack",
+        });
         const leaderName = leader
           ? getAgentDisplayName(leader, lang)
           : pickL(l(["팀장"], ["Team Lead"], ["チームリーダー"], ["组长"]), lang);
@@ -561,7 +570,15 @@ export function createRunCompleteHandler(deps: CreateRunCompleteHandlerDeps) {
       // Schedule team leader review message (2-3s delay)
       setTimeout(() => {
         if (!task) return;
-        const leader = findTeamLeader(task.department_id);
+        const leader = resolveScopedTeamLeader({
+          db: db as any,
+          findTeamLeader,
+          departmentId: task.department_id,
+          projectId: task.project_id,
+          sourceTaskId: taskId,
+          explicitPackKey: task.workflow_pack_key,
+          scope: "pack",
+        });
         if (!leader) {
           // No team leader — auto-approve
           finishReview(taskId, task.title);
@@ -666,7 +683,15 @@ export function createRunCompleteHandler(deps: CreateRunCompleteHandlerDeps) {
       }
 
       if (task) {
-        const leader = findTeamLeader(task.department_id);
+        const leader = resolveScopedTeamLeader({
+          db: db as any,
+          findTeamLeader,
+          departmentId: task.department_id,
+          projectId: task.project_id,
+          sourceTaskId: taskId,
+          explicitPackKey: task.workflow_pack_key,
+          scope: "pack",
+        });
         if (leader) {
           setTimeout(() => {
             // Read error output for failure report

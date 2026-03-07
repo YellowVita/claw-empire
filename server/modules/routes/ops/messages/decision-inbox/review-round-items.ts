@@ -1,4 +1,5 @@
 import type { ReviewRoundDecisionItem, ReviewRoundDecisionItemDeps, ReviewRoundDecisionItems } from "./types.ts";
+import { isAgentIdInScope, resolvePackScopedAgentIds } from "../../../../workflow/packs/agent-scope.ts";
 
 const DECISION_COLLECTING_STALE_MS = 20_000;
 
@@ -136,13 +137,31 @@ export function createReviewRoundDecisionItems(deps: ReviewRoundDecisionItemDeps
       const existingState = getReviewRoundDecisionState(row.meeting_id);
       const now = nowMs();
       const stateNeedsReset = !existingState || existingState.snapshot_hash !== snapshotHash;
+      const planningLeadScope = resolvePackScopedAgentIds({
+        db: db as any,
+        projectId: row.project_id,
+        sourceTaskId: row.task_id,
+        departmentId: "planning",
+      });
       if (stateNeedsReset) {
         upsertReviewRoundDecisionState(row.meeting_id, snapshotHash, "collecting", null, null, null);
       } else if (existingState.status === "failed" && now - (existingState.updated_at ?? 0) > 3000) {
         upsertReviewRoundDecisionState(row.meeting_id, snapshotHash, "collecting", null, null, null);
+      } else if (
+        existingState?.planner_agent_id &&
+        !isAgentIdInScope(existingState.planner_agent_id, planningLeadScope)
+      ) {
+        upsertReviewRoundDecisionState(row.meeting_id, snapshotHash, "collecting", null, null, null);
       }
       const decisionState = getReviewRoundDecisionState(row.meeting_id);
-      const planningLeadMeta = resolvePlanningLeadMeta(lang, decisionState);
+      const planningLeadMeta = resolvePlanningLeadMeta(
+        lang,
+        {
+          projectId: row.project_id,
+          taskId: row.task_id,
+        },
+        decisionState,
+      );
       const collectingElapsedMs =
         decisionState?.status === "collecting"
           ? now - (decisionState.updated_at ?? decisionState.created_at ?? now)

@@ -12,6 +12,7 @@ import type { RuntimeContext } from "../../../../types/runtime-context.ts";
 import type { AgentRow, DelegationOptions, StoredMessage } from "../../shared/types.ts";
 import type { DecisionReplyBridgeInput, DecisionReplyBridgeResult } from "./decision-inbox-routes.ts";
 import { resolveDirectiveLeaderCandidateScope } from "./directive-leader-scope.ts";
+import { resolvePackScopedAgentIds, resolveScopedTeamLeader } from "../../../workflow/packs/agent-scope.ts";
 
 type DirectiveAndInboxRouteCtx = Pick<RuntimeContext, "app" | "db" | "broadcast">;
 
@@ -173,16 +174,14 @@ export function registerDirectiveAndInboxRoutes(
     if (!departmentId) return null;
     const scopedLeader = findTeamLeader(departmentId, scopedCandidateAgentIds);
     if (scopedLeader) return scopedLeader;
-    if (Array.isArray(scopedCandidateAgentIds)) {
-      // In manual projects, a selected member may exist without selecting the team leader.
-      // Allow only the department leader as a coordinator fallback for that exact department.
-      if (isManualProject(projectId) && hasScopedDepartmentMember(departmentId, scopedCandidateAgentIds)) {
-        return findTeamLeader(departmentId);
-      }
-      return null;
-    }
-    if (projectId) return null;
-    return findTeamLeader(departmentId);
+    return resolveScopedTeamLeader({
+      db: db as any,
+      findTeamLeader,
+      departmentId,
+      projectId,
+      scope: projectId ? "task" : "pack",
+      allowPackFallback: isManualProject(projectId) && hasScopedDepartmentMember(departmentId, scopedCandidateAgentIds),
+    });
   };
 
   app.post("/api/directives", async (req, res) => {
@@ -310,9 +309,13 @@ export function registerDirectiveAndInboxRoutes(
       return;
     // 2. Broadcast to all
     broadcast("announcement", msg);
+    const directiveAnnouncementScope = resolvePackScopedAgentIds({
+      db: db as any,
+      projectId: explicitProjectId,
+    });
 
     // 3. Team leaders respond
-    scheduleAnnouncementReplies(content);
+    scheduleAnnouncementReplies(content, directiveAnnouncementScope);
     const directivePolicy = analyzeDirectivePolicy(content);
     const explicitSkip = body.skipPlannedMeeting === true;
     const shouldDelegate = shouldExecuteDirectiveDelegation(directivePolicy, explicitSkip);
@@ -741,9 +744,13 @@ export function registerDirectiveAndInboxRoutes(
     // $ prefix only: announcement/directive flow
     // Broadcast
     broadcast("announcement", msg);
+    const inboxAnnouncementScope = resolvePackScopedAgentIds({
+      db: db as any,
+      projectId: inboxProjectId,
+    });
 
     // Team leaders respond
-    scheduleAnnouncementReplies(content);
+    scheduleAnnouncementReplies(content, inboxAnnouncementScope);
     const directivePolicy = isDirective ? analyzeDirectivePolicy(content) : null;
     const inboxExplicitSkip = body.skipPlannedMeeting === true;
     const shouldDelegateDirective =
@@ -801,7 +808,7 @@ export function registerDirectiveAndInboxRoutes(
           processedDepts.add(deptId);
           const leader = isDirective
             ? findDirectiveLeader(deptId, inboxProjectId ?? null, getDirectiveLeaderScope(deptId))
-            : findTeamLeader(deptId);
+            : findTeamLeader(deptId, inboxAnnouncementScope);
           if (leader) {
             handleTaskDelegation(leader, content, "", isDirective ? directiveDelegationOptions : {});
           }
@@ -818,7 +825,7 @@ export function registerDirectiveAndInboxRoutes(
                     inboxProjectId ?? null,
                     getDirectiveLeaderScope(mentioned.department_id),
                   )
-                : findTeamLeader(mentioned.department_id);
+                : findTeamLeader(mentioned.department_id, inboxAnnouncementScope);
             if (leader) {
               handleTaskDelegation(leader, content, "", isDirective ? directiveDelegationOptions : {});
             }

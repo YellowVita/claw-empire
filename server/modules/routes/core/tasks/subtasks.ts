@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { SQLInputValue } from "node:sqlite";
 import type { RuntimeContext } from "../../../../types/runtime-context.ts";
 import type { AgentRow } from "../../shared/types.ts";
+import { resolveScopedTeamLeader } from "../../../workflow/packs/agent-scope.ts";
 
 export type TaskSubtaskRouteDeps = Pick<
   RuntimeContext,
@@ -147,6 +148,9 @@ export function registerTaskSubtaskRoutes(deps: TaskSubtaskRouteDeps): void {
           id: string;
           assigned_agent_id: string | null;
           title: string;
+          department_id: string | null;
+          project_id: string | null;
+          workflow_pack_key: string | null;
         }
       | undefined;
     if (!task) return res.status(404).json({ error: "not_found" });
@@ -203,7 +207,15 @@ export function registerTaskSubtaskRoutes(deps: TaskSubtaskRouteDeps): void {
       created_at: t,
     });
 
-    const leader = findTeamLeader(agent.department_id);
+    const leader = resolveScopedTeamLeader({
+      db: db as any,
+      findTeamLeader,
+      departmentId: agent.department_id ?? task.department_id,
+      projectId: task.project_id,
+      sourceTaskId: task.id,
+      explicitPackKey: task.workflow_pack_key,
+      scope: "pack",
+    });
     if (leader) {
       const lang = resolveLang(task.title);
       const agentRow = db.prepare("SELECT * FROM agents WHERE id = ?").get(agentId) as AgentRow | undefined;

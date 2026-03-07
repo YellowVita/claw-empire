@@ -1,5 +1,6 @@
 import path from "node:path";
 import { resolveWorkflowPackKeyForTask } from "../packs/task-pack-resolver.ts";
+import { resolvePackScopedAgentIds, resolveScopedTeamLeader } from "../packs/agent-scope.ts";
 
 type CreateReportWorkflowToolsDeps = Record<string, any>;
 
@@ -38,7 +39,79 @@ export function createReportWorkflowTools(deps: CreateReportWorkflowToolsDeps) {
     notifyCeo,
   } = deps;
 
-  function pickDesignCheckpointAgent(): any | null {
+  function loadTaskScope(taskId: string): {
+    id: string;
+    department_id: string | null;
+    project_id: string | null;
+    workflow_pack_key: string | null;
+  } | null {
+    const row = db
+      .prepare("SELECT id, department_id, project_id, workflow_pack_key FROM tasks WHERE id = ?")
+      .get(taskId) as
+      | {
+          id: string;
+          department_id: string | null;
+          project_id: string | null;
+          workflow_pack_key: string | null;
+        }
+      | undefined;
+    return row ?? null;
+  }
+
+  function resolvePackScopedLeader(taskLike: {
+    id?: string | null;
+    department_id?: string | null;
+    project_id?: string | null;
+    workflow_pack_key?: string | null;
+  }): any | null {
+    return resolveScopedTeamLeader({
+      db: db as any,
+      findTeamLeader,
+      departmentId: taskLike.department_id ?? null,
+      projectId: taskLike.project_id ?? null,
+      sourceTaskId: taskLike.id ?? null,
+      explicitPackKey: taskLike.workflow_pack_key ?? null,
+      scope: "pack",
+    });
+  }
+
+  function resolvePackScopedPlanningLeader(taskLike: {
+    id?: string | null;
+    department_id?: string | null;
+    project_id?: string | null;
+    workflow_pack_key?: string | null;
+  }): any | null {
+    return (
+      resolveScopedTeamLeader({
+        db: db as any,
+        findTeamLeader,
+        departmentId: "planning",
+        projectId: taskLike.project_id ?? null,
+        sourceTaskId: taskLike.id ?? null,
+        explicitPackKey: taskLike.workflow_pack_key ?? null,
+        scope: "pack",
+      }) ?? resolvePackScopedLeader(taskLike)
+    );
+  }
+
+  function pickDesignCheckpointAgent(task?: {
+    id?: string | null;
+    project_id?: string | null;
+    workflow_pack_key?: string | null;
+  }): any | null {
+    const candidateAgentIds = resolvePackScopedAgentIds({
+      db: db as any,
+      departmentId: "design",
+      projectId: task?.project_id ?? null,
+      sourceTaskId: task?.id ?? null,
+      explicitPackKey: task?.workflow_pack_key ?? null,
+      fallbackPackKey: "report",
+    });
+    if (Array.isArray(candidateAgentIds) && candidateAgentIds.length <= 0) return null;
+    const scopedIds = Array.isArray(candidateAgentIds)
+      ? [...new Set(candidateAgentIds.map((id) => String(id || "").trim()).filter(Boolean))]
+      : null;
+    const scopeClause = Array.isArray(scopedIds) ? `AND id IN (${scopedIds.map(() => "?").join(",")})` : "";
     const candidates = db
       .prepare(
         `
@@ -46,6 +119,7 @@ export function createReportWorkflowTools(deps: CreateReportWorkflowToolsDeps) {
   FROM agents
   WHERE department_id = 'design'
     AND COALESCE(cli_provider, '') IN ('claude','codex','gemini','opencode','copilot','antigravity','api')
+    ${scopeClause}
   ORDER BY
     CASE status
       WHEN 'idle' THEN 0
@@ -64,7 +138,7 @@ export function createReportWorkflowTools(deps: CreateReportWorkflowToolsDeps) {
     id ASC
 `,
       )
-      .all() as unknown as any[];
+      .all(...(scopedIds ?? [])) as unknown as any[];
     return candidates[0] ?? null;
   }
 
@@ -131,11 +205,15 @@ export function createReportWorkflowTools(deps: CreateReportWorkflowToolsDeps) {
   }
 
   function shouldDeferTaskReportUntilPlanningArchive(task: {
+    id?: string;
     source_task_id?: string | null;
     department_id?: string | null;
+    project_id?: string | null;
+    workflow_pack_key?: string | null;
   }): boolean {
     if (task.source_task_id) return false;
-    const planningLeader = findTeamLeader("planning") || findTeamLeader(task.department_id ?? "");
+    const scopedTask = task.id ? (loadTaskScope(task.id) ?? task) : task;
+    const planningLeader = resolvePackScopedPlanningLeader(scopedTask);
     return Boolean(planningLeader);
   }
 
@@ -195,7 +273,8 @@ export function createReportWorkflowTools(deps: CreateReportWorkflowToolsDeps) {
       );
     }
 
-    const leader = findTeamLeader(task.department_id);
+    const scopedTask = loadTaskScope(task.id) ?? task;
+    const leader = resolvePackScopedLeader(scopedTask);
     const leaderName = leader
       ? getAgentDisplayName(leader, lang)
       : pickL(l(["팀장"], ["Team Lead"], ["チームリーダー"], ["组长"]), lang);
@@ -240,7 +319,7 @@ export function createReportWorkflowTools(deps: CreateReportWorkflowToolsDeps) {
     assigned_agent_id: string | null;
   }): boolean {
     const lang = resolveLang(task.description ?? task.title);
-    const designAgent = pickDesignCheckpointAgent();
+    const designAgent = pickDesignCheckpointAgent(task);
     if (!designAgent) {
       appendTaskLog(task.id, "system", "Report design checkpoint skipped: no design agent available");
       return false;

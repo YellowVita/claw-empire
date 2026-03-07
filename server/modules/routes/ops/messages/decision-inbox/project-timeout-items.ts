@@ -5,6 +5,7 @@ import type {
   ProjectReviewTaskChoice,
   TimeoutResumeDecisionItem,
 } from "./types.ts";
+import { isAgentIdInScope, resolvePackScopedAgentIds } from "../../../../workflow/packs/agent-scope.ts";
 
 const DECISION_COLLECTING_STALE_MS = 20_000;
 
@@ -242,13 +243,29 @@ export function createProjectAndTimeoutDecisionItems(
       const existingState = getProjectReviewDecisionState(row.project_id);
       const now = nowMs();
       const stateNeedsReset = !existingState || existingState.snapshot_hash !== snapshotHash;
+      const planningLeadScope = resolvePackScopedAgentIds({
+        db: db as any,
+        projectId: row.project_id,
+        departmentId: "planning",
+      });
       if (stateNeedsReset) {
         upsertProjectReviewDecisionState(row.project_id, snapshotHash, "collecting", null, null, null);
       } else if (existingState.status === "failed" && now - (existingState.updated_at ?? 0) > 3000) {
         upsertProjectReviewDecisionState(row.project_id, snapshotHash, "collecting", null, null, null);
+      } else if (
+        existingState?.planner_agent_id &&
+        !isAgentIdInScope(existingState.planner_agent_id, planningLeadScope)
+      ) {
+        upsertProjectReviewDecisionState(row.project_id, snapshotHash, "collecting", null, null, null);
       }
       const decisionState = getProjectReviewDecisionState(row.project_id);
-      const planningLeadMeta = resolvePlanningLeadMeta(lang, decisionState);
+      const planningLeadMeta = resolvePlanningLeadMeta(
+        lang,
+        {
+          projectId: row.project_id,
+        },
+        decisionState,
+      );
       const collectingElapsedMs =
         decisionState?.status === "collecting"
           ? now - (decisionState.updated_at ?? decisionState.created_at ?? now)

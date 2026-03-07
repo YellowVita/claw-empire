@@ -55,6 +55,11 @@ export interface PlanningLeadMeta {
   agent_avatar: string;
 }
 
+export interface PlanningLeadScopeContext {
+  projectId?: string | null;
+  taskId?: string | null;
+}
+
 export interface ProjectReviewDecisionState extends PlanningLeadStateLike {
   project_id: string;
   snapshot_hash: string;
@@ -133,7 +138,7 @@ export type AgentOneShotResult = {
   text?: string | null;
 } & Record<string, unknown>;
 
-export type FindTeamLeader = (departmentKey: string) => AgentRow | undefined;
+export type FindTeamLeader = (departmentKey: string, candidateAgentIds?: string[] | null) => AgentRow | undefined;
 export type RunAgentOneShot = (
   agent: AgentRow,
   prompt: string,
@@ -162,7 +167,11 @@ export interface ProjectReviewPlanningDeps {
 
 export interface ProjectReviewPlanningHelpers {
   formatPlannerSummaryForDisplay(input: string): string;
-  resolvePlanningLeadMeta(lang: string, decisionState?: PlanningLeadStateLike | null): PlanningLeadMeta;
+  resolvePlanningLeadMeta(
+    lang: string,
+    scopeContext?: PlanningLeadScopeContext | null,
+    decisionState?: PlanningLeadStateLike | null,
+  ): PlanningLeadMeta;
   queueProjectReviewPlanningConsolidation(
     projectId: string,
     projectName: string,

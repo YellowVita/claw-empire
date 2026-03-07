@@ -1,4 +1,5 @@
 import type { ReviewRoundPlanningDeps, ReviewRoundPlanningHelpers } from "./types.ts";
+import { resolveScopedTeamLeader } from "../../../../workflow/packs/agent-scope.ts";
 
 export function createReviewRoundPlanningHelpers(deps: ReviewRoundPlanningDeps): ReviewRoundPlanningHelpers {
   const {
@@ -16,6 +17,8 @@ export function createReviewRoundPlanningHelpers(deps: ReviewRoundPlanningDeps):
     getProjectReviewDecisionState,
   } = deps;
   const reviewRoundDecisionConsolidationInFlight = new Set<string>();
+  const scopedFindTeamLeader = (departmentId: string | null, candidateAgentIds?: string[] | null) =>
+    departmentId ? findTeamLeader(departmentId, candidateAgentIds) : undefined;
 
   function buildReviewRoundPlanningFallbackSummary(
     lang: string,
@@ -88,7 +91,14 @@ export function createReviewRoundPlanningHelpers(deps: ReviewRoundPlanningDeps):
         if (!currentState || currentState.snapshot_hash !== input.snapshotHash) return;
         if (currentState.status !== "collecting") return;
 
-        const planningLeader = findTeamLeader("planning");
+        const planningLeader = resolveScopedTeamLeader({
+          db: db as any,
+          findTeamLeader: scopedFindTeamLeader,
+          departmentId: "planning",
+          projectId: input.projectId,
+          sourceTaskId: input.taskId,
+          scope: "pack",
+        });
         const clip = (text: string, max = 240) => {
           const normalized = String(text ?? "")
             .replace(/\s+/g, " ")

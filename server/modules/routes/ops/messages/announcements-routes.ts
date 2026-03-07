@@ -1,5 +1,6 @@
 import type { RuntimeContext } from "../../../../types/runtime-context.ts";
 import type { AgentRow, StoredMessage } from "../../shared/types.ts";
+import { resolvePackScopedAgentIds } from "../../../workflow/packs/agent-scope.ts";
 
 type AnnouncementRouteCtx = Pick<RuntimeContext, "app" | "db" | "broadcast">;
 
@@ -134,9 +135,12 @@ export function registerAnnouncementRoutes(ctx: AnnouncementRouteCtx, deps: Anno
     )
       return;
     broadcast("announcement", msg);
+    const announcementCandidateAgentIds = resolvePackScopedAgentIds({
+      db: db as any,
+    });
 
     // Team leaders respond to announcements with staggered delays
-    scheduleAnnouncementReplies(content);
+    scheduleAnnouncementReplies(content, announcementCandidateAgentIds);
 
     // Check for @mentions in announcements — trigger delegation
     const mentions = detectMentions(content);
@@ -148,7 +152,7 @@ export function registerAnnouncementRoutes(ctx: AnnouncementRouteCtx, deps: Anno
         for (const deptId of mentions.deptIds) {
           if (processedDepts.has(deptId)) continue;
           processedDepts.add(deptId);
-          const leader = findTeamLeader(deptId);
+          const leader = findTeamLeader(deptId, announcementCandidateAgentIds);
           if (leader) {
             handleTaskDelegation(leader, content, "");
           }
@@ -158,7 +162,7 @@ export function registerAnnouncementRoutes(ctx: AnnouncementRouteCtx, deps: Anno
           const mentioned = db.prepare("SELECT * FROM agents WHERE id = ?").get(agentId) as AgentRow | undefined;
           if (mentioned?.department_id && !processedDepts.has(mentioned.department_id)) {
             processedDepts.add(mentioned.department_id);
-            const leader = findTeamLeader(mentioned.department_id);
+            const leader = findTeamLeader(mentioned.department_id, announcementCandidateAgentIds);
             if (leader) {
               handleTaskDelegation(leader, content, "");
             }

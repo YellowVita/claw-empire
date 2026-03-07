@@ -35,7 +35,7 @@ function sorted(values: string[] | null): string[] | null {
 }
 
 describe("resolveDirectiveLeaderCandidateScope", () => {
-  it("활성 오피스팩(비 development)이 있으면 프로젝트 기본팩보다 우선한다", () => {
+  it("프로젝트가 연결된 directive는 활성 오피스팩보다 프로젝트 팩을 우선한다", () => {
     const db = setupDb();
     try {
       db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run("officeWorkflowPack", "video_preprod");
@@ -71,11 +71,11 @@ describe("resolveDirectiveLeaderCandidateScope", () => {
       db.prepare("INSERT INTO agents (id, department_id) VALUES (?, ?)").run("novel-seed-2", "design");
 
       const scope = resolveDirectiveLeaderCandidateScope(db, "proj-1");
-      expect(sorted(scope)).toEqual(sorted(["video_preprod-seed-1"]));
+      expect(sorted(scope)).toEqual(sorted(["novel-seed-1", "novel-seed-2"]));
       expect(scope).not.toContain("planning-global");
-      expect(scope).not.toContain("novel-seed-1");
+      expect(scope).not.toContain("video_preprod-seed-1");
       const devScope = resolveDirectiveLeaderCandidateScope(db, "proj-1", "dev");
-      expect(sorted(devScope)).toEqual(sorted(["video_preprod-seed-2"]));
+      expect(sorted(devScope)).toEqual(sorted(["novel-seed-1", "novel-seed-2"]));
     } finally {
       db.close();
     }
@@ -107,10 +107,10 @@ describe("resolveDirectiveLeaderCandidateScope", () => {
       db.prepare("INSERT INTO agents (id, department_id) VALUES (?, ?)").run("novel-seed-2", "design");
 
       const scope = resolveDirectiveLeaderCandidateScope(db, "proj-2");
-      expect(sorted(scope)).toEqual(sorted(["novel-seed-1"]));
+      expect(sorted(scope)).toEqual(sorted(["novel-seed-1", "novel-seed-2"]));
       expect(scope).not.toContain("planning-global");
       const designScope = resolveDirectiveLeaderCandidateScope(db, "proj-2", "design");
-      expect(sorted(designScope)).toEqual(sorted(["novel-seed-2"]));
+      expect(sorted(designScope)).toEqual(sorted(["novel-seed-1", "novel-seed-2"]));
     } finally {
       db.close();
     }

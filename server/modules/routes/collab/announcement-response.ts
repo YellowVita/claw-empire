@@ -23,7 +23,7 @@ type AnnouncementReplyDeps = {
 
 export function createAnnouncementReplyScheduler(deps: AnnouncementReplyDeps): {
   generateAnnouncementReply: (agent: AgentRow, announcement: string, lang: Lang) => string;
-  scheduleAnnouncementReplies: (announcement: string) => void;
+  scheduleAnnouncementReplies: (announcement: string, candidateAgentIds?: string[] | null) => void;
 } {
   const { db, resolveLang, getDeptName, getRoleLabel, l, pickL, sendAgentMessage } = deps;
 
@@ -128,11 +128,24 @@ export function createAnnouncementReplyScheduler(deps: AnnouncementReplyDeps): {
     );
   }
 
-  function scheduleAnnouncementReplies(announcement: string): void {
+  function scheduleAnnouncementReplies(announcement: string, candidateAgentIds?: string[] | null): void {
     const lang = resolveLang(announcement);
+    const scopedIds = Array.isArray(candidateAgentIds)
+      ? [...new Set(candidateAgentIds.map((id) => String(id || "").trim()).filter(Boolean))]
+      : null;
+    if (Array.isArray(scopedIds) && scopedIds.length <= 0) return;
+    const scopeClause = Array.isArray(scopedIds) ? `AND id IN (${scopedIds.map(() => "?").join(",")})` : "";
     const teamLeaders = db
-      .prepare("SELECT * FROM agents WHERE role = 'team_leader' AND status != 'offline'")
-      .all() as unknown as AgentRow[];
+      .prepare(
+        `
+        SELECT *
+        FROM agents
+        WHERE role = 'team_leader'
+          AND status != 'offline'
+          ${scopeClause}
+      `,
+      )
+      .all(...(scopedIds ?? [])) as unknown as AgentRow[];
 
     let delay = 1500;
     for (const leader of teamLeaders) {

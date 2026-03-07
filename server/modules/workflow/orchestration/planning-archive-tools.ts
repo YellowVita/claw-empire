@@ -1,3 +1,5 @@
+import { resolveScopedTeamLeader } from "../packs/agent-scope.ts";
+
 type CreatePlanningArchiveToolsDeps = Record<string, any>;
 
 export function createPlanningArchiveTools(deps: CreatePlanningArchiveToolsDeps) {
@@ -119,7 +121,7 @@ export function createPlanningArchiveTools(deps: CreatePlanningArchiveToolsDeps)
       const rootTask = db
         .prepare(
           `
-    SELECT id, title, description, project_path, completed_at, department_id
+    SELECT id, title, description, project_path, completed_at, department_id, project_id, workflow_pack_key
     FROM tasks
     WHERE id = ?
   `,
@@ -132,11 +134,32 @@ export function createPlanningArchiveTools(deps: CreatePlanningArchiveToolsDeps)
             project_path: string | null;
             completed_at: number | null;
             department_id: string | null;
+            project_id: string | null;
+            workflow_pack_key: string | null;
           }
         | undefined;
       if (!rootTask) return;
 
-      const planningLeader = findTeamLeader("planning") || findTeamLeader(rootTask.department_id ?? "");
+      const planningLeader = (
+        resolveScopedTeamLeader({
+          db: db as any,
+          findTeamLeader,
+          departmentId: "planning",
+          projectId: rootTask.project_id,
+          sourceTaskId: rootTask.id,
+          explicitPackKey: rootTask.workflow_pack_key,
+          scope: "pack",
+        }) ??
+        resolveScopedTeamLeader({
+          db: db as any,
+          findTeamLeader,
+          departmentId: rootTask.department_id ?? null,
+          projectId: rootTask.project_id,
+          sourceTaskId: rootTask.id,
+          explicitPackKey: rootTask.workflow_pack_key,
+          scope: "pack",
+        })
+      ) as { id: string; name: string } | null;
       if (!planningLeader) return;
 
       const relatedTasks = db

@@ -1,3 +1,5 @@
+import { resolveScopedTeamLeader } from "../packs/agent-scope.ts";
+
 type CreateProgressNotifyToolsDeps = Record<string, any>;
 
 export function createProgressNotifyTools(deps: CreateProgressNotifyToolsDeps) {
@@ -15,7 +17,24 @@ export function createProgressNotifyTools(deps: CreateProgressNotifyToolsDeps) {
         progressTimers.delete(taskId);
         return;
       }
-      const leader = findTeamLeader(departmentId);
+      const taskMeta = db
+        .prepare("SELECT project_id, workflow_pack_key, department_id FROM tasks WHERE id = ?")
+        .get(taskId) as
+        | {
+            project_id: string | null;
+            workflow_pack_key: string | null;
+            department_id: string | null;
+          }
+        | undefined;
+      const leader = resolveScopedTeamLeader({
+        db: db as any,
+        findTeamLeader,
+        departmentId: taskMeta?.department_id ?? departmentId,
+        projectId: taskMeta?.project_id ?? null,
+        sourceTaskId: taskId,
+        explicitPackKey: taskMeta?.workflow_pack_key ?? null,
+        scope: "pack",
+      });
       if (leader) {
         const lang = resolveLang(taskTitle);
         sendAgentMessage(

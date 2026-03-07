@@ -1,9 +1,15 @@
 import type {
   PlanningLeadMeta,
+  PlanningLeadScopeContext,
   PlanningLeadStateLike,
   ProjectReviewPlanningDeps,
   ProjectReviewPlanningHelpers,
 } from "./types.ts";
+import {
+  isAgentIdInScope,
+  resolvePackScopedAgentIds,
+  resolveScopedTeamLeader,
+} from "../../../../workflow/packs/agent-scope.ts";
 
 export function createProjectReviewPlanningHelpers(deps: ProjectReviewPlanningDeps): ProjectReviewPlanningHelpers {
   const {
@@ -19,6 +25,8 @@ export function createProjectReviewPlanningHelpers(deps: ProjectReviewPlanningDe
     recordProjectReviewDecisionEvent,
   } = deps;
   const projectReviewDecisionConsolidationInFlight = new Set<string>();
+  const scopedFindTeamLeader = (departmentId: string | null, candidateAgentIds?: string[] | null) =>
+    departmentId ? findTeamLeader(departmentId, candidateAgentIds) : undefined;
 
   function parseDecisionEventSelectedLabels(rawJson: string | null | undefined, limit = 4): string[] {
     const boundedLimit = Math.max(1, Math.min(Math.trunc(limit || 4), 12));
@@ -180,8 +188,25 @@ export function createProjectReviewPlanningHelpers(deps: ProjectReviewPlanningDe
     return text.replace(/\n{3,}/g, "\n\n").trim();
   }
 
-  function resolvePlanningLeadMeta(lang: string, decisionState?: PlanningLeadStateLike | null): PlanningLeadMeta {
-    const fallbackLead = findTeamLeader("planning");
+  function resolvePlanningLeadMeta(
+    lang: string,
+    scopeContext?: PlanningLeadScopeContext | null,
+    decisionState?: PlanningLeadStateLike | null,
+  ): PlanningLeadMeta {
+    const candidateAgentIds = resolvePackScopedAgentIds({
+      db: db as any,
+      projectId: scopeContext?.projectId ?? null,
+      sourceTaskId: scopeContext?.taskId ?? null,
+      departmentId: "planning",
+    });
+    const fallbackLead = resolveScopedTeamLeader({
+      db: db as any,
+      findTeamLeader: scopedFindTeamLeader,
+      departmentId: "planning",
+      projectId: scopeContext?.projectId ?? null,
+      sourceTaskId: scopeContext?.taskId ?? null,
+      scope: "pack",
+    });
     const stateAgentId = String(decisionState?.planner_agent_id ?? "").trim();
     const stateAgent = stateAgentId
       ? (db
@@ -202,7 +227,7 @@ export function createProjectReviewPlanningHelpers(deps: ProjectReviewPlanningDe
             }
           | undefined)
       : undefined;
-    const picked = stateAgent ?? fallbackLead;
+    const picked = stateAgent && isAgentIdInScope(stateAgent.id, candidateAgentIds) ? stateAgent : fallbackLead;
     const defaultName = pickL(l(["기획팀장"], ["Planning Lead"], ["企画リード"], ["规划负责人"]), lang);
     const normalizePlanningLeadAvatar = (rawAvatar: string | null | undefined): string => {
       const avatar = String(rawAvatar ?? "").trim();
@@ -265,7 +290,13 @@ export function createProjectReviewPlanningHelpers(deps: ProjectReviewPlanningDe
         }>;
 
         if (taskRows.length <= 0) return;
-        const planningLeader = findTeamLeader("planning");
+        const planningLeader = resolveScopedTeamLeader({
+          db: db as any,
+          findTeamLeader: scopedFindTeamLeader,
+          departmentId: "planning",
+          projectId,
+          scope: "pack",
+        });
         const clip = (text: string, max = 180) => {
           const normalized = String(text ?? "")
             .replace(/\s+/g, " ")

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import type { Lang } from "../../../../types/lang.ts";
+import { resolvePackScopedAgentIds } from "../../../workflow/packs/agent-scope.ts";
 import { resolveWorkflowPackKeyForTask } from "../../../workflow/packs/task-pack-resolver.ts";
 import type { AgentRow } from "./types.ts";
 
@@ -110,13 +111,21 @@ export function createReportRoutingTools(deps: ReportRoutingDeps) {
     });
   }
 
-  function fetchAgentById(agentId: string | null): AgentRow | null {
+  function fetchAgentById(agentId: string | null, candidateAgentIds?: string[] | null): AgentRow | null {
     if (!agentId) return null;
+    if (Array.isArray(candidateAgentIds) && candidateAgentIds.length > 0 && !candidateAgentIds.includes(agentId)) {
+      return null;
+    }
     return db.prepare("SELECT * FROM agents WHERE id = ?").get(agentId) as unknown as AgentRow | null;
   }
 
-  function fetchClaudePriorityCandidates(): AgentRow[] {
+  function fetchClaudePriorityCandidates(candidateAgentIds?: string[] | null): AgentRow[] {
+    if (Array.isArray(candidateAgentIds) && candidateAgentIds.length <= 0) return [];
     const placeholders = REPORT_CLAUDE_PRIORITY_DEPTS.map(() => "?").join(",");
+    const scopedIds = Array.isArray(candidateAgentIds)
+      ? [...new Set(candidateAgentIds.map((id) => String(id || "").trim()).filter(Boolean))]
+      : null;
+    const scopeClause = Array.isArray(scopedIds) ? `AND id IN (${scopedIds.map(() => "?").join(",")})` : "";
     return sortReportCandidates(
       db
         .prepare(
@@ -125,22 +134,29 @@ export function createReportRoutingTools(deps: ReportRoutingDeps) {
       WHERE status != 'offline'
         AND cli_provider = 'claude'
         AND department_id IN (${placeholders})
+        ${scopeClause}
     `,
         )
-        .all(...REPORT_CLAUDE_PRIORITY_DEPTS) as unknown as AgentRow[],
+        .all(...REPORT_CLAUDE_PRIORITY_DEPTS, ...(scopedIds ?? [])) as unknown as AgentRow[],
     );
   }
 
-  function fetchFallbackCandidates(): AgentRow[] {
+  function fetchFallbackCandidates(candidateAgentIds?: string[] | null): AgentRow[] {
+    if (Array.isArray(candidateAgentIds) && candidateAgentIds.length <= 0) return [];
+    const scopedIds = Array.isArray(candidateAgentIds)
+      ? [...new Set(candidateAgentIds.map((id) => String(id || "").trim()).filter(Boolean))]
+      : null;
+    const scopeClause = Array.isArray(scopedIds) ? `AND id IN (${scopedIds.map(() => "?").join(",")})` : "";
     return sortReportCandidates(
       db
         .prepare(
           `
       SELECT * FROM agents
       WHERE status != 'offline'
+        ${scopeClause}
     `,
         )
-        .all() as unknown as AgentRow[],
+        .all(...(scopedIds ?? [])) as unknown as AgentRow[],
     );
   }
 
@@ -168,15 +184,15 @@ export function createReportRoutingTools(deps: ReportRoutingDeps) {
       .join(" / ");
   }
 
-  function resolveReportAssignee(targetAgentId: string | null): {
+  function resolveReportAssignee(targetAgentId: string | null, candidateAgentIds?: string[] | null): {
     requestedAgent: AgentRow | null;
     assignee: AgentRow | null;
     claudeRecommendations: AgentRow[];
     reroutedToClaude: boolean;
     claudeUnavailable: boolean;
   } {
-    const requestedAgent = fetchAgentById(targetAgentId);
-    const claudeCandidates = fetchClaudePriorityCandidates();
+    const requestedAgent = fetchAgentById(targetAgentId, candidateAgentIds);
+    const claudeCandidates = fetchClaudePriorityCandidates(candidateAgentIds);
     const claudeRecommendations = pickTopRecommendationsByDept(claudeCandidates);
 
     if (claudeCandidates.length > 0) {
@@ -198,7 +214,7 @@ export function createReportRoutingTools(deps: ReportRoutingDeps) {
       };
     }
 
-    const fallbackCandidates = fetchFallbackCandidates();
+    const fallbackCandidates = fetchFallbackCandidates(candidateAgentIds);
     const fallbackAssignee =
       requestedAgent && requestedAgent.status !== "offline" ? requestedAgent : (fallbackCandidates[0] ?? null);
 
@@ -211,8 +227,8 @@ export function createReportRoutingTools(deps: ReportRoutingDeps) {
     };
   }
 
-  function pickPlanningReportAssignee(preferredAgentId: string | null): AgentRow | null {
-    return resolveReportAssignee(preferredAgentId).assignee;
+  function pickPlanningReportAssignee(preferredAgentId: string | null, candidateAgentIds?: string[] | null): AgentRow | null {
+    return resolveReportAssignee(preferredAgentId, candidateAgentIds).assignee;
   }
 
   function detectReportPptToolAvailability(): ReportPptToolAvailability {
@@ -224,9 +240,7 @@ export function createReportRoutingTools(deps: ReportRoutingDeps) {
   }
 
   function handleReportRequest(targetAgentId: string, ceoMessage: string): boolean {
-    const routing = resolveReportAssignee(targetAgentId);
-    const reportAssignee = routing.assignee;
-    if (!reportAssignee) return false;
+    const requestedAgent = fetchAgentById(targetAgentId);
 
     const lang = resolveLang(ceoMessage);
     const cleanRequest = stripReportRequestPrefix(ceoMessage) || ceoMessage.trim();
@@ -236,8 +250,6 @@ export function createReportRoutingTools(deps: ReportRoutingDeps) {
     const taskType = outputFormat === "ppt" ? "presentation" : "documentation";
     const t = nowMs();
     const taskId = randomUUID();
-    const assigneeDeptId = reportAssignee.department_id || "planning";
-    const assigneeDeptName = REPORT_DEPT_LABELS[assigneeDeptId] || assigneeDeptId || "Planning";
     const requestPreview = cleanRequest.length > 64 ? `${cleanRequest.slice(0, 61).trimEnd()}...` : cleanRequest;
     const taskTitle =
       outputFormat === "ppt" ? `보고 자료(PPT) 작성: ${requestPreview}` : `보고 문서(MD) 작성: ${requestPreview}`;
@@ -270,7 +282,7 @@ export function createReportRoutingTools(deps: ReportRoutingDeps) {
         linkedProjectPath = projectByPath.project_path;
       }
     }
-    if (!linkedProjectId && routing.requestedAgent?.current_task_id) {
+    if (!linkedProjectId && requestedAgent?.current_task_id) {
       const currentProject = db
         .prepare(
           `
@@ -281,7 +293,7 @@ export function createReportRoutingTools(deps: ReportRoutingDeps) {
       LIMIT 1
     `,
         )
-        .get(routing.requestedAgent.current_task_id) as
+        .get(requestedAgent.current_task_id) as
         | {
             project_id: string | null;
             project_path: string | null;
@@ -295,6 +307,17 @@ export function createReportRoutingTools(deps: ReportRoutingDeps) {
       projectId: linkedProjectId,
       fallbackPackKey: "report",
     });
+    const reportScopeAgentIds = resolvePackScopedAgentIds({
+      db: db as any,
+      projectId: linkedProjectId,
+      explicitPackKey: workflowPackKey,
+      fallbackPackKey: "report",
+    });
+    const routing = resolveReportAssignee(targetAgentId, reportScopeAgentIds);
+    const reportAssignee = routing.assignee;
+    if (!reportAssignee) return false;
+    const assigneeDeptId = reportAssignee.department_id || "planning";
+    const assigneeDeptName = REPORT_DEPT_LABELS[assigneeDeptId] || assigneeDeptId || "Planning";
     const recommendationText = formatRecommendationList(routing.claudeRecommendations);
     const pptToolAvailability = outputFormat === "ppt" ? detectReportPptToolAvailability() : null;
     const pptAvailabilityLabel = !pptToolAvailability

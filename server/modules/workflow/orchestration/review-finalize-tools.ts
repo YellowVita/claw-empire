@@ -6,6 +6,7 @@ import {
   resolveVideoArtifactSpecForTask,
 } from "../packs/video-artifact.ts";
 import { evaluateRemotionOnlyGateFromLogFiles } from "../packs/video-render-engine-gate.ts";
+import { resolveScopedTeamLeader } from "../packs/agent-scope.ts";
 import { readYoloModeEnabled } from "../../routes/ops/messages/decision-inbox/yolo-mode.ts";
 import { reconcileVideoRenderDelegationState } from "./video-render-delegation-state.ts";
 
@@ -518,7 +519,9 @@ export function createReviewFinalizeTools(deps: CreateReviewFinalizeToolsDeps) {
 
     const finalizeApprovedReview = () => {
       const t = nowMs();
-      const latestTask = db.prepare("SELECT status, department_id FROM tasks WHERE id = ?").get(taskId) as
+      const latestTask = db
+        .prepare("SELECT status, department_id, project_id, workflow_pack_key FROM tasks WHERE id = ?")
+        .get(taskId) as
         | { status: string; department_id: string | null }
         | undefined;
       if (!latestTask || latestTask.status !== "review") return;
@@ -557,7 +560,15 @@ export function createReviewFinalizeTools(deps: CreateReviewFinalizeToolsDeps) {
         } else {
           appendTaskLog(taskId, "system", `Git merge failed: ${mergeResult.message}`);
 
-          const conflictLeader = findTeamLeader(latestTask.department_id);
+          const conflictLeader = resolveScopedTeamLeader({
+            db: db as any,
+            findTeamLeader,
+            departmentId: latestTask.department_id,
+            projectId: currentTask.project_id,
+            sourceTaskId: taskId,
+            explicitPackKey: currentTask.workflow_pack_key,
+            scope: "pack",
+          });
           const conflictLeaderName = conflictLeader
             ? getAgentDisplayName(conflictLeader, lang)
             : pickL(l(["팀장"], ["Team Lead"], ["チームリーダー"], ["组长"]), lang);
@@ -625,7 +636,15 @@ export function createReviewFinalizeTools(deps: CreateReviewFinalizeToolsDeps) {
         emitTaskReportEvent(taskId);
       }
 
-      const leader = findTeamLeader(latestTask.department_id);
+      const leader = resolveScopedTeamLeader({
+        db: db as any,
+        findTeamLeader,
+        departmentId: latestTask.department_id,
+        projectId: currentTask.project_id,
+        sourceTaskId: taskId,
+        explicitPackKey: currentTask.workflow_pack_key,
+        scope: "pack",
+      });
       const leaderName = leader
         ? getAgentDisplayName(leader, lang)
         : pickL(l(["팀장"], ["Team Lead"], ["チームリーダー"], ["组长"]), lang);
