@@ -66,37 +66,47 @@ describe("task intent upgrade", () => {
     expect(detectProjectKindChoice("아직 모르겠어")).toBeNull();
   });
 
-  it("검토/리뷰 요청 문장을 task 의도로 인식한다", () => {
-    expect(shouldTreatDirectChatAsTask("우리 프로젝트의 디자인 검수가 필요해", "chat")).toBe(true);
-    expect(shouldTreatDirectChatAsTask("소스코드 리뷰 보고서 작성해줘", "chat")).toBe(true);
-    expect(shouldTreatDirectChatAsTask("I need a design review report", "chat")).toBe(true);
-    expect(shouldTreatDirectChatAsTask("우리 소스코드에서 고쳐야할점 3가지 찾아와", "chat")).toBe(true);
-    expect(shouldTreatDirectChatAsTask("프로젝트 취약점 3개 조사해줘", "chat")).toBe(true);
+  it("chat 모드에서는 업무성 문장도 자동으로 task 의도로 승격하지 않는다", () => {
+    expect(shouldTreatDirectChatAsTask("우리 프로젝트의 디자인 검수가 필요해", "chat")).toBe(false);
+    expect(shouldTreatDirectChatAsTask("소스코드 리뷰 보고서 작성해줘", "chat")).toBe(false);
+    expect(shouldTreatDirectChatAsTask("I need a design review report", "chat")).toBe(false);
+    expect(shouldTreatDirectChatAsTask("우리 소스코드에서 고쳐야할점 3가지 찾아와", "chat")).toBe(false);
+    expect(shouldTreatDirectChatAsTask("프로젝트 취약점 3개 조사해줘", "chat")).toBe(false);
     expect(shouldTreatDirectChatAsTask("오늘 날씨 어때?", "chat")).toBe(false);
   });
 
-  it("의사결정 회신 마커는 task 의도로 승격하지 않는다", () => {
-    expect(shouldTreatDirectChatAsTask("[decision reply] 1", "chat")).toBe(false);
-    expect(shouldTreatDirectChatAsTask("[의사결정 회신] 2", "chat")).toBe(false);
+  it("task 모드에서만 명시적으로 task 의도로 인식한다", () => {
+    expect(shouldTreatDirectChatAsTask("우리 프로젝트의 디자인 검수가 필요해", "task_assign")).toBe(true);
+    expect(shouldTreatDirectChatAsTask("소스코드 리뷰 보고서 작성해줘", "task_assign")).toBe(true);
   });
 
-  it("승인 메시지는 직전 업무요청 문맥으로 승격한다", () => {
+  it("의사결정 회신 마커는 task 모드여도 승격하지 않는다", () => {
+    expect(shouldTreatDirectChatAsTask("[decision reply] 1", "chat")).toBe(false);
+    expect(shouldTreatDirectChatAsTask("[의사결정 회신] 2", "chat")).toBe(false);
+    expect(shouldTreatDirectChatAsTask("[decision reply] 1", "task_assign")).toBe(false);
+  });
+
+  it("승인 메시지는 직전 task_assign 문맥으로만 승격한다", () => {
     const contextual = resolveContextualTaskMessage("고고", [
       { content: "고고", messageType: "chat", createdAt: 3000 },
-      { content: "현재 소스코드 디자인 평가를 받고싶어 업무 진행 가능해?", messageType: "chat", createdAt: 2000 },
+      {
+        content: "현재 소스코드 디자인 평가를 받고싶어 업무 진행 가능해?",
+        messageType: "task_assign",
+        createdAt: 2000,
+      },
       { content: "네 대표님, 가능합니다!", messageType: "chat", createdAt: 1000 },
     ]);
     expect(contextual).toBe("현재 소스코드 디자인 평가를 받고싶어 업무 진행 가능해?");
   });
 
-  it("승격 여부 질문 뒤 긍정 응답이면 다국어로도 문맥 승격한다", () => {
+  it("승격 여부 질문 뒤 긍정 응답도 직전 task_assign 문맥이 있을 때만 승격한다", () => {
     const contextual = resolveContextualTaskMessage(
       "yes, please proceed",
       [
         { content: "yes, please proceed", messageType: "chat", createdAt: 3000 },
         {
           content: "Can you evaluate the current source-code design and run the task?",
-          messageType: "chat",
+          messageType: "task_assign",
           createdAt: 2000,
         },
       ],

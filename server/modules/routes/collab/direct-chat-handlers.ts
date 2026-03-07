@@ -3,7 +3,6 @@ import {
   detectProjectKindChoice,
   isCancelReply,
   isProjectProgressInquiry,
-  resolveContextualTaskMessage,
   shouldTreatDirectChatAsTask,
 } from "./direct-chat-intent-utils.ts";
 import {
@@ -429,63 +428,8 @@ export function createDirectChatHandlers(deps: DirectChatDeps) {
       }
     }
 
-    let taskMessage = ceoMessage;
-    let useTaskFlow = shouldTreatDirectChatAsTask(ceoMessage, messageType);
-    if (!useTaskFlow) {
-      const recentRows = db
-        .prepare(
-          `
-          SELECT content, message_type, created_at
-          FROM messages
-          WHERE sender_type = 'ceo'
-            AND receiver_type = 'agent'
-            AND receiver_id = ?
-            AND created_at >= ?
-          ORDER BY created_at DESC
-          LIMIT 12
-        `,
-        )
-        .all(agent.id, now - 30 * 60 * 1000) as Array<{
-        content: string;
-        message_type: string | null;
-        created_at: number;
-      }>;
-      const recentAgentRows = db
-        .prepare(
-          `
-          SELECT content, created_at
-          FROM messages
-          WHERE sender_type = 'agent'
-            AND sender_id = ?
-            AND receiver_type = 'agent'
-            AND (receiver_id IS NULL OR receiver_id = '')
-            AND created_at >= ?
-          ORDER BY created_at DESC
-          LIMIT 12
-        `,
-        )
-        .all(agent.id, now - 30 * 60 * 1000) as Array<{
-        content: string;
-        created_at: number;
-      }>;
-
-      const contextualTaskMessage = resolveContextualTaskMessage(
-        ceoMessage,
-        recentRows.map((row) => ({
-          content: row.content,
-          messageType: row.message_type,
-          createdAt: row.created_at,
-        })),
-        recentAgentRows.map((row) => ({
-          content: row.content,
-          createdAt: row.created_at,
-        })),
-      );
-      if (contextualTaskMessage) {
-        useTaskFlow = true;
-        taskMessage = contextualTaskMessage;
-      }
-    }
+    const taskMessage = ceoMessage;
+    const useTaskFlow = shouldTreatDirectChatAsTask(ceoMessage, messageType);
     console.log(
       `[scheduleAgentReply] useTaskFlow=${useTaskFlow}, messageType=${messageType}, msg="${ceoMessage.slice(0, 50)}", taskMsg="${taskMessage.slice(0, 50)}"`,
     );

@@ -1,35 +1,9 @@
 export function shouldTreatDirectChatAsTask(ceoMessage: string, messageType: string): boolean {
-  if (messageType === "task_assign") return true;
-  if (messageType === "report") return false;
+  if (messageType !== "task_assign") return false;
   const text = ceoMessage.trim();
   if (!text) return false;
   if (/^\[(의사결정\s*회신|decision\s*reply|意思決定返信|决策回复)\]/i.test(text)) return false;
-
-  if (/^\s*(task|todo|업무|지시|작업|할일)\s*[:-]/i.test(text)) return true;
-
-  const taskKeywords =
-    /(테스트|검증|확인해|진행해|수정해|구현해|반영해|처리해|해줘|부탁|검토|검수|리뷰|평가|분석|보고서|작성해|파악|업무|작업|요청|fix|implement|refactor|test|verify|check|review|audit|analyze|analysis|report|run|apply|update|debug|investigate|対応|確認|修正|実装|レビュー|監査|分析|报告|评估|测试|检查|修复|处理|审查|审核)/i;
-  if (taskKeywords.test(text)) return true;
-
-  const requestTone =
-    /(해주세요|해 주세요|부탁해|부탁합니다|해줄래|해줘요|please|can you|could you|would you|お願いします|してください|请|麻烦)/i;
-  if (requestTone.test(text) && text.length >= 12) return true;
-
-  const requestIntent =
-    /(필요해|필요합니다|원해|원합니다|받고싶|받고 싶|해보고 싶|want|need|i need|i want|してほしい|必要|想要|需要)/i;
-  if (requestIntent.test(text) && /(검토|검수|리뷰|평가|분석|보고서|업무|작업|review|audit|analy|report)/i.test(text)) {
-    return true;
-  }
-
-  const analysisRequestVerb =
-    /(찾아와|찾아와줘|찾아줘|파악해|파악해줘|조사해|조사해줘|점검해|점검해줘|정리해|정리해줘|추려줘|도출해|도출해줘|identify|find|inspect|investigate|analyze|review|audit)/i;
-  const softwareContext =
-    /(소스코드|코드|repo|repository|프로젝트|모듈|파일|이슈|버그|취약점|리팩터|리팩토링|test|build|lint|tsc|보고서|report)/i;
-  if (analysisRequestVerb.test(text) && softwareContext.test(text)) {
-    return true;
-  }
-
-  return false;
+  return true;
 }
 
 export function isProjectProgressInquiry(text: string, messageType: string = "chat"): boolean {
@@ -208,13 +182,15 @@ export function resolveContextualTaskMessage(
 
   for (const row of recentCeoMessages) {
     const candidate = (row.content || "").trim();
+    const candidateMessageType = row.messageType ?? "chat";
     if (!candidate) continue;
     if (candidate === current) continue;
+    if (candidateMessageType !== "task_assign") continue;
     if (affirmative && escalationPromptTs) {
       const candidateTs = row.createdAt ?? 0;
       if (candidateTs > escalationPromptTs) continue;
     }
-    if (shouldTreatDirectChatAsTask(candidate, row.messageType ?? "chat") || isTaskReadinessMessage(candidate)) {
+    if (shouldTreatDirectChatAsTask(candidate, candidateMessageType) || isTaskReadinessMessage(candidate)) {
       return candidate;
     }
   }
