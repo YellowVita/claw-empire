@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { createPromptSkillsHelper } from "./prompt-skills.ts";
 
@@ -104,39 +105,148 @@ export function createProjectContextTools(deps: CreateProjectContextToolsDeps) {
     ".DS_Store",
     "Thumbs.db",
   ]);
+  const PROJECT_CONTEXT_TREE_MAX_DEPTH = 4;
+  const PROJECT_CONTEXT_TREE_MAX_ENTRIES_PER_DIR = 40;
+  const PROJECT_CONTEXT_TREE_MAX_LINES = 400;
+  const PROJECT_CONTEXT_COUNT_MAX_DEPTH = 6;
+  const PROJECT_CONTEXT_COUNT_MAX_FILES = 500;
 
-  function buildFileTree(dir: string, prefix = "", depth = 0, maxDepth = 4): string[] {
-    if (depth >= maxDepth) return [`${prefix}...`];
-    let entries: fs.Dirent[];
+  function shouldIncludeContextDirent(entry: fs.Dirent): boolean {
+    if (entry.isSymbolicLink()) return false;
+    if (entry.name.startsWith(".") && entry.name !== ".env.example") return false;
+    if (CONTEXT_IGNORE_DIRS.has(entry.name) || CONTEXT_IGNORE_FILES.has(entry.name)) return false;
+    return true;
+  }
+
+  function listContextEntries(dir: string): fs.Dirent[] {
     try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
+      return fs
+        .readdirSync(dir, { withFileTypes: true })
+        .filter((entry) => shouldIncludeContextDirent(entry))
+        .sort((a, b) => {
+          if (a.isDirectory() && !b.isDirectory()) return -1;
+          if (!a.isDirectory() && b.isDirectory()) return 1;
+          return a.name.localeCompare(b.name);
+        });
     } catch {
       return [];
     }
-    entries = entries
-      .filter((e) => !e.isSymbolicLink())
-      .filter((e) => !e.name.startsWith(".") || e.name === ".env.example")
-      .filter((e) => !CONTEXT_IGNORE_DIRS.has(e.name) && !CONTEXT_IGNORE_FILES.has(e.name))
-      .sort((a, b) => {
-        if (a.isDirectory() && !b.isDirectory()) return -1;
-        if (!a.isDirectory() && b.isDirectory()) return 1;
-        return a.name.localeCompare(b.name);
-      });
+  }
 
+  function normalizeRepoRelativePath(input: string): string {
+    return input
+      .trim()
+      .replace(/^"+|"+$/g, "")
+      .replace(/\\/g, "/")
+      .replace(/^\.\/+/, "");
+  }
+
+  function shouldIgnoreContextPath(repoRelativePath: string): boolean {
+    const normalized = normalizeRepoRelativePath(repoRelativePath);
+    if (!normalized) return true;
+    const firstSegment = normalized.split("/")[0] || normalized;
+    if (CONTEXT_IGNORE_DIRS.has(firstSegment)) return true;
+    if (!normalized.includes("/") && CONTEXT_IGNORE_FILES.has(normalized)) return true;
+    return false;
+  }
+
+  function shouldIgnoreProjectContextStatusLine(line: string): boolean {
+    const payload = line.slice(3).trim();
+    if (!payload) return true;
+    const paths = payload.split(" -> ").map((entry) => normalizeRepoRelativePath(entry));
+    return paths.every((entry) => shouldIgnoreContextPath(entry));
+  }
+
+  function resolveGitProjectContextCacheKey(projectPath: string): string | null {
+    const head = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: projectPath,
+      stdio: "pipe",
+      timeout: 5000,
+    })
+      .toString()
+      .trim();
+
+    const rawStatus = execFileSync("git", ["status", "--porcelain=v1", "--untracked-files=all"], {
+      cwd: projectPath,
+      stdio: "pipe",
+      timeout: 5000,
+    })
+      .toString()
+      .split(/\r?\n/)
+      .map((line) => line.trimEnd())
+      .filter(Boolean)
+      .filter((line) => !shouldIgnoreProjectContextStatusLine(line));
+
+    if (rawStatus.length === 0) return head;
+    const dirtyFingerprint = createHash("sha1").update(rawStatus.join("\n")).digest("hex");
+    return `${head}\ndirty:${dirtyFingerprint}`;
+  }
+
+  function buildFileTree(
+    dir: string,
+    prefix = "",
+    depth = 0,
+    maxDepth = PROJECT_CONTEXT_TREE_MAX_DEPTH,
+    lineBudget = { remaining: PROJECT_CONTEXT_TREE_MAX_LINES },
+  ): string[] {
+    if (lineBudget.remaining <= 0) return [];
+    if (depth >= maxDepth) {
+      lineBudget.remaining -= 1;
+      return [`${prefix}...`];
+    }
+    const entries = listContextEntries(dir);
     const lines: string[] = [];
-    for (let i = 0; i < entries.length; i++) {
-      const e = entries[i];
-      const isLast = i === entries.length - 1;
+    const visibleEntries = entries.slice(0, PROJECT_CONTEXT_TREE_MAX_ENTRIES_PER_DIR);
+    const hiddenEntryCount = Math.max(0, entries.length - visibleEntries.length);
+    for (let i = 0; i < visibleEntries.length; i++) {
+      if (lineBudget.remaining <= 0) break;
+      const e = visibleEntries[i];
+      const isLast = i === visibleEntries.length - 1 && hiddenEntryCount === 0;
       const connector = isLast ? "└── " : "├── ";
       const childPrefix = isLast ? "    " : "│   ";
       if (e.isDirectory()) {
         lines.push(`${prefix}${connector}${e.name}/`);
-        lines.push(...buildFileTree(path.join(dir, e.name), prefix + childPrefix, depth + 1, maxDepth));
+        lineBudget.remaining -= 1;
+        lines.push(...buildFileTree(path.join(dir, e.name), prefix + childPrefix, depth + 1, maxDepth, lineBudget));
       } else {
         lines.push(`${prefix}${connector}${e.name}`);
+        lineBudget.remaining -= 1;
       }
     }
+    if (hiddenEntryCount > 0 && lineBudget.remaining > 0) {
+      lines.push(`${prefix}└── ... (${hiddenEntryCount} more entries)`);
+      lineBudget.remaining -= 1;
+    }
     return lines;
+  }
+
+  function countFilesUpTo(
+    dir: string,
+    maxDepth = PROJECT_CONTEXT_COUNT_MAX_DEPTH,
+    limit = PROJECT_CONTEXT_COUNT_MAX_FILES,
+  ): { count: number; truncated: boolean } {
+    let count = 0;
+    let truncated = false;
+
+    const walk = (currentDir: string, depth = 0): void => {
+      if (truncated || depth > maxDepth) return;
+      const entries = listContextEntries(currentDir);
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          walk(path.join(currentDir, entry.name), depth + 1);
+        } else {
+          count += 1;
+          if (count >= limit) {
+            truncated = true;
+            return;
+          }
+        }
+        if (truncated) return;
+      }
+    };
+
+    walk(dir, 0);
+    return { count, truncated };
   }
 
   function detectTechStack(projectPath: string): string[] {
@@ -223,18 +333,8 @@ export function createProjectContextTools(deps: CreateProjectContextToolsDeps) {
       const dirPath = path.join(projectPath, d);
       try {
         if (fs.statSync(dirPath).isDirectory()) {
-          let count = 0;
-          const countFiles = (dir: string, depth = 0) => {
-            if (depth > 10) return;
-            const entries = fs.readdirSync(dir, { withFileTypes: true });
-            for (const e of entries) {
-              if (CONTEXT_IGNORE_DIRS.has(e.name) || e.isSymbolicLink()) continue;
-              if (e.isDirectory()) countFiles(path.join(dir, e.name), depth + 1);
-              else count++;
-            }
-          };
-          countFiles(dirPath);
-          result.push(`${d}/ (${count} files)`);
+          const { count, truncated } = countFilesUpTo(dirPath);
+          result.push(`${d}/ (${count}${truncated ? "+" : ""} files)`);
         }
       } catch {}
     }
@@ -284,17 +384,12 @@ export function createProjectContextTools(deps: CreateProjectContextToolsDeps) {
 
     if (isGitRepo(projectPath)) {
       try {
-        const currentHead = execFileSync("git", ["rev-parse", "HEAD"], {
-          cwd: projectPath,
-          stdio: "pipe",
-          timeout: 5000,
-        })
-          .toString()
-          .trim();
+        const currentCacheKey = resolveGitProjectContextCacheKey(projectPath);
+        if (!currentCacheKey) throw new Error("missing_git_cache_key");
 
         if (fs.existsSync(metaPath) && fs.existsSync(contextPath)) {
-          const cachedHead = fs.readFileSync(metaPath, "utf8").trim();
-          if (cachedHead === currentHead) {
+          const cachedKey = fs.readFileSync(metaPath, "utf8").trim();
+          if (cachedKey === currentCacheKey) {
             return fs.readFileSync(contextPath, "utf8");
           }
         }
@@ -302,7 +397,7 @@ export function createProjectContextTools(deps: CreateProjectContextToolsDeps) {
         const content = buildProjectContextContent(projectPath);
         fs.mkdirSync(climpireDir, { recursive: true });
         fs.writeFileSync(contextPath, content, "utf8");
-        fs.writeFileSync(metaPath, currentHead, "utf8");
+        fs.writeFileSync(metaPath, currentCacheKey, "utf8");
         console.log(`[Claw-Empire] Generated project context: ${contextPath}`);
         return content;
       } catch (err) {
