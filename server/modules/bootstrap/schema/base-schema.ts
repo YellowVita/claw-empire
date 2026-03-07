@@ -95,6 +95,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   status TEXT NOT NULL DEFAULT 'inbox' CHECK(status IN ('inbox','planned','collaborating','in_progress','review','done','cancelled','pending')),
   priority INTEGER DEFAULT 0,
   task_type TEXT DEFAULT 'general' CHECK(task_type IN ('general','development','design','analysis','presentation','documentation')),
+  work_phase TEXT,
   workflow_pack_key TEXT NOT NULL DEFAULT 'development',
   workflow_meta_json TEXT,
   output_format TEXT,

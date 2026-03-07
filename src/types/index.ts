@@ -96,6 +96,7 @@ export type TaskStatus =
   | "pending"
   | "cancelled";
 export type TaskType = "general" | "development" | "design" | "analysis" | "presentation" | "documentation";
+export type TaskWorkPhase = "api_work" | "component_dev" | "ui_work" | "documenting" | "debugging";
 export const WORKFLOW_PACK_KEYS = [
   "development",
   "novel",
@@ -120,6 +121,7 @@ export interface Task {
   status: TaskStatus;
   priority: number;
   task_type: TaskType;
+  work_phase?: TaskWorkPhase | null;
   workflow_pack_key?: WorkflowPackKey;
   workflow_meta_json?: string | null;
   output_format?: string | null;

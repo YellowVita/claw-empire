@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-2.0.2-blue" alt="Releases" />
+  <img src="https://img.shields.io/badge/version-2.0.3-blue" alt="Releases" />
   <a href="https://github.com/GreenSheep01201/claw-empire/actions/workflows/ci.yml"><img src="https://github.com/GreenSheep01201/claw-empire/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI" /></a>
   <img src="https://img.shields.io/badge/node-%3E%3D22-brightgreen" alt="Node.js 22+" />
   <img src="https://img.shields.io/badge/license-Apache%202.0-orange" alt="License" />
@@ -21,7 +21,7 @@
 <p align="center">
   <a href="#quick-start">Quick Start</a> &middot;
   <a href="#ai-installation-guide">AI Install Guide</a> &middot;
-  <a href="docs/releases/v2.0.2.md">Release Notes</a> &middot;
+  <a href="docs/releases/v2.0.3.md">Release Notes</a> &middot;
   <a href="#openclaw-integration">OpenClaw</a> &middot;
   <a href="#direct-messenger-without-openclaw">Direct Messenger</a> &middot;
   <a href="#dollar-command-logic">$ Command</a> &middot;
@@ -68,16 +68,16 @@ Claw-Empire transforms your AI coding assistants — connected via **CLI**, **OA
 
 ---
 
-## Latest Release (v2.0.2)
+## Latest Release (v2.0.3)
 
-- **OpenAPI drift is now blocked in CI** - `test:ci` now runs `openapi:check`, so route/document mismatches fail on `main` immediately.
-- **Operational API flows gained dedicated E2E coverage** - CI now exercises task run/stop/inject/resume, terminal and meeting-minutes access, inbox directive webhook routing, project path helpers, CLI diagnostics, and API provider CRUD.
-- **Docs endpoints and public API surface are covered** - `/api/docs`, swagger bootstrap, `/api/openapi.json`, and contributor-facing utility routes are now checked directly in CI.
-- **API docs were refreshed to match the real main-branch surface** - `docs/api.md` and `docs/openapi.json` now cover the contributor-facing ops/API routes added over time, including task reports, project helpers, subtasks, agent spawn, announcements/directives, GitHub/OAuth/skills/sprites/update-auto routes.
-- **E2E inbox verification uses a non-sensitive test secret** - CI no longer depends on any developer-local `.env` secret for `/api/inbox` coverage.
-- **PR #49, #52, and #55 follow-ups are included in the same release line** - PR #49 aligned Discord channel OpenAPI output with the real route and tightened test isolation, PR #55 added per-provider model search in API Settings, and the safe subset of PR #52 added portable Windows local dev launcher scripts.
+- **PR #54's useful core idea was extracted safely** - instead of merging the risky prototype, v2.0.3 introduces a separate nullable `work_phase` field without changing the existing task-status lifecycle.
+- **Task creation can infer work phase from title prefixes** - `POST /api/tasks` now classifies tags like `[API]`, `[UI]`, `[コンポーネント]`, `[문서]`, `[组件]`, `[文档]`, and `[调试]`.
+- **The Task Board now exposes work phase directly** - added a `Work Phase` filter, per-task work-phase badges, and inline editing on task cards.
+- **PATCH behavior preserves explicit work-phase choices** - editing a task title no longer silently clears or re-infers `work_phase`; it changes only when explicitly sent.
+- **Multilingual support covers the new feature** - the task-board UI is localized in English, Korean, Japanese, and Chinese, and the server-side prefix inference now includes Chinese aliases too.
+- **This release is explicitly a safe subset of PR #54** - admin/local-server routes, system-console tooling, patch auto-apply, and task-status enum expansion were intentionally left out.
 
-- Full notes: [`docs/releases/v2.0.2.md`](docs/releases/v2.0.2.md)
+- Full notes: [`docs/releases/v2.0.3.md`](docs/releases/v2.0.3.md)
 - API docs: [`docs/api.md`](docs/api.md), [`docs/openapi.json`](docs/openapi.json)
 - Security policy: [`SECURITY.md`](SECURITY.md)
 

@@ -39,6 +39,7 @@ function createTaskCrudHarness(): { db: DatabaseSync; routes: Map<string, RouteH
       status TEXT NOT NULL,
       priority INTEGER NOT NULL,
       task_type TEXT NOT NULL,
+      work_phase TEXT,
       workflow_pack_key TEXT NOT NULL DEFAULT 'development',
       workflow_meta_json TEXT,
       output_format TEXT,
@@ -132,72 +133,55 @@ function createTaskCrudHarness(): { db: DatabaseSync; routes: Map<string, RouteH
   return { db, routes };
 }
 
+function insertTaskRow(
+  db: DatabaseSync,
+  input: {
+    id: string;
+    title: string;
+    workflowPackKey?: string;
+    workPhase?: string | null;
+  },
+): void {
+  db.prepare(
+    `
+      INSERT INTO tasks (
+        id, title, description, department_id, assigned_agent_id, project_id,
+        status, priority, task_type, work_phase, workflow_pack_key, workflow_meta_json, output_format,
+        project_path, base_branch, result, started_at, completed_at, source_task_id, hidden, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+  ).run(
+    input.id,
+    input.title,
+    null,
+    null,
+    null,
+    null,
+    "inbox",
+    1,
+    "general",
+    input.workPhase ?? null,
+    input.workflowPackKey ?? "development",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    0,
+    1,
+    1,
+  );
+}
+
 describe("task CRUD workflow pack filter", () => {
   it("GET /api/tasks는 workflow_pack_key 필터를 적용한다", () => {
     const { db, routes } = createTaskCrudHarness();
     try {
-      db.prepare(
-        `
-          INSERT INTO tasks (
-            id, title, description, department_id, assigned_agent_id, project_id,
-            status, priority, task_type, workflow_pack_key, workflow_meta_json, output_format,
-            project_path, base_branch, result, started_at, completed_at, source_task_id, hidden, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `,
-      ).run(
-        "task-report-1",
-        "Report task",
-        null,
-        null,
-        null,
-        null,
-        "inbox",
-        1,
-        "general",
-        "report",
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        0,
-        1,
-        1,
-      );
-      db.prepare(
-        `
-          INSERT INTO tasks (
-            id, title, description, department_id, assigned_agent_id, project_id,
-            status, priority, task_type, workflow_pack_key, workflow_meta_json, output_format,
-            project_path, base_branch, result, started_at, completed_at, source_task_id, hidden, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `,
-      ).run(
-        "task-dev-1",
-        "Dev task",
-        null,
-        null,
-        null,
-        null,
-        "inbox",
-        1,
-        "general",
-        "development",
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        0,
-        1,
-        1,
-      );
+      insertTaskRow(db, { id: "task-report-1", title: "Report task", workflowPackKey: "report" });
+      insertTaskRow(db, { id: "task-dev-1", title: "Dev task", workflowPackKey: "development" });
 
       const handler = routes.get("GET /api/tasks");
       expect(handler).toBeTypeOf("function");
@@ -262,6 +246,109 @@ describe("task CRUD workflow pack filter", () => {
       expect(payload.task.workflow_pack_key).toBe("novel");
       expect(payload.task.project_id).toBe("project-novel");
       expect(payload.task.project_path).toBe("/tmp/novel-project");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("POST /api/tasks는 title prefix로 work_phase를 자동 분류한다", () => {
+    const { db, routes } = createTaskCrudHarness();
+    try {
+      const handler = routes.get("POST /api/tasks") as RouteHandler | undefined;
+      expect(handler).toBeTypeOf("function");
+
+      const res = createFakeResponse();
+      handler?.(
+        {
+          body: {
+            title: "[コンポーネント] Modal polish",
+          },
+        },
+        res,
+      );
+
+      expect(res.statusCode).toBe(200);
+      const payload = res.payload as { task: { work_phase: string | null } };
+      expect(payload.task.work_phase).toBe("component_dev");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("POST /api/tasks는 중국어 title prefix로도 work_phase를 자동 분류한다", () => {
+    const { db, routes } = createTaskCrudHarness();
+    try {
+      const handler = routes.get("POST /api/tasks") as RouteHandler | undefined;
+      expect(handler).toBeTypeOf("function");
+
+      const res = createFakeResponse();
+      handler?.(
+        {
+          body: {
+            title: "[组件] Drawer cleanup",
+          },
+        },
+        res,
+      );
+
+      expect(res.statusCode).toBe(200);
+      const payload = res.payload as { task: { work_phase: string | null } };
+      expect(payload.task.work_phase).toBe("component_dev");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("PATCH /api/tasks는 work_phase를 명시적으로 갱신한다", () => {
+    const { db, routes } = createTaskCrudHarness();
+    try {
+      insertTaskRow(db, { id: "task-1", title: "Investigate flaky test" });
+
+      const handler = routes.get("PATCH /api/tasks/:id") as RouteHandler | undefined;
+      expect(handler).toBeTypeOf("function");
+
+      const res = createFakeResponse();
+      handler?.(
+        {
+          params: { id: "task-1" },
+          body: { work_phase: "debugging" },
+        },
+        res,
+      );
+
+      expect(res.statusCode).toBe(200);
+      const payload = res.payload as { task: { work_phase: string | null } };
+      expect(payload.task.work_phase).toBe("debugging");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("PATCH /api/tasks는 title만 수정할 때 기존 work_phase를 덮어쓰지 않는다", () => {
+    const { db, routes } = createTaskCrudHarness();
+    try {
+      insertTaskRow(db, {
+        id: "task-1",
+        title: "Investigate flaky test",
+        workPhase: "debugging",
+      });
+
+      const handler = routes.get("PATCH /api/tasks/:id") as RouteHandler | undefined;
+      expect(handler).toBeTypeOf("function");
+
+      const res = createFakeResponse();
+      handler?.(
+        {
+          params: { id: "task-1" },
+          body: { title: "[UI] Polish modal spacing" },
+        },
+        res,
+      );
+
+      expect(res.statusCode).toBe(200);
+      const payload = res.payload as { task: { title: string; work_phase: string | null } };
+      expect(payload.task.title).toBe("[UI] Polish modal spacing");
+      expect(payload.task.work_phase).toBe("debugging");
     } finally {
       db.close();
     }

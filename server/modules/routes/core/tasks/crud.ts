@@ -8,6 +8,50 @@ import type { MeetingMinuteEntryRow, MeetingMinutesRow } from "../../shared/type
 import { isWorkflowPackKey } from "../../../workflow/packs/definitions.ts";
 import { resolveWorkflowPackKeyForTask } from "../../../workflow/packs/task-pack-resolver.ts";
 
+const TASK_WORK_PHASES = ["api_work", "component_dev", "ui_work", "documenting", "debugging"] as const;
+type TaskWorkPhase = (typeof TASK_WORK_PHASES)[number];
+
+const TASK_WORK_PHASE_ALIAS: Record<string, TaskWorkPhase> = {
+  api: "api_work",
+  "api-work": "api_work",
+  backend: "api_work",
+  server: "api_work",
+  백엔드: "api_work",
+  서버: "api_work",
+  接口: "api_work",
+  后端: "api_work",
+  服务端: "api_work",
+  component: "component_dev",
+  components: "component_dev",
+  컴포넌트: "component_dev",
+  コンポーネント: "component_dev",
+  组件: "component_dev",
+  ui: "ui_work",
+  frontend: "ui_work",
+  front: "ui_work",
+  프론트: "ui_work",
+  화면: "ui_work",
+  前端: "ui_work",
+  界面: "ui_work",
+  doc: "documenting",
+  docs: "documenting",
+  document: "documenting",
+  documentation: "documenting",
+  문서: "documenting",
+  ドキュメント: "documenting",
+  文档: "documenting",
+  debug: "debugging",
+  debugging: "debugging",
+  bug: "debugging",
+  fix: "debugging",
+  디버그: "debugging",
+  버그: "debugging",
+  不具合: "debugging",
+  调试: "debugging",
+  修复: "debugging",
+  缺陷: "debugging",
+};
+
 export type TaskCrudRouteDeps = Pick<
   RuntimeContext,
   | "app"
@@ -69,6 +113,25 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
     return path.normalize(absolute);
   }
 
+  function normalizeTaskWorkPhaseInput(raw: unknown): TaskWorkPhase | null | undefined {
+    if (raw === undefined) return undefined;
+    if (raw === null) return null;
+    const value = normalizeTextField(raw);
+    if (!value) return null;
+    return (TASK_WORK_PHASES as readonly string[]).includes(value) ? (value as TaskWorkPhase) : undefined;
+  }
+
+  function inferTaskWorkPhaseFromTitle(titleRaw: unknown): TaskWorkPhase | null {
+    if (typeof titleRaw !== "string") return null;
+    const title = titleRaw.trim();
+    if (!title) return null;
+    const match = title.match(/^[\[\(【［]\s*([^\]\)】］]+?)\s*[\]\)】］]/u);
+    if (!match) return null;
+    const tag = match[1]?.trim();
+    if (!tag) return null;
+    return TASK_WORK_PHASE_ALIAS[tag] ?? TASK_WORK_PHASE_ALIAS[tag.toLowerCase()] ?? null;
+  }
+
   app.get("/api/tasks", (req, res) => {
     reconcileCrossDeptSubtasks();
     const statusFilter = firstQueryValue(req.query.status);
@@ -76,9 +139,14 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
     const agentFilter = firstQueryValue(req.query.agent_id);
     const projectFilter = firstQueryValue(req.query.project_id);
     const workflowPackFilter = normalizeTextField(firstQueryValue(req.query.workflow_pack_key));
+    const workPhaseFilterRaw = firstQueryValue(req.query.work_phase);
+    const workPhaseFilter = normalizeTaskWorkPhaseInput(workPhaseFilterRaw);
 
     if (workflowPackFilter && !isWorkflowPackKey(workflowPackFilter)) {
       return res.status(400).json({ error: "invalid_workflow_pack_key" });
+    }
+    if (workPhaseFilterRaw !== undefined && workPhaseFilter === undefined) {
+      return res.status(400).json({ error: "invalid_work_phase" });
     }
 
     const conditions: string[] = [];
@@ -103,6 +171,10 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
     if (workflowPackFilter) {
       conditions.push("t.workflow_pack_key = ?");
       params.push(workflowPackFilter);
+    }
+    if (workPhaseFilter) {
+      conditions.push("t.work_phase = ?");
+      params.push(workPhaseFilter);
     }
 
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
@@ -198,6 +270,11 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
     if (!title || typeof title !== "string") {
       return res.status(400).json({ error: "title_required" });
     }
+    const explicitWorkPhase = normalizeTaskWorkPhaseInput((body as any).work_phase);
+    if ("work_phase" in body && explicitWorkPhase === undefined) {
+      return res.status(400).json({ error: "invalid_work_phase" });
+    }
+    const resolvedWorkPhase = explicitWorkPhase === undefined ? inferTaskWorkPhaseFromTitle(title) : explicitWorkPhase;
 
     const requestedProjectId = normalizeTextField((body as any).project_id);
     let resolvedProjectId: string | null = null;
@@ -228,10 +305,10 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
       `
     INSERT INTO tasks (
       id, title, description, department_id, assigned_agent_id, project_id,
-      status, priority, task_type, workflow_pack_key, workflow_meta_json, output_format,
+      status, priority, task_type, work_phase, workflow_pack_key, workflow_meta_json, output_format,
       project_path, base_branch, created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
     ).run(
       id,
@@ -243,6 +320,7 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
       (body as any).status ?? "inbox",
       (body as any).priority ?? 0,
       (body as any).task_type ?? "general",
+      resolvedWorkPhase,
       resolveWorkflowPackKeyForTask({
         db: db as any,
         explicitPackKey: (body as any).workflow_pack_key,
@@ -413,6 +491,13 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
       }
       body.workflow_pack_key = workflowPackKey;
     }
+    if ("work_phase" in body) {
+      const workPhase = normalizeTaskWorkPhaseInput(body.work_phase);
+      if (workPhase === undefined) {
+        return res.status(400).json({ error: "invalid_work_phase" });
+      }
+      body.work_phase = workPhase;
+    }
     if ("workflow_meta_json" in body) {
       const rawWorkflowMeta = body.workflow_meta_json;
       if (rawWorkflowMeta === null) {
@@ -435,6 +520,7 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
       "status",
       "priority",
       "task_type",
+      "work_phase",
       "workflow_pack_key",
       "workflow_meta_json",
       "output_format",

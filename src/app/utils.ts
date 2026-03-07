@@ -106,6 +106,7 @@ const TASK_EQ_KNOWN_KEYS = new Set<string>([
   "status",
   "priority",
   "task_type",
+  "work_phase",
   "project_path",
   "result",
   "started_at",
@@ -168,6 +169,7 @@ function areTasksEquivalent(a: Task, b: Task): boolean {
     a.status === b.status &&
     a.priority === b.priority &&
     a.task_type === b.task_type &&
+    (a.work_phase ?? null) === (b.work_phase ?? null) &&
     (a.project_path ?? null) === (b.project_path ?? null) &&
     (a.result ?? null) === (b.result ?? null) &&
     (a.started_at ?? null) === (b.started_at ?? null) &&

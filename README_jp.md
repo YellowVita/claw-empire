@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-2.0.2-blue" alt="Releases" />
+  <img src="https://img.shields.io/badge/version-2.0.3-blue" alt="Releases" />
   <a href="https://github.com/GreenSheep01201/claw-empire/actions/workflows/ci.yml"><img src="https://github.com/GreenSheep01201/claw-empire/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI" /></a>
   <img src="https://img.shields.io/badge/node-%3E%3D22-brightgreen" alt="Node.js 22+" />
   <img src="https://img.shields.io/badge/license-Apache%202.0-orange" alt="License" />
@@ -21,7 +21,7 @@
 <p align="center">
   <a href="#クイックスタート">クイックスタート</a> &middot;
   <a href="#ai-installation-guide">AIインストール</a> &middot;
-  <a href="docs/releases/v2.0.2.md">リリースノート</a> &middot;
+  <a href="docs/releases/v2.0.3.md">リリースノート</a> &middot;
   <a href="#openclaw-integration">OpenClaw連携</a> &middot;
   <a href="#direct-messenger-without-openclaw">直接メッセンジャー</a> &middot;
   <a href="#dollar-command-logic">$ コマンド</a> &middot;
@@ -68,16 +68,16 @@ Claw-Empireは **CLI**、**OAuth**、**直接APIキー** で接続されたAIコ
 
 ---
 
-## 最新リリース (v2.0.2)
+## 最新リリース (v2.0.3)
 
-- **OpenAPI 契約差分を CI で即時検出** - `test:ci` に `openapi:check` を組み込み、ルートとドキュメントの不整合を `main` 上で即座に失敗させます。
-- **運用 API の主要フローに E2E を追加** - タスク実行/停止/注入/再開、ターミナル/議事録取得、`/api/inbox` ディレクティブ webhook、プロジェクトパス補助、CLI 診断、API プロバイダー CRUD を CI で直接検証します。
-- **ドキュメント配信経路と公開 API 表面を検証** - `/api/docs`、swagger bootstrap、`/api/openapi.json`、contributor-facing なユーティリティ経路を CI で確認するようにしました。
-- **API ドキュメントを main の実ルート表面に同期** - `docs/api.md` と `docs/openapi.json` に task reports、project helpers、subtasks、agent spawn、announcements/directives、GitHub/OAuth/skills/sprites/update-auto 系を反映しました。
-- **E2E inbox 検証はローカル秘密情報に依存しません** - `/api/inbox` テストは開発者ローカル `.env` ではなく、非機密のテスト専用 secret を使います。
-- **PR #49、#52、#55 の追加入力も同じリリースに含めました** - PR #49 では Discord チャンネル OpenAPI 出力とテスト分離を整え、PR #55 では API Settings にプロバイダー単位のモデル検索を追加し、PR #52 では安全な範囲に絞って Windows ローカル開発起動スクリプトを追加しました。
+- **PR #54 の有用な核だけを安全に再実装** - 危険なプロトタイプ全体は取り込まず、既存のステータス遷移を維持したまま nullable な `work_phase` フィールドを追加しました。
+- **タスク作成時にタイトル接頭辞から作業段階を自動推定** - `POST /api/tasks` は `[API]`、`[UI]`、`[コンポーネント]`、`[문서]`、`[组件]`、`[文档]`、`[调试]` などを認識します。
+- **Task Board で作業段階を表示・絞り込み・編集可能** - `Work Phase` フィルター、タスクカードのバッジ、インライン編集を追加しました。
+- **PATCH 動作を保守的に修正** - タイトルだけを変更しても `work_phase` を再推定して上書きせず、明示的に送った場合のみ変更します。
+- **新機能の多言語対応を調整** - Task Board UI は英語・韓国語・日本語・中国語に対応し、サーバー側の接頭辞自動分類も中国語 alias を含みます。
+- **このリリースは PR #54 の安全なサブセットに限定** - admin/local-server ルート、system-console、patch auto-apply、status enum 拡張は意図的に除外しました。
 
-- 詳細: [`docs/releases/v2.0.2.md`](docs/releases/v2.0.2.md)
+- 詳細: [`docs/releases/v2.0.3.md`](docs/releases/v2.0.3.md)
 - APIドキュメント: [`docs/api.md`](docs/api.md), [`docs/openapi.json`](docs/openapi.json)
 - セキュリティポリシー: [`SECURITY.md`](SECURITY.md)
 

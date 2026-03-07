@@ -1,16 +1,19 @@
 import { useState } from "react";
-import type { Agent, Department, SubTask, Task, TaskStatus } from "../../types";
+import type { Agent, Department, SubTask, Task, TaskStatus, TaskWorkPhase } from "../../types";
 import { useI18n } from "../../i18n";
 import AgentAvatar from "../AgentAvatar";
 import AgentSelect from "../AgentSelect";
 import DiffModal from "./DiffModal";
 import {
   getTaskTypeBadge,
+  getTaskWorkPhaseBadge,
   isHideableStatus,
   priorityIcon,
   priorityLabel,
   STATUS_OPTIONS,
+  TASK_WORK_PHASE_OPTIONS,
   taskStatusLabel,
+  taskWorkPhaseLabel,
   timeAgo,
 } from "./constants";
 
@@ -78,6 +81,7 @@ export default function TaskCard({
   const assignedLabel = assignedDisplayName || fallbackAssignedName || null;
   const department = departments.find((d) => d.id === task.department_id);
   const typeBadge = getTaskTypeBadge(task.task_type, t);
+  const workPhaseBadge = task.work_phase ? getTaskWorkPhaseBadge(task.work_phase, t) : null;
 
   const canRun = task.status === "planned" || task.status === "inbox";
   const canStop = task.status === "in_progress";
@@ -117,6 +121,11 @@ export default function TaskCard({
 
       <div className="mb-3 flex flex-wrap items-center gap-1.5">
         <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${typeBadge.color}`}>{typeBadge.label}</span>
+        {workPhaseBadge && (
+          <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${workPhaseBadge.color}`}>
+            {workPhaseBadge.label}
+          </span>
+        )}
         {isHiddenTask && (
           <span className="rounded-full bg-cyan-900/60 px-2 py-0.5 text-xs text-cyan-200">
             🙈 {t({ ko: "숨김", en: "Hidden", ja: "非表示", zh: "隐藏" })}
@@ -129,7 +138,7 @@ export default function TaskCard({
         )}
       </div>
 
-      <div className="mb-3">
+      <div className="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
         <select
           value={task.status}
           onChange={(event) => onUpdateTask(task.id, { status: event.target.value as TaskStatus })}
@@ -138,6 +147,21 @@ export default function TaskCard({
           {STATUS_OPTIONS.map((status) => (
             <option key={status} value={status}>
               {taskStatusLabel(status as TaskStatus, t)}
+            </option>
+          ))}
+        </select>
+        <select
+          aria-label={t({ ko: "작업 단계", en: "Work Phase", ja: "作業段階", zh: "工作阶段" })}
+          value={task.work_phase ?? ""}
+          onChange={(event) =>
+            onUpdateTask(task.id, { work_phase: (event.target.value || null) as TaskWorkPhase | null })
+          }
+          className="w-full rounded-lg border border-slate-600 bg-slate-700 px-2 py-1 text-xs text-white outline-none transition focus:border-blue-500"
+        >
+          <option value="">{t({ ko: "자동/없음", en: "Auto / None", ja: "自動 / なし", zh: "自动 / 无" })}</option>
+          {TASK_WORK_PHASE_OPTIONS.map((phase) => (
+            <option key={phase.value} value={phase.value}>
+              {taskWorkPhaseLabel(phase.value, t)}
             </option>
           ))}
         </select>

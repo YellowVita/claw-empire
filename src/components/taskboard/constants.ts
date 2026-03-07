@@ -1,4 +1,4 @@
-import type { TaskStatus, TaskType } from "../../types";
+import type { TaskStatus, TaskType, TaskWorkPhase } from "../../types";
 import type { UiLanguage } from "../../i18n";
 
 export type Locale = UiLanguage;
@@ -188,6 +188,14 @@ export const TASK_TYPE_OPTIONS: { value: TaskType; color: string }[] = [
   { value: "documentation", color: "bg-teal-900 text-teal-300" },
 ];
 
+export const TASK_WORK_PHASE_OPTIONS: Array<{ value: TaskWorkPhase; color: string }> = [
+  { value: "api_work", color: "bg-sky-900 text-sky-200" },
+  { value: "component_dev", color: "bg-violet-900 text-violet-200" },
+  { value: "ui_work", color: "bg-fuchsia-900 text-fuchsia-200" },
+  { value: "documenting", color: "bg-emerald-900 text-emerald-200" },
+  { value: "debugging", color: "bg-amber-900 text-amber-200" },
+];
+
 export function taskStatusLabel(status: TaskStatus, t: TFunction) {
   switch (status) {
     case "inbox":
@@ -228,9 +236,31 @@ export function taskTypeLabel(type: TaskType, t: TFunction) {
   }
 }
 
+export function taskWorkPhaseLabel(phase: TaskWorkPhase, t: TFunction) {
+  switch (phase) {
+    case "api_work":
+      return t({ ko: "API 작업", en: "API Work", ja: "API作業", zh: "API 工作" });
+    case "component_dev":
+      return t({ ko: "컴포넌트 개발", en: "Component Dev", ja: "コンポーネント開発", zh: "组件开发" });
+    case "ui_work":
+      return t({ ko: "UI 작업", en: "UI Work", ja: "UI作業", zh: "UI 工作" });
+    case "documenting":
+      return t({ ko: "문서화", en: "Documenting", ja: "文書化", zh: "文档整理" });
+    case "debugging":
+      return t({ ko: "디버깅", en: "Debugging", ja: "デバッグ", zh: "调试" });
+    default:
+      return phase;
+  }
+}
+
 export function getTaskTypeBadge(type: TaskType, t: TFunction) {
   const option = TASK_TYPE_OPTIONS.find((entry) => entry.value === type) ?? TASK_TYPE_OPTIONS[0];
   return { ...option, label: taskTypeLabel(option.value, t) };
+}
+
+export function getTaskWorkPhaseBadge(phase: TaskWorkPhase, t: TFunction) {
+  const option = TASK_WORK_PHASE_OPTIONS.find((entry) => entry.value === phase) ?? TASK_WORK_PHASE_OPTIONS[0];
+  return { ...option, label: taskWorkPhaseLabel(option.value, t) };
 }
 
 export function priorityIcon(priority: number) {

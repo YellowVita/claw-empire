@@ -122,6 +122,11 @@ export function applyTaskSchemaMigrations(db: DbLike): void {
     /* already exists */
   }
   try {
+    db.exec("ALTER TABLE tasks ADD COLUMN work_phase TEXT");
+  } catch {
+    /* already exists */
+  }
+  try {
     db.exec("CREATE INDEX IF NOT EXISTS idx_tasks_workflow_pack ON tasks(workflow_pack_key, updated_at DESC)");
   } catch {
     /* already exists */
@@ -396,6 +401,7 @@ function migrateLegacyTasksStatusSchema(db: DbLike): void {
           priority INTEGER DEFAULT 0,
           task_type TEXT DEFAULT 'general'
             CHECK(task_type IN ('general','development','design','analysis','presentation','documentation')),
+          work_phase TEXT,
           workflow_pack_key TEXT NOT NULL DEFAULT 'development',
           workflow_meta_json TEXT,
           output_format TEXT,
@@ -415,15 +421,17 @@ function migrateLegacyTasksStatusSchema(db: DbLike): void {
       const hasWorkflowPackKey = cols.some((c) => c.name === "workflow_pack_key");
       const hasWorkflowMeta = cols.some((c) => c.name === "workflow_meta_json");
       const hasOutputFormat = cols.some((c) => c.name === "output_format");
+      const hasWorkPhase = cols.some((c) => c.name === "work_phase");
       const sourceTaskIdExpr = hasSourceTaskId ? "source_task_id" : "NULL AS source_task_id";
       const projectIdExpr = hasProjectId ? "project_id" : "NULL AS project_id";
+      const workPhaseExpr = hasWorkPhase ? "work_phase" : "NULL AS work_phase";
       const workflowPackExpr = hasWorkflowPackKey ? "workflow_pack_key" : "'development' AS workflow_pack_key";
       const workflowMetaExpr = hasWorkflowMeta ? "workflow_meta_json" : "NULL AS workflow_meta_json";
       const outputFormatExpr = hasOutputFormat ? "output_format" : "NULL AS output_format";
       db.exec(`
         INSERT INTO ${newTable} (
           id, title, description, department_id, assigned_agent_id,
-          project_id, status, priority, task_type, workflow_pack_key, workflow_meta_json, output_format, project_path, result,
+          project_id, status, priority, task_type, work_phase, workflow_pack_key, workflow_meta_json, output_format, project_path, result,
           started_at, completed_at, created_at, updated_at, source_task_id
         )
         SELECT
@@ -434,7 +442,7 @@ function migrateLegacyTasksStatusSchema(db: DbLike): void {
               THEN status
             ELSE 'inbox'
           END,
-          priority, task_type, ${workflowPackExpr}, ${workflowMetaExpr}, ${outputFormatExpr}, project_path, result,
+          priority, task_type, ${workPhaseExpr}, ${workflowPackExpr}, ${workflowMetaExpr}, ${outputFormatExpr}, project_path, result,
           started_at, completed_at, created_at, updated_at, ${sourceTaskIdExpr}
         FROM tasks;
       `);

@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-2.0.2-blue" alt="Releases" />
+  <img src="https://img.shields.io/badge/version-2.0.3-blue" alt="Releases" />
   <a href="https://github.com/GreenSheep01201/claw-empire/actions/workflows/ci.yml"><img src="https://github.com/GreenSheep01201/claw-empire/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI" /></a>
   <img src="https://img.shields.io/badge/node-%3E%3D22-brightgreen" alt="Node.js 22+" />
   <img src="https://img.shields.io/badge/license-Apache%202.0-orange" alt="License" />
@@ -21,7 +21,7 @@
 <p align="center">
   <a href="#빠른-시작">빠른 시작</a> &middot;
   <a href="#ai-installation-guide">AI 설치 가이드</a> &middot;
-  <a href="docs/releases/v2.0.2.md">릴리즈 노트</a> &middot;
+  <a href="docs/releases/v2.0.3.md">릴리즈 노트</a> &middot;
   <a href="#openclaw-integration">OpenClaw 연동</a> &middot;
   <a href="#direct-messenger-without-openclaw">직접 메신저</a> &middot;
   <a href="#dollar-command-logic">$ 명령 로직</a> &middot;
@@ -68,16 +68,16 @@ Claw-Empire는 **CLI**, **OAuth**, **직접 API 키** 방식으로 연결된 AI 
 
 ---
 
-## 최신 릴리즈 (v2.0.2)
+## 최신 릴리즈 (v2.0.3)
 
-- **OpenAPI 계약 드리프트를 CI에서 차단** - `test:ci`에 `openapi:check`를 포함해 라우트와 문서 불일치를 `main` 단계에서 바로 실패시킵니다.
-- **운영 API 핵심 흐름 E2E 추가** - 태스크 실행/중지/주입/재개, 터미널/회의록 조회, `/api/inbox` 디렉티브 웹훅, 프로젝트 경로 헬퍼, CLI 진단, API 프로바이더 CRUD를 CI에서 직접 검증합니다.
-- **문서 엔드포인트와 공개 API 표면 검증 추가** - `/api/docs`, swagger bootstrap, `/api/openapi.json`, contributor-facing 유틸리티 경로를 CI가 직접 확인합니다.
-- **API 문서를 실제 main 표면에 맞춰 최신화** - `docs/api.md`와 `docs/openapi.json`에 task reports, project helpers, subtasks, agent spawn, announcements/directives, GitHub/OAuth/skills/sprites/update-auto 계열을 반영했습니다.
-- **E2E inbox 검증이 로컬 시크릿에 의존하지 않음** - `/api/inbox` 테스트는 개발자 `.env` 대신 비민감 테스트용 secret으로 동작합니다.
-- **PR #49, #52, #55 후속 반영도 같은 릴리즈 라인에 포함** - PR #49는 Discord 채널 OpenAPI 출력과 테스트 격리를 정리했고, PR #55는 API Settings에 프로바이더별 모델 검색을 추가했으며, PR #52는 안전한 범위만 골라 Windows 로컬 개발 실행 스크립트를 포함했습니다.
+- **PR #54의 유효한 핵심 아이디어만 안전하게 분리 반영** - 위험한 프로토타입 전체를 머지하지 않고, 기존 상태 흐름을 유지한 채 nullable `work_phase` 필드를 별도로 도입했습니다.
+- **태스크 생성 시 제목 프리픽스로 작업 단계를 자동 분류** - `POST /api/tasks`가 `[API]`, `[UI]`, `[コンポーネント]`, `[문서]`, `[组件]`, `[文档]`, `[调试]` 같은 태그를 인식합니다.
+- **Task Board에서 작업 단계를 직접 확인/필터/수정 가능** - `Work Phase` 필터, task card 뱃지, inline 편집을 추가했습니다.
+- **PATCH 동작을 보수적으로 수정** - 제목만 바꿔도 `work_phase`가 다시 추론되거나 지워지지 않으며, 명시적으로 보낸 경우에만 변경됩니다.
+- **새 기능의 다국어 적용을 맞춤** - Task Board UI는 한국어/영어/일본어/중국어를 지원하고, 서버의 프리픽스 자동 분류도 중국어 alias까지 포함합니다.
+- **이번 릴리즈는 PR #54의 안전한 서브셋만 포함** - admin/local-server 라우트, system-console, patch auto-apply, status enum 확장은 의도적으로 제외했습니다.
 
-- 상세 문서: [`docs/releases/v2.0.2.md`](docs/releases/v2.0.2.md)
+- 상세 문서: [`docs/releases/v2.0.3.md`](docs/releases/v2.0.3.md)
 - API 문서: [`docs/api.md`](docs/api.md), [`docs/openapi.json`](docs/openapi.json)
 - 보안 정책: [`SECURITY.md`](SECURITY.md)
 

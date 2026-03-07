@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { bulkHideTasks } from "../api";
 import { useI18n } from "../i18n";
-import type { Agent, Department, SubTask, Task, WorkflowPackKey } from "../types";
+import type { Agent, Department, SubTask, Task, TaskWorkPhase, WorkflowPackKey } from "../types";
 import ProjectManagerModal from "./ProjectManagerModal";
 import BulkHideModal from "./taskboard/BulkHideModal";
 import CreateTaskModal from "./taskboard/CreateTaskModal";
@@ -63,6 +63,7 @@ export function TaskBoard({
   const [filterDept, setFilterDept] = useState("");
   const [filterAgent, setFilterAgent] = useState("");
   const [filterType, setFilterType] = useState("");
+  const [filterWorkPhase, setFilterWorkPhase] = useState("");
   const [search, setSearch] = useState("");
   const [showAllTasks, setShowAllTasks] = useState(false);
 
@@ -95,12 +96,13 @@ export function TaskBoard({
       if (filterDept && task.department_id !== filterDept) return false;
       if (filterAgent && task.assigned_agent_id !== filterAgent) return false;
       if (filterType && task.task_type !== filterType) return false;
+      if (filterWorkPhase && task.work_phase !== filterWorkPhase) return false;
       if (search && !task.title.toLowerCase().includes(search.toLowerCase())) return false;
       const isHidden = hiddenTaskIds.has(task.id);
       if (!showAllTasks && isHidden) return false;
       return true;
     });
-  }, [tasks, filterDept, filterAgent, filterType, search, hiddenTaskIds, showAllTasks]);
+  }, [tasks, filterDept, filterAgent, filterType, filterWorkPhase, search, hiddenTaskIds, showAllTasks]);
 
   const tasksByStatus = useMemo(() => {
     const grouped: Record<string, Task[]> = {};
@@ -121,7 +123,7 @@ export function TaskBoard({
     return grouped;
   }, [subtasks]);
 
-  const activeFilterCount = [filterDept, filterAgent, filterType, search].filter(Boolean).length;
+  const activeFilterCount = [filterDept, filterAgent, filterType, filterWorkPhase, search].filter(Boolean).length;
   const hiddenTaskCount = useMemo(() => {
     let count = 0;
     for (const task of tasks) {
@@ -154,6 +156,7 @@ export function TaskBoard({
                 setFilterDept("");
                 setFilterAgent("");
                 setFilterType("");
+                setFilterWorkPhase("");
                 setSearch("");
               }}
               className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-400 transition hover:bg-slate-800 hover:text-white"
@@ -228,10 +231,12 @@ export function TaskBoard({
         filterDept={filterDept}
         filterAgent={filterAgent}
         filterType={filterType}
+        filterWorkPhase={filterWorkPhase}
         search={search}
         onFilterDept={setFilterDept}
         onFilterAgent={setFilterAgent}
         onFilterType={setFilterType}
+        onFilterWorkPhase={(value) => setFilterWorkPhase(value as TaskWorkPhase | "")}
         onSearch={setSearch}
       />
 
