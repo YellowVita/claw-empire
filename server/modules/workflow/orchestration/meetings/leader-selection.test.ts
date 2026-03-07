@@ -181,7 +181,7 @@ describe("meeting leader selection - office pack scope", () => {
     }
   });
 
-  it("manual 배정이어도 관련부서/팩 범위 팀장을 회의에 포함한다", () => {
+  it("manual 배정 프로젝트는 지정 범위를 벗어난 팩 팀장으로 회의를 확장하지 않는다", () => {
     const db = setupDb();
     try {
       db.prepare(
@@ -243,9 +243,7 @@ describe("meeting leader selection - office pack scope", () => {
       });
       const leaderIds = leaders.map((leader) => leader.id);
 
-      expect(leaderIds).toContain("video_preprod-seed-1");
-      expect(leaderIds).toContain("video_preprod-seed-2");
-      expect(leaderIds).toContain("video_preprod-seed-3");
+      expect(leaderIds).toEqual(["video_preprod-seed-1"]);
       expect(leaderIds).not.toContain("planning-global");
       expect(leaderIds).not.toContain("dev-global");
       expect(leaderIds).not.toContain("design-global");

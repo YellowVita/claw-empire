@@ -117,11 +117,6 @@ export function createMeetingLeaderSelectionTools(deps: LeaderSelectionDeps) {
       workflow_pack_key: taskMeta?.workflow_pack_key ?? null,
       department_id: taskMeta?.department_id ?? fallbackDeptId ?? null,
     });
-    const packScopedAgentIds = resolveConstrainedAgentScopeForTask(db as any, {
-      project_id: null,
-      workflow_pack_key: taskMeta?.workflow_pack_key ?? null,
-      department_id: taskMeta?.department_id ?? fallbackDeptId ?? null,
-    });
 
     // 프로젝트 manual 모드 확인 — 지정 직원의 부서 팀장만 참석
     if (taskMeta?.project_id) {
@@ -141,38 +136,16 @@ export function createMeetingLeaderSelectionTools(deps: LeaderSelectionDeps) {
         const leaders = getLeadersByDepartmentIds(desiredDeptIds, constrainedAgentIds);
         const seen = new Set(leaders.map((l) => l.id));
 
-        // manual 스코프로 찾지 못한 관련부서 팀장은 팩 스코프로 한 번 더 시도한다.
-        for (const deptId of relatedDeptIds) {
-          const hasDeptLeader = leaders.some((leader) => leader.department_id === deptId);
-          if (hasDeptLeader) continue;
-          const fallbackLeader = findTeamLeader(deptId, packScopedAgentIds);
-          if (!fallbackLeader || seen.has(fallbackLeader.id)) continue;
-          leaders.push(fallbackLeader);
-          seen.add(fallbackLeader.id);
-        }
-
         if (includePlanning) {
-          // 기획팀장은 항상 포함
-          const planningLeader =
-            findTeamLeader("planning", constrainedAgentIds) ?? findTeamLeader("planning", packScopedAgentIds);
+          // manual 모드에서는 지정 범위 안의 기획팀장만 포함한다.
+          const planningLeader = findTeamLeader("planning", constrainedAgentIds);
           if (planningLeader && !seen.has(planningLeader.id)) {
             leaders.unshift(planningLeader);
             seen.add(planningLeader.id);
           }
         }
 
-        // manual 모드에서도 관련부서를 감지하지 못했거나 소수일 때는 팩 범위 팀장으로 보강한다.
-        if (fallbackAll && leaders.length < minLeaders) {
-          const fallbackScope =
-            Array.isArray(packScopedAgentIds) && packScopedAgentIds.length > 0
-              ? packScopedAgentIds
-              : constrainedAgentIds;
-          for (const leader of getAllActiveTeamLeaders(fallbackScope)) {
-            if (seen.has(leader.id)) continue;
-            leaders.push(leader);
-            seen.add(leader.id);
-          }
-        }
+        // manual 모드에서는 지정 범위를 벗어난 팩/전역 팀장으로 회의를 확장하지 않는다.
         return leaders;
       }
     }

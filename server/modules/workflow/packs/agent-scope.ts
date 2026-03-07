@@ -28,11 +28,15 @@ function parsePackSetting(value: unknown): WorkflowPackKey | null {
 }
 
 export function readActiveOfficePackKey(db: DbLike): WorkflowPackKey | null {
-  const row = db.prepare("SELECT value FROM settings WHERE key = 'officeWorkflowPack' LIMIT 1").get() as
-    | { value?: unknown }
-    | undefined;
-  if (!row) return null;
-  return parsePackSetting(row.value);
+  try {
+    const row = db.prepare("SELECT value FROM settings WHERE key = 'officeWorkflowPack' LIMIT 1").get() as
+      | { value?: unknown }
+      | undefined;
+    if (!row) return null;
+    return parsePackSetting(row.value);
+  } catch {
+    return null;
+  }
 }
 
 export function resolveEffectiveWorkflowPackKey(params: {

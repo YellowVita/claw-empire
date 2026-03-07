@@ -67,8 +67,34 @@ export function createReviewConsensusTools(deps: ReviewConsensusDeps) {
       let meetingId: string | null = null;
       const leaders = getTaskReviewLeaders(taskId, departmentId);
       if (leaders.length === 0) {
+        const lang = resolveLang(taskTitle);
+        appendTaskLog(
+          taskId,
+          "system",
+          "Review hold: no scoped team leader is available; waiting for leader assignment or configuration fix",
+        );
+        notifyCeo(
+          pickL(
+            l(
+              [
+                `[CEO OFFICE] '${taskTitle}' 는 현재 범위 안에서 검토를 맡을 팀장을 찾지 못해 Review 단계에서 대기합니다. 팀장 배치 또는 설정을 확인한 뒤 다시 진행하세요.`,
+              ],
+              [
+                `[CEO OFFICE] '${taskTitle}' is waiting in Review because no scoped team leader is available. Check leader assignment or configuration, then retry.`,
+              ],
+              [
+                `[CEO OFFICE] '${taskTitle}' は対象範囲のチームリーダーが見つからないため、Review で待機しています。リーダー配置または設定を確認してから再開してください。`,
+              ],
+              [
+                `[CEO OFFICE] '${taskTitle}' 因当前范围内没有可用组长，已在 Review 阶段等待。请检查组长配置后再继续。`,
+              ],
+            ),
+            lang,
+          ),
+          taskId,
+        );
+        reviewRoundState.delete(taskId);
         reviewInFlight.delete(taskId);
-        onApproved();
         return;
       }
       try {

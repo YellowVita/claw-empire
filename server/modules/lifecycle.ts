@@ -8,6 +8,7 @@ import { notifyTaskStatus } from "../gateway/client.ts";
 import { startDiscordReceiver } from "../messenger/discord-receiver.ts";
 import { startTelegramReceiver } from "../messenger/telegram-receiver.ts";
 import { registerGracefulShutdownHandlers } from "./lifecycle/register-graceful-shutdown.ts";
+import { filterStartupReviewRecoveryRows } from "./lifecycle/review-recovery.ts";
 
 export function startLifecycle(ctx: RuntimeContext): void {
   const {
@@ -317,15 +318,16 @@ export function startLifecycle(ctx: RuntimeContext): void {
     const reviewTasks = db
       .prepare(
         `
-    SELECT id, title
-    FROM tasks
-    WHERE status = 'review'
-    ORDER BY updated_at ASC
+    SELECT t.id, t.title, t.source_task_id, p.status AS parent_status
+    FROM tasks t
+    LEFT JOIN tasks p ON p.id = t.source_task_id
+    WHERE t.status = 'review'
+    ORDER BY t.updated_at ASC
   `,
       )
-      .all() as Array<{ id: string; title: string }>;
+      .all() as Array<{ id: string; title: string; source_task_id: string | null; parent_status: string | null }>;
 
-    reviewTasks.forEach((task, idx) => {
+    filterStartupReviewRecoveryRows(reviewTasks).forEach((task, idx) => {
       const delay = 1200 + idx * 400;
       setTimeout(() => {
         const current = db.prepare("SELECT status FROM tasks WHERE id = ?").get(task.id) as
