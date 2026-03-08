@@ -6,6 +6,7 @@ import { pickLang } from "../i18n";
 import { getTaskReports, getTaskReportDetail } from "../api";
 import AgentAvatar from "./AgentAvatar";
 import TaskReportPopup from "./TaskReportPopup";
+import { resolveReportAgent } from "./task-report-agent";
 
 interface ReportHistoryProps {
   agents: Agent[];
@@ -163,7 +164,7 @@ export default function ReportHistory({ agents, departments, uiLanguage, onClose
                     </div>
                     <div className="divide-y divide-slate-700/30">
                       {visibleRows.map((r) => {
-                        const agent = agents.find((a) => a.id === r.assigned_agent_id);
+                        const agent = resolveReportAgent(agents, r);
                         const agentName = uiLanguage === "ko" ? r.agent_name_ko || r.agent_name : r.agent_name;
                         const deptName = uiLanguage === "ko" ? r.dept_name_ko || r.dept_name : r.dept_name;
                         return (

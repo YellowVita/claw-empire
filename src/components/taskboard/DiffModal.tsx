@@ -1,6 +1,13 @@
 import { useState, useCallback, useEffect } from "react";
 import { useI18n } from "../../i18n";
-import { discardTask, getTaskDiff, mergeTask, type TaskDiffResult } from "../../api";
+import {
+  discardTask,
+  getTaskDiff,
+  getTaskVerifyCommit,
+  mergeTask,
+  type TaskDiffResult,
+  type TaskVerifyCommitResult,
+} from "../../api";
 
 interface DiffModalProps {
   taskId: string;
@@ -10,24 +17,37 @@ interface DiffModalProps {
 function DiffModal({ taskId, onClose }: DiffModalProps) {
   const { t } = useI18n();
   const [diffData, setDiffData] = useState<TaskDiffResult | null>(null);
+  const [verifyData, setVerifyData] = useState<TaskVerifyCommitResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [verifyError, setVerifyError] = useState<string | null>(null);
   const [merging, setMerging] = useState(false);
   const [discarding, setDiscarding] = useState(false);
   const [actionResult, setActionResult] = useState<string | null>(null);
 
   useEffect(() => {
-    getTaskDiff(taskId)
-      .then((d) => {
+    Promise.allSettled([getTaskDiff(taskId), getTaskVerifyCommit(taskId)]).then(([diffResult, verifyResult]) => {
+      if (diffResult.status === "fulfilled") {
+        const d = diffResult.value;
         if (!d.ok)
           setError(d.error || t({ ko: "알 수 없는 오류", en: "Unknown error", ja: "不明なエラー", zh: "未知错误" }));
         else setDiffData(d);
-        setLoading(false);
-      })
-      .catch((e) => {
-        setError(e instanceof Error ? e.message : String(e));
-        setLoading(false);
-      });
+      } else {
+        setError(diffResult.reason instanceof Error ? diffResult.reason.message : String(diffResult.reason));
+      }
+
+      if (verifyResult.status === "fulfilled") {
+        const v = verifyResult.value;
+        if (!v.ok)
+          setVerifyError(v.error || t({ ko: "검증 실패", en: "Verification failed", ja: "検証失敗", zh: "校验失败" }));
+        else setVerifyData(v);
+      } else {
+        setVerifyError(
+          verifyResult.reason instanceof Error ? verifyResult.reason.message : String(verifyResult.reason),
+        );
+      }
+      setLoading(false);
+    });
   }, [taskId, t]);
 
   // Close on Escape key
@@ -104,6 +124,40 @@ function DiffModal({ taskId, onClose }: DiffModalProps) {
     }
   }, [taskId, onClose, t]);
 
+  const verifyToneClass =
+    verifyData?.verdict === "ok"
+      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+      : verifyData?.verdict === "dirty_without_commit" || verifyData?.verdict === "commit_but_no_code"
+        ? "border-amber-500/30 bg-amber-500/10 text-amber-200"
+        : "border-slate-700 bg-slate-800/70 text-slate-300";
+
+  const verifyVerdictLabel = (() => {
+    switch (verifyData?.verdict) {
+      case "ok":
+        return t({ ko: "통과", en: "Passed", ja: "成功", zh: "通过" });
+      case "dirty_without_commit":
+        return t({ ko: "미커밋 변경", en: "Uncommitted changes", ja: "未コミット変更", zh: "未提交变更" });
+      case "commit_but_no_code":
+        return t({ ko: "코드 외 변경", en: "No code changes", ja: "コード変更なし", zh: "无代码变更" });
+      case "no_commit":
+        return t({ ko: "커밋 없음", en: "No commit", ja: "コミットなし", zh: "无提交" });
+      case "no_worktree":
+        return t({ ko: "워크트리 없음", en: "No worktree", ja: "ワークツリーなし", zh: "无工作树" });
+      default:
+        return t({ ko: "확인 불가", en: "Unknown", ja: "不明", zh: "未知" });
+    }
+  })();
+
+  const commitLabel =
+    verifyData && typeof verifyData.commitCount === "number"
+      ? t({
+          ko: `${verifyData.commitCount}개 커밋`,
+          en: `${verifyData.commitCount} commit${verifyData.commitCount === 1 ? "" : "s"}`,
+          ja: `${verifyData.commitCount}件のコミット`,
+          zh: `${verifyData.commitCount} 个提交`,
+        })
+      : null;
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
@@ -178,6 +232,55 @@ function DiffModal({ taskId, onClose }: DiffModalProps) {
             </div>
           ) : (
             <div className="space-y-4">
+              {verifyData && (
+                <div className={`rounded-lg border p-3 ${verifyToneClass}`}>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="text-sm font-semibold">
+                      {t({
+                        ko: "최종 브랜치 검증",
+                        en: "Final Branch Verification",
+                        ja: "最終ブランチ検証",
+                        zh: "最终分支校验",
+                      })}
+                    </h3>
+                    <span className="rounded-full bg-black/20 px-2 py-0.5 text-xs font-medium">
+                      {verifyVerdictLabel}
+                    </span>
+                    {commitLabel && <span className="text-xs opacity-80">{commitLabel}</span>}
+                    {verifyData.compareRef && <span className="text-xs opacity-80">base: {verifyData.compareRef}</span>}
+                  </div>
+                  {verifyData.files && verifyData.files.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {verifyData.files.slice(0, 6).map((filePath) => (
+                        <span key={filePath} className="rounded bg-black/20 px-2 py-0.5 text-[11px]">
+                          {filePath}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {verifyData.uncommittedFiles && verifyData.uncommittedFiles.length > 0 && (
+                    <p className="mt-2 text-xs">
+                      {t({
+                        ko: `미커밋 변경 ${verifyData.uncommittedFiles.length}건`,
+                        en: `${verifyData.uncommittedFiles.length} uncommitted file(s)`,
+                        ja: `未コミット変更 ${verifyData.uncommittedFiles.length}件`,
+                        zh: `${verifyData.uncommittedFiles.length} 个未提交文件`,
+                      })}
+                    </p>
+                  )}
+                </div>
+              )}
+              {verifyError && (
+                <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-3 text-xs text-amber-200">
+                  {t({
+                    ko: "브랜치 검증 정보를 불러오지 못했습니다",
+                    en: "Branch verification could not be loaded",
+                    ja: "ブランチ検証情報を取得できませんでした",
+                    zh: "无法加载分支校验信息",
+                  })}
+                  : {verifyError}
+                </div>
+              )}
               {/* Stat summary */}
               {diffData.stat && (
                 <div>

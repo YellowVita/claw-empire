@@ -12,6 +12,31 @@ export interface TaskDiffResult {
   error?: string;
 }
 
+export type VerifyCommitVerdict =
+  | "no_worktree"
+  | "no_commit"
+  | "dirty_without_commit"
+  | "commit_but_no_code"
+  | "ok"
+  | "error";
+
+export interface TaskVerifyCommitResult {
+  ok: boolean;
+  hasWorktree?: boolean;
+  worktreePath?: string;
+  branchName?: string;
+  compareRef?: string | null;
+  hasCommit?: boolean;
+  commitCount?: number;
+  commits?: string[];
+  files?: string[];
+  uncommittedFiles?: string[];
+  hasUncommittedChanges?: boolean;
+  hasRealCode?: boolean;
+  verdict?: VerifyCommitVerdict;
+  error?: string;
+}
+
 export interface MergeResult {
   ok: boolean;
   message: string;
@@ -27,6 +52,10 @@ export interface WorktreeEntry {
 
 export async function getTaskDiff(id: string): Promise<TaskDiffResult> {
   return request<TaskDiffResult>(`/api/tasks/${id}/diff`);
+}
+
+export async function getTaskVerifyCommit(id: string): Promise<TaskVerifyCommitResult> {
+  return request<TaskVerifyCommitResult>(`/api/tasks/${id}/verify-commit`);
 }
 
 export async function mergeTask(id: string): Promise<MergeResult> {

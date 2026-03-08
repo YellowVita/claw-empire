@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-2.0.1-blue" alt="Releases" />
+  <img src="https://img.shields.io/badge/version-2.0.3-blue" alt="Releases" />
   <a href="https://github.com/GreenSheep01201/claw-empire/actions/workflows/ci.yml"><img src="https://github.com/GreenSheep01201/claw-empire/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI" /></a>
   <img src="https://img.shields.io/badge/node-%3E%3D22-brightgreen" alt="Node.js 22+" />
   <img src="https://img.shields.io/badge/license-Apache%202.0-orange" alt="License" />
@@ -21,7 +21,7 @@
 <p align="center">
   <a href="#quick-start">Quick Start</a> &middot;
   <a href="#ai-installation-guide">AI Install Guide</a> &middot;
-  <a href="docs/releases/v2.0.1.md">Release Notes</a> &middot;
+  <a href="docs/releases/v2.0.3.md">Release Notes</a> &middot;
   <a href="#openclaw-integration">OpenClaw</a> &middot;
   <a href="#direct-messenger-without-openclaw">Direct Messenger</a> &middot;
   <a href="#dollar-command-logic">$ Command</a> &middot;
@@ -68,20 +68,14 @@ Claw-Empire transforms your AI coding assistants — connected via **CLI**, **OA
 
 ---
 
-## Latest Release (v2.0.1)
+## Latest Release (v2.0.3)
 
-- **Hydration-aware office-pack department precedence** - Non-development packs now prefer pack-profile department labels/icons before hydration, then switch to DB metadata after hydration completes.
-- **First-install bootstrap safety** - Fresh installs keep pack-profile defaults visible on first load, so initial users are not blocked by unhydrated DB state.
-- **Regression tests for merge semantics** - Added/updated tests for pre-hydration pack priority, post-hydration DB priority, and foreign-pack seed filtering.
-- **Discord token-based channel auto-discovery** - Added Discord Bot token channel lookup API and normalized token handling (`Bot <token>` or raw token) for immediate session setup.
-- **Auto channel loading in Settings** - Discord token input in chat editor now auto-loads guild/channel options and can auto-fill target ID/name.
-- **Discord inbound receiver added** - Introduced polling-based Discord receiver that forwards inbound user messages into `/api/inbox` (with bot-message filtering and cursor persistence).
-- **Receiver runtime visibility in UI** - Added Discord receiver status API and Settings panel indicators (active state, polled channel count, last error) next to Telegram status.
-- **Multi-token inbound route isolation** - Discord receiver now isolates cursor/source routing by token-key + channel ID to avoid cross-token mixing on shared targets.
-- **Multilingual Discord guidance/error messaging** - Added KO/EN/JA/ZH guidance for loading/no-channel/auth failure/rate-limit/channel lookup errors.
-- **Regression tests for Discord flow** - Added tests for token-based channel discovery, auth-failure handling, inbound forwarding behavior, multi-token source hints, and UI auto-load behavior.
+- **Final branch verification is now visible before merge** - the Diff Modal now shows a verification verdict, compare ref, commit count, changed files, and uncommitted-file state from `GET /api/tasks/:id/verify-commit`.
+- **Completion reports retain merge-time verification evidence** - successful manual merge flow writes `Final branch verification: ...` logs, and the report popup surfaces them in the planning summary view.
+- **Report avatars stay on sprite faces even when the active roster changes** - report rows and popups now reconstruct a fallback agent from report payload data instead of degrading to emoji when the current `agents` list no longer contains the assignee.
+- **Selected salvage from PR #54 was added without importing its risky task-model changes** - this release includes the worktree verification API/UI, `scripts/cleanup-staff.mjs`, and optional `deploy/` self-host reference templates only.
 
-- Full notes: [`docs/releases/v2.0.1.md`](docs/releases/v2.0.1.md)
+- Full notes: [`docs/releases/v2.0.3.md`](docs/releases/v2.0.3.md)
 - API docs: [`docs/api.md`](docs/api.md), [`docs/openapi.json`](docs/openapi.json)
 - Security policy: [`SECURITY.md`](SECURITY.md)
 

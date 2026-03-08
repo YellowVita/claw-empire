@@ -88,6 +88,35 @@ describe("api client", () => {
     expect(JSON.parse(String(init?.body))).toMatchObject({ id: "dep-1", name: "Department 1", name_ko: "부서1" });
   });
 
+  it("getTaskVerifyCommit은 verify-commit 엔드포인트를 조회한다", async () => {
+    const fetchMock = vi.fn();
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(
+        {
+          ok: true,
+          hasWorktree: true,
+          verdict: "ok",
+          commitCount: 1,
+          files: ["src/verify.ts"],
+        },
+        200,
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    const api = await import("./api");
+    const result = await api.getTaskVerifyCommit("task-verify");
+
+    expect(result).toMatchObject({
+      ok: true,
+      hasWorktree: true,
+      verdict: "ok",
+      commitCount: 1,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/tasks/task-verify/verify-commit");
+  });
+
   it("getTasks는 workflow_pack_key를 포함한 필터 쿼리를 전달한다", async () => {
     const fetchMock = vi.fn();
     fetchMock.mockResolvedValueOnce(

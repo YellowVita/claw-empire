@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-2.0.1-blue" alt="Releases" />
+  <img src="https://img.shields.io/badge/version-2.0.3-blue" alt="Releases" />
   <a href="https://github.com/GreenSheep01201/claw-empire/actions/workflows/ci.yml"><img src="https://github.com/GreenSheep01201/claw-empire/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI" /></a>
   <img src="https://img.shields.io/badge/node-%3E%3D22-brightgreen" alt="Node.js 22+" />
   <img src="https://img.shields.io/badge/license-Apache%202.0-orange" alt="License" />
@@ -21,7 +21,7 @@
 <p align="center">
   <a href="#빠른-시작">빠른 시작</a> &middot;
   <a href="#ai-installation-guide">AI 설치 가이드</a> &middot;
-  <a href="docs/releases/v2.0.1.md">릴리즈 노트</a> &middot;
+  <a href="docs/releases/v2.0.3.md">릴리즈 노트</a> &middot;
   <a href="#openclaw-integration">OpenClaw 연동</a> &middot;
   <a href="#direct-messenger-without-openclaw">직접 메신저</a> &middot;
   <a href="#dollar-command-logic">$ 명령 로직</a> &middot;
@@ -68,20 +68,14 @@ Claw-Empire는 **CLI**, **OAuth**, **직접 API 키** 방식으로 연결된 AI 
 
 ---
 
-## 최신 릴리즈 (v2.0.1)
+## 최신 릴리즈 (v2.0.3)
 
-- **오피스팩 부서 우선순위 hydration 연동** - `development` 외 팩은 hydration 전에는 pack profile(부서명/아이콘)을 우선 표시하고, hydration 완료 후에는 DB 메타데이터를 우선 사용합니다.
-- **첫 설치자 초기 진입 보호** - 신규 설치 직후 DB hydration 이전에도 pack profile 기본값을 먼저 보여 초기 사용자가 팩 구성을 바로 확인할 수 있습니다.
-- **병합 규칙 회귀 테스트 강화** - hydration 전/후 우선순위 전환과 타 팩 seed 에이전트 숨김 조건을 테스트로 고정했습니다.
-- **Discord 토큰 기반 채널 자동 조회** - Discord Bot 토큰으로 길드/텍스트 채널을 자동 조회하는 API를 추가하고 `Bot <token>`/원문 토큰 입력을 모두 지원합니다.
-- **설정 모달 자동 완성 UX 추가** - Discord 토큰 입력 시 채널 목록을 자동 로드하고, 선택한 채널의 대상 ID/기본 표시명을 자동 반영합니다.
-- **Discord 수신기(양방향) 추가** - Discord 채널 폴링 수신기를 추가해 사용자가 보낸 메시지를 `/api/inbox`로 전달하며, 봇 메시지는 루프 방지를 위해 건너뜁니다.
-- **수신 상태 가시성 강화** - `Discord 수신기` 상태 API/패널을 추가해 활성 여부, 폴링 채널 수, 마지막 오류를 설정 화면에서 바로 확인할 수 있습니다.
-- **Discord 멀티 토큰 수신 격리** - 같은 채널 ID를 여러 토큰이 공유해도 토큰키+채널 기준으로 커서를 분리해 교차 라우팅을 방지합니다.
-- **다국어 안내/오류 문구 보강** - Discord 채널 조회 로딩, 조회 결과, 인증 실패, 레이트리밋, 일반 실패 메시지를 KO/EN/JA/ZH로 제공하도록 정리했습니다.
-- **Discord 경로 회귀 테스트 확장** - 채널 조회/인증 실패, 수신기 포워딩, 봇 메시지 필터링, 멀티 토큰 source 힌트, UI 자동 조회 동작 테스트를 추가했습니다.
+- **머지 전에 최종 브랜치 검증 결과를 바로 확인할 수 있습니다** - Diff Modal이 `GET /api/tasks/:id/verify-commit` 결과를 표시해 verdict, 비교 기준 ref, 커밋 수, 변경 파일, 미커밋 파일 상태를 함께 보여줍니다.
+- **작업 완료 보고서에 머지 시점 검증 근거가 남습니다** - 수동 머지 성공 시 `Final branch verification: ...` 로그가 기록되고, 보고서 팝업의 기획 요약 영역에서 그대로 확인할 수 있습니다.
+- **활성 에이전트 목록이 바뀌어도 보고서 얼굴은 sprite로 유지됩니다** - 현재 `agents` 배열에 담당자가 없어도 보고서 payload의 agent 정보로 fallback agent를 복원해 이모지로 내려가지 않습니다.
+- **PR #54에서는 안전한 범위만 선별 반영했습니다** - worktree verification API/UI, `scripts/cleanup-staff.mjs`, 선택적인 `deploy/` self-host 템플릿만 포함했고, task model 변경이나 admin/local-server 확장은 넣지 않았습니다.
 
-- 상세 문서: [`docs/releases/v2.0.1.md`](docs/releases/v2.0.1.md)
+- 상세 문서: [`docs/releases/v2.0.3.md`](docs/releases/v2.0.3.md)
 - API 문서: [`docs/api.md`](docs/api.md), [`docs/openapi.json`](docs/openapi.json)
 - 보안 정책: [`SECURITY.md`](SECURITY.md)
 

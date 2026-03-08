@@ -5,6 +5,7 @@ import { archiveTaskReport, getTaskReportDetail } from "../api";
 import type { UiLanguage } from "../i18n";
 import { pickLang } from "../i18n";
 import AgentAvatar from "./AgentAvatar";
+import { resolveReportAgent } from "./task-report-agent";
 
 interface TaskReportPopupProps {
   report: TaskReportDetail;
@@ -64,6 +65,13 @@ export default function TaskReportPopup({ report, agents, departments, uiLanguag
   const projectName = currentReport.project?.project_name || projectNameFromPath(currentReport.task.project_path);
   const projectPath = currentReport.project?.project_path || currentReport.task.project_path;
   const planningSummary = currentReport.planning_summary;
+  const branchVerificationLogs = useMemo(
+    () =>
+      (currentReport.logs ?? []).filter(
+        (log) => log.kind === "system" && /^Final branch verification:/i.test(log.message.trim()),
+      ),
+    [currentReport.logs],
+  );
 
   const refreshArchive = async () => {
     if (!rootTaskId || refreshingArchive) return;
@@ -85,7 +93,7 @@ export default function TaskReportPopup({ report, agents, departments, uiLanguag
     setDocumentPages({});
   }, [currentReport.task.id, currentReport.requested_task_id, teamReports.length]);
 
-  const taskAgent = agents.find((a) => a.id === currentReport.task.assigned_agent_id);
+  const taskAgent = resolveReportAgent(agents, currentReport.task);
   const departmentById = useMemo(() => {
     const map = new Map<string, Department>();
     for (const department of departments) {
@@ -239,6 +247,29 @@ export default function TaskReportPopup({ report, agents, departments, uiLanguag
             t({ ko: "요약 내용이 없습니다", en: "No summary text", ja: "サマリーなし", zh: "暂无摘要内容" })}
         </pre>
       </div>
+      {branchVerificationLogs.length > 0 && (
+        <div className="rounded-lg border border-blue-500/20 bg-blue-500/10 p-3">
+          <p className="mb-2 text-xs font-semibold text-blue-200">
+            {t({
+              ko: "최종 브랜치 검증",
+              en: "Final Branch Verification",
+              ja: "最終ブランチ検証",
+              zh: "最终分支校验",
+            })}
+          </p>
+          <div className="space-y-1.5">
+            {branchVerificationLogs.map((log, index) => (
+              <div
+                key={`${log.created_at}-${index}`}
+                className="rounded bg-slate-950/40 px-2 py-1.5 text-[11px] text-slate-200"
+              >
+                <span className="mr-2 text-slate-500">{fmtTime(log.created_at)}</span>
+                {log.message}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       <div>
         <p className="mb-2 text-xs font-medium uppercase tracking-wider text-slate-500">
           {t({ ko: "문서 원문", en: "Source Documents", ja: "原本文書", zh: "原始文档" })}

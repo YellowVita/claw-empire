@@ -1,0 +1,25 @@
+[Unit]
+Description=Claw-Empire service
+Documentation=https://github.com/GreenSheep01201/claw-empire
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i
+WorkingDirectory=%h/claw-empire
+EnvironmentFile=-%h/claw-empire/deploy/.env.production
+ExecStartPre=/usr/bin/env bash -lc 'mkdir -p %h/claw-empire/logs'
+ExecStart=/usr/bin/env bash -lc 'cd %h/claw-empire && pnpm run start'
+Restart=on-failure
+RestartSec=10
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=30
+StandardOutput=append:%h/claw-empire/logs/claw-empire.log
+StandardError=append:%h/claw-empire/logs/claw-empire.err
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

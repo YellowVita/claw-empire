@@ -1,6 +1,6 @@
 {
   "name": "climpire",
-  "version": "2.0.1",
+  "version": "2.0.3",
   "description": "Claw-Empire - AI Agent Company Simulation. Command your CLI agent empire from the CEO desk.",
   "type": "module",
   "scripts": {
@@ -14,7 +14,7 @@
     "prestart:tailscale": "node scripts/auto-apply-v1.0.5.mjs && node scripts/ensure-remotion-runtime.mjs",
     "dev": "concurrently -n web,api -c cyan,magenta \"cross-env VITE_DEV=1 vite --host 0.0.0.0 --port 8800\" \"cross-env VITE_DEV=1 HOST=0.0.0.0 nodemon --watch server --ext ts --exec tsx server/index.ts\"",
     "dev:local": "concurrently -n web,api -c cyan,magenta \"cross-env VITE_DEV=1 vite --host 127.0.0.1 --port 8800\" \"cross-env VITE_DEV=1 HOST=127.0.0.1 nodemon --watch server --ext ts --exec tsx server/index.ts\"",
-    "dev:e2e": "node scripts/prepare-e2e-runtime.mjs && cross-env VITE_DEV=1 HOST=127.0.0.1 DB_PATH=.tmp/e2e-runtime/claw-empire.e2e.sqlite LOGS_DIR=.tmp/e2e-runtime/logs concurrently -n web,api -c cyan,magenta \"vite --host 127.0.0.1 --port 8810\" \"nodemon --watch server --ext ts --exec tsx server/index.ts\"",
+    "dev:e2e": "node scripts/prepare-e2e-runtime.mjs && cross-env VITE_DEV=1 HOST=127.0.0.1 DB_PATH=.tmp/e2e-runtime/claw-empire.e2e.sqlite LOGS_DIR=.tmp/e2e-runtime/logs INBOX_WEBHOOK_SECRET=claw-e2e-inbox-secret concurrently -n web,api -c cyan,magenta \"vite --host 127.0.0.1 --port 8810\" \"nodemon --watch server --ext ts --exec tsx server/index.ts\"",
     "dev:tailscale": "concurrently -n web,api -c cyan,magenta \"cross-env VITE_DEV=1 vite --host 0.0.0.0 --port 8800\" \"cross-env VITE_DEV=1 HOST=0.0.0.0 nodemon --watch server --ext ts --exec tsx server/index.ts\"",
     "start": "tsx server/index.ts",
     "start:tailscale": "cross-env HOST=0.0.0.0 tsx server/index.ts",
@@ -39,7 +39,7 @@
     "test:api": "vitest --config server/vitest.config.ts",
     "test:e2e": "playwright test --config playwright.config.ts",
     "test": "pnpm run test:web && pnpm run test:api",
-    "test:ci": "pnpm run test:web --coverage && pnpm run test:api --coverage && pnpm run test:e2e",
+    "test:ci": "pnpm run test:web --coverage && pnpm run test:api --coverage && pnpm run openapi:check && pnpm run test:e2e",
     "lint": "eslint src server",
     "lint:fix": "eslint src server --fix",
     "lint:staged": "lint-staged",

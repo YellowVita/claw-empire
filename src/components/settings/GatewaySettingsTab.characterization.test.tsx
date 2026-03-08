@@ -53,6 +53,7 @@ describe("GatewaySettingsTab characterization", () => {
     apiMocks.getTelegramReceiverStatus.mockReset();
     apiMocks.getDiscordReceiverStatus.mockReset();
     apiMocks.sendMessengerRuntimeMessage.mockReset();
+    apiMocks.listDiscordChannelsByToken.mockReset();
 
     apiMocks.getAgents.mockResolvedValue([]);
     apiMocks.getWorkflowPacks.mockResolvedValue({ packs: [] });
