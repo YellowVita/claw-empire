@@ -208,23 +208,40 @@ export function createMeetingMinutesTools(deps: MeetingMinutesDeps) {
     return out;
   }
 
-  function collectPlannedActionItems(transcript: MeetingTranscriptEntry[], maxItems = 10): string[] {
-    const riskFirst = collectRevisionMemoItems(transcript, maxItems);
-    if (riskFirst.length > 0) return riskFirst;
+  function extractPlannedActionCandidates(text: string): string[] {
+    return text
+      .split(/\r?\n+/)
+      .flatMap((line) => line.split(/(?<=[.!?。！？])\s+/))
+      .map((line) => line.replace(/^[\s\-*0-9.)]+/, "").replace(/\s+/g, " ").trim())
+      .filter(Boolean);
+  }
 
+  function collectPlannedActionItems(transcript: MeetingTranscriptEntry[], maxItems = 10): string[] {
     const out: string[] = [];
     const seen = new Set<string>();
+    const isLowSignal = (text: string) =>
+      /^(알겠습니다|좋습니다|문제없습니다|확인했습니다|동의합니다|승인합니다|오케이|understood|got it|sounds good|looks good|agreed|approved|noted|acknowledged)\b/i.test(
+        text,
+      );
+    const isActionLike = (text: string) =>
+      /해야|진행|작성|구현|정리|확정|검토|수집|공유|테스트|배포|연동|문서화|수정|보완|준비|필요|리스크|보류|create|implement|prepare|finalize|review|document|share|collect|verify|test|fix|coordinate|deliver|ship|required|risk|pending|block|follow up/i.test(
+        text,
+      );
     for (const row of transcript) {
-      const base = row.content.replace(/\s+/g, " ").trim();
-      if (!base || base.length < 8) continue;
-      const note = `${row.department} ${row.speaker}: ${base}`;
-      const normalized = note.toLowerCase();
-      if (seen.has(normalized)) continue;
-      seen.add(normalized);
-      out.push(note.length > 220 ? `${note.slice(0, 219).trimEnd()}…` : note);
-      if (out.length >= maxItems) break;
+      for (const candidate of extractPlannedActionCandidates(row.content)) {
+        if (candidate.length < 12) continue;
+        if (isLowSignal(candidate)) continue;
+        if (!isActionLike(candidate)) continue;
+        const note = `${row.department} ${row.speaker}: ${candidate}`;
+        const normalized = normalizeRevisionMemoNote(note);
+        if (seen.has(normalized)) continue;
+        seen.add(normalized);
+        out.push(note.length > 220 ? `${note.slice(0, 219).trimEnd()}…` : note);
+        if (out.length >= maxItems) return out;
+      }
     }
-    return out;
+    if (out.length > 0) return out;
+    return collectRevisionMemoItems(transcript, maxItems);
   }
 
   function appendTaskProjectMemo(

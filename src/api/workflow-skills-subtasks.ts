@@ -430,7 +430,19 @@ export async function createSubtask(
 
 export async function updateSubtask(
   id: string,
-  data: Partial<Pick<SubTask, "title" | "description" | "status" | "assigned_agent_id" | "blocked_reason">>,
+  data: Partial<
+    Pick<
+      SubTask,
+      "title" | "description" | "status" | "assigned_agent_id" | "blocked_reason" | "target_department_id"
+    >
+  >,
 ): Promise<SubTask> {
   return patch(`/api/subtasks/${id}`, data) as Promise<SubTask>;
+}
+
+export async function runSubtaskAction(
+  id: string,
+  action: "retry" | "move_to_owner" | "mark_done",
+): Promise<SubTask> {
+  return post(`/api/subtasks/${id}/action`, { action }) as Promise<SubTask>;
 }

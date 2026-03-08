@@ -285,6 +285,7 @@ export default function App() {
     setDepartments,
     setAgents,
     setTasks,
+    setSubtasks,
     setStats,
     setSettings,
     setSubtasks,
@@ -444,6 +445,7 @@ export default function App() {
       onResumeTask={actions.handleResumeTask}
       onOpenTerminal={(taskId) => setTaskPanel({ taskId, tab: "terminal" })}
       onOpenMeetingMinutes={(taskId) => setTaskPanel({ taskId, tab: "minutes" })}
+      onRunSubtaskAction={actions.handleRunSubtaskAction}
       onAgentsChange={actions.handleAgentsChange}
       activeOfficeWorkflowPack={settings.officeWorkflowPack ?? "development"}
       onChangeOfficeWorkflowPack={handleOfficeWorkflowPackChange}

@@ -29,6 +29,7 @@ interface TaskCardProps {
   onResumeTask?: (id: string) => void;
   onOpenTerminal?: (taskId: string) => void;
   onOpenMeetingMinutes?: (taskId: string) => void;
+  onRunSubtaskAction: (subtaskId: string, action: "retry" | "move_to_owner" | "mark_done") => void | Promise<void>;
   onMergeTask?: (id: string) => void;
   onDiscardTask?: (id: string) => void;
   onHideTask?: (id: string) => void;
@@ -57,6 +58,7 @@ export default function TaskCard({
   onResumeTask,
   onOpenTerminal,
   onOpenMeetingMinutes,
+  onRunSubtaskAction,
   onMergeTask,
   onDiscardTask,
   onHideTask,
@@ -69,6 +71,7 @@ export default function TaskCard({
   const [showDiff, setShowDiff] = useState(false);
   const [showSubtasks, setShowSubtasks] = useState(false);
   const [agentWarning, setAgentWarning] = useState(false);
+  const [subtaskActionBusyId, setSubtaskActionBusyId] = useState<string | null>(null);
 
   const assignedAgent = task.assigned_agent ?? agents.find((agent) => agent.id === task.assigned_agent_id);
   const fallbackAssignedName =
@@ -223,33 +226,84 @@ export default function TaskCard({
                   ? departments.find((departmentItem) => departmentItem.id === subtask.target_department_id)
                   : null;
                 return (
-                  <div key={subtask.id} className="flex items-center gap-1.5 text-xs">
-                    <span>{SUBTASK_STATUS_ICON[subtask.status] || "\u23F3"}</span>
-                    <span
-                      className={`flex-1 truncate ${subtask.status === "done" ? "line-through text-slate-500" : "text-slate-300"}`}
-                    >
-                      {subtask.title}
-                    </span>
-                    {targetDepartment && (
+                  <div key={subtask.id} className="rounded-md border border-slate-700/70 bg-slate-900/60 px-2 py-1.5">
+                    <div className="flex items-center gap-1.5 text-xs">
+                      <span>{SUBTASK_STATUS_ICON[subtask.status] || "\u23F3"}</span>
                       <span
-                        className="shrink-0 rounded px-1 py-0.5 text-[10px] font-medium"
-                        style={{ backgroundColor: targetDepartment.color + "30", color: targetDepartment.color }}
+                        className={`flex-1 truncate ${subtask.status === "done" ? "line-through text-slate-500" : "text-slate-300"}`}
                       >
-                        {targetDepartment.icon} {targetDepartment.name_ko}
+                        {subtask.title}
                       </span>
-                    )}
-                    {subtask.delegated_task_id && subtask.status !== "done" && (
-                      <span
-                        className="text-blue-400 shrink-0"
-                        title={t({ ko: "위임됨", en: "Delegated", ja: "委任済み", zh: "已委派" })}
-                      >
-                        🔗
-                      </span>
-                    )}
+                      {targetDepartment && (
+                        <span
+                          className="shrink-0 rounded px-1 py-0.5 text-[10px] font-medium"
+                          style={{ backgroundColor: targetDepartment.color + "30", color: targetDepartment.color }}
+                        >
+                          {targetDepartment.icon} {targetDepartment.name_ko}
+                        </span>
+                      )}
+                      {subtask.delegated_task_id && subtask.status !== "done" && (
+                        <span
+                          className="text-blue-400 shrink-0"
+                          title={t({ ko: "위임됨", en: "Delegated", ja: "委任済み", zh: "已委派" })}
+                        >
+                          🔗
+                        </span>
+                      )}
+                    </div>
                     {subtask.status === "blocked" && subtask.blocked_reason && (
-                      <span className="text-red-400 text-[10px] truncate max-w-[80px]" title={subtask.blocked_reason}>
-                        {subtask.blocked_reason}
-                      </span>
+                      <div className="mt-1 flex flex-col gap-1">
+                        <span className="text-red-400 text-[10px]" title={subtask.blocked_reason}>
+                          {subtask.blocked_reason}
+                        </span>
+                        <div className="flex flex-wrap gap-1">
+                          <button
+                            type="button"
+                            disabled={subtaskActionBusyId === subtask.id}
+                            onClick={async () => {
+                              try {
+                                setSubtaskActionBusyId(subtask.id);
+                                await onRunSubtaskAction(subtask.id, "retry");
+                              } finally {
+                                setSubtaskActionBusyId((current) => (current === subtask.id ? null : current));
+                              }
+                            }}
+                            className="rounded border border-amber-500/50 px-1.5 py-0.5 text-[10px] text-amber-200 transition hover:bg-amber-500/10 disabled:cursor-wait disabled:opacity-60"
+                          >
+                            {t({ ko: "재시도", en: "Retry", ja: "再試行", zh: "重试" })}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={subtaskActionBusyId === subtask.id}
+                            onClick={async () => {
+                              try {
+                                setSubtaskActionBusyId(subtask.id);
+                                await onRunSubtaskAction(subtask.id, "move_to_owner");
+                              } finally {
+                                setSubtaskActionBusyId((current) => (current === subtask.id ? null : current));
+                              }
+                            }}
+                            className="rounded border border-cyan-500/50 px-1.5 py-0.5 text-[10px] text-cyan-200 transition hover:bg-cyan-500/10 disabled:cursor-wait disabled:opacity-60"
+                          >
+                            {t({ ko: "원부서 처리", en: "Move to Owner", ja: "元部門へ戻す", zh: "转回原部门" })}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={subtaskActionBusyId === subtask.id}
+                            onClick={async () => {
+                              try {
+                                setSubtaskActionBusyId(subtask.id);
+                                await onRunSubtaskAction(subtask.id, "mark_done");
+                              } finally {
+                                setSubtaskActionBusyId((current) => (current === subtask.id ? null : current));
+                              }
+                            }}
+                            className="rounded border border-emerald-500/50 px-1.5 py-0.5 text-[10px] text-emerald-200 transition hover:bg-emerald-500/10 disabled:cursor-wait disabled:opacity-60"
+                          >
+                            {t({ ko: "완료 처리", en: "Mark Done", ja: "完了処理", zh: "标记完成" })}
+                          </button>
+                        </div>
+                      </div>
                     )}
                   </div>
                 );

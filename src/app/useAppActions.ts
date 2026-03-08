@@ -12,6 +12,7 @@ import type {
   CompanyStats,
   Department,
   Message,
+  SubTask,
   Task,
   WorkflowPackKey,
 } from "../types";
@@ -27,6 +28,7 @@ interface UseAppActionsParams {
   setAgents: Dispatch<SetStateAction<Agent[]>>;
   setDepartments: Dispatch<SetStateAction<Department[]>>;
   setTasks: Dispatch<SetStateAction<Task[]>>;
+  setSubtasks: Dispatch<SetStateAction<SubTask[]>>;
   setStats: Dispatch<SetStateAction<CompanyStats | null>>;
   setMessages: Dispatch<SetStateAction<Message[]>>;
   setChatAgent: Dispatch<SetStateAction<Agent | null>>;
@@ -47,6 +49,7 @@ export function useAppActions({
   setAgents,
   setDepartments,
   setTasks,
+  setSubtasks,
   setStats,
   setMessages,
   setChatAgent,
@@ -230,6 +233,20 @@ export function useAppActions({
       }
     },
     [refreshTasksAndAgents],
+  );
+
+  const handleRunSubtaskAction = useCallback(
+    async (subtaskId: string, action: "retry" | "move_to_owner" | "mark_done") => {
+      try {
+        const updated = await api.runSubtaskAction(subtaskId, action);
+        setSubtasks((prev) => prev.map((subtask) => (subtask.id === updated.id ? updated : subtask)));
+        scheduleLiveSync(250);
+      } catch (error) {
+        console.error("Run subtask action failed:", error);
+        throw error;
+      }
+    },
+    [scheduleLiveSync, setSubtasks],
   );
 
   const handleSaveSettings = useCallback(
@@ -481,6 +498,7 @@ export function useAppActions({
     handleStopTask,
     handlePauseTask,
     handleResumeTask,
+    handleRunSubtaskAction,
     handleSaveSettings,
     handleDismissAutoUpdateNotice,
     handleOpenChat,

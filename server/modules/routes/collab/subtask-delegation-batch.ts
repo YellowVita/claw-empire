@@ -212,15 +212,47 @@ export function createSubtaskDelegationBatch(deps: BatchDeps) {
 
     const crossLeader = findTeamLeader(targetDeptId, projectCandidateAgentIds);
     if (!crossLeader) {
-      const doneAt = nowMs();
+      const blockedReason = pickL(
+        l(
+          [`${targetDeptName} 팀장 부재로 위임 대기`],
+          [`Delegation blocked: no team leader available for ${targetDeptName}`],
+          [`${targetDeptName}のチームリーダー不在のため委任保留`],
+          [`因${targetDeptName}负责人缺失，委派已阻塞`],
+        ),
+        lang,
+      );
       for (const sid of subtaskIds) {
-        db.prepare("UPDATE subtasks SET status = 'done', completed_at = ?, blocked_reason = NULL WHERE id = ?").run(
-          doneAt,
+        db.prepare(
+          "UPDATE subtasks SET status = 'blocked', completed_at = NULL, blocked_reason = ?, delegated_task_id = NULL WHERE id = ?",
+        ).run(
+          blockedReason,
           sid,
         );
         broadcast("subtask_update", db.prepare("SELECT * FROM subtasks WHERE id = ?").get(sid));
       }
-      maybeNotifyAllSubtasksComplete(parentTask.id);
+      appendTaskLog(
+        parentTask.id,
+        "system",
+        `Subtask delegation blocked: no scoped team leader found for ${targetDeptName} (${subtaskIds.length} subtask(s))`,
+      );
+      notifyCeo(
+        pickL(
+          l(
+            [`'${parentTask.title}'의 ${targetDeptName} 서브태스크 ${subtaskIds.length}건은 해당 팀장이 없어 위임이 보류되었습니다.`],
+            [
+              `${subtaskIds.length} ${targetDeptName} subtask(s) for '${parentTask.title}' are blocked because no scoped team leader is available.`,
+            ],
+            [
+              `'${parentTask.title}' の${targetDeptName}向けサブタスク${subtaskIds.length}件は、対象チームリーダー不在のため委任保留になりました。`,
+            ],
+            [
+              `'${parentTask.title}' 的 ${targetDeptName} 子任务 ${subtaskIds.length} 项因缺少对应负责人而暂缓委派。`,
+            ],
+          ),
+          lang,
+        ),
+        parentTask.id,
+      );
       onBatchDone?.();
       return;
     }

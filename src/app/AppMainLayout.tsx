@@ -117,6 +117,7 @@ interface AppMainLayoutProps {
   onResumeTask: (id: string) => Promise<void>;
   onOpenTerminal: (taskId: string) => void;
   onOpenMeetingMinutes: (taskId: string) => void;
+  onRunSubtaskAction: (subtaskId: string, action: "retry" | "move_to_owner" | "mark_done") => Promise<void>;
   onAgentsChange: () => void;
   activeOfficeWorkflowPack: WorkflowPackKey;
   onChangeOfficeWorkflowPack: (packKey: WorkflowPackKey) => void;
@@ -178,6 +179,7 @@ export default function AppMainLayout({
   onResumeTask,
   onOpenTerminal,
   onOpenMeetingMinutes,
+  onRunSubtaskAction,
   onAgentsChange,
   activeOfficeWorkflowPack,
   onChangeOfficeWorkflowPack,
@@ -516,6 +518,7 @@ export default function AppMainLayout({
                 onResumeTask={onResumeTask}
                 onOpenTerminal={onOpenTerminal}
                 onOpenMeetingMinutes={onOpenMeetingMinutes}
+                onRunSubtaskAction={onRunSubtaskAction}
               />
             )}
 

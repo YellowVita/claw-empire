@@ -1,0 +1,139 @@
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+
+import { I18nProvider } from "../../i18n";
+import type { Agent, Department, SubTask, Task } from "../../types";
+import TaskCard from "./TaskCard";
+
+const baseTask: Task = {
+  id: "task-1",
+  title: "Parent task",
+  description: "desc",
+  status: "planned",
+  priority: 3,
+  department_id: "dev",
+  assigned_agent_id: "dev-1",
+  created_at: 1,
+  updated_at: 1,
+  started_at: null,
+  completed_at: null,
+  task_type: "general",
+  hidden: 0,
+  workflow_pack_key: "development",
+  source_task_id: null,
+  result: null,
+  project_id: null,
+  project_path: null,
+  assigned_agent: null,
+  agent_name: "Dev Lead",
+  agent_name_ko: "개발팀장",
+  subtask_total: 1,
+  subtask_done: 0,
+};
+
+const agents: Agent[] = [
+  {
+    id: "dev-1",
+    name: "Dev Lead",
+    name_ko: "개발팀장",
+    name_ja: "Dev Lead",
+    name_zh: "Dev Lead",
+    department_id: "dev",
+    role: "team_leader",
+    personality: null,
+    status: "idle",
+    current_task_id: null,
+    avatar_emoji: "D",
+    cli_provider: "codex",
+    oauth_account_id: null,
+    api_provider_id: null,
+    api_model: null,
+    cli_model: null,
+    cli_reasoning_level: null,
+    stats_tasks_done: 0,
+    stats_xp: 0,
+    created_at: 1,
+  },
+];
+
+const departments: Department[] = [
+  {
+    id: "dev",
+    name: "Development",
+    name_ko: "개발팀",
+    name_ja: "開発",
+    name_zh: "开发",
+    icon: "D",
+    color: "#00f",
+    description: null,
+    prompt: null,
+    sort_order: 1,
+    created_at: 1,
+  },
+  {
+    id: "qa",
+    name: "QA",
+    name_ko: "QA팀",
+    name_ja: "QA",
+    name_zh: "QA",
+    icon: "Q",
+    color: "#0f0",
+    description: null,
+    prompt: null,
+    sort_order: 2,
+    created_at: 1,
+  },
+];
+
+const blockedSubtask: SubTask = {
+  id: "sub-1",
+  task_id: "task-1",
+  title: "QA verify",
+  description: null,
+  status: "blocked",
+  assigned_agent_id: null,
+  blocked_reason: "QA 팀장 부재",
+  cli_tool_use_id: null,
+  target_department_id: "qa",
+  delegated_task_id: null,
+  created_at: 1,
+  completed_at: null,
+};
+
+describe("TaskCard blocked subtask actions", () => {
+  it("renders blocked subtask action buttons and calls the handler", async () => {
+    const onRunSubtaskAction = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <I18nProvider language="ko">
+        <TaskCard
+          task={baseTask}
+          agents={agents}
+          departments={departments}
+          taskSubtasks={[blockedSubtask]}
+          onUpdateTask={vi.fn()}
+          onDeleteTask={vi.fn()}
+          onAssignTask={vi.fn()}
+          onRunTask={vi.fn()}
+          onStopTask={vi.fn()}
+          onPauseTask={vi.fn()}
+          onResumeTask={vi.fn()}
+          onOpenTerminal={vi.fn()}
+          onOpenMeetingMinutes={vi.fn()}
+          onRunSubtaskAction={onRunSubtaskAction}
+        />
+      </I18nProvider>,
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "0/1 ▼" }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "재시도" }));
+    });
+
+    expect(onRunSubtaskAction).toHaveBeenCalledWith("sub-1", "retry");
+    expect(screen.getByRole("button", { name: "원부서 처리" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "완료 처리" })).toBeInTheDocument();
+  });
+});

@@ -34,6 +34,7 @@ interface TaskBoardProps {
   onResumeTask?: (id: string) => void;
   onOpenTerminal?: (taskId: string) => void;
   onOpenMeetingMinutes?: (taskId: string) => void;
+  onRunSubtaskAction: (subtaskId: string, action: "retry" | "move_to_owner" | "mark_done") => void | Promise<void>;
   onMergeTask?: (id: string) => void;
   onDiscardTask?: (id: string) => void;
 }
@@ -53,6 +54,7 @@ export function TaskBoard({
   onResumeTask,
   onOpenTerminal,
   onOpenMeetingMinutes,
+  onRunSubtaskAction,
   onMergeTask,
   onDiscardTask,
 }: TaskBoardProps) {
@@ -278,6 +280,7 @@ export function TaskBoard({
                       onResumeTask={onResumeTask}
                       onOpenTerminal={onOpenTerminal}
                       onOpenMeetingMinutes={onOpenMeetingMinutes}
+                      onRunSubtaskAction={onRunSubtaskAction}
                       onMergeTask={onMergeTask}
                       onDiscardTask={onDiscardTask}
                       onHideTask={hideTask}

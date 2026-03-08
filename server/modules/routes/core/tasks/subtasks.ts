@@ -20,6 +20,7 @@ export type TaskSubtaskRouteDeps = Pick<
   | "sendAgentMessage"
   | "pickL"
   | "l"
+  | "processSubtaskDelegations"
 >;
 
 export function registerTaskSubtaskRoutes(deps: TaskSubtaskRouteDeps): void {
@@ -38,6 +39,7 @@ export function registerTaskSubtaskRoutes(deps: TaskSubtaskRouteDeps): void {
     sendAgentMessage,
     pickL,
     l,
+    processSubtaskDelegations,
   } = deps;
 
   app.get("/api/subtasks", (req, res) => {
@@ -139,6 +141,64 @@ export function registerTaskSubtaskRoutes(deps: TaskSubtaskRouteDeps): void {
     const subtask = db.prepare("SELECT * FROM subtasks WHERE id = ?").get(id);
     broadcast("subtask_update", subtask);
     res.json(subtask);
+  });
+
+  app.post("/api/subtasks/:id/action", (req, res) => {
+    const id = String(req.params.id);
+    const action = typeof (req.body as any)?.action === "string" ? String((req.body as any).action).trim() : "";
+    if (!action) return res.status(400).json({ error: "action_required" });
+
+    const subtask = db.prepare("SELECT * FROM subtasks WHERE id = ?").get(id) as
+      | {
+          id: string;
+          task_id: string;
+          title: string;
+          status: string;
+          assigned_agent_id: string | null;
+          blocked_reason: string | null;
+          target_department_id: string | null;
+          delegated_task_id: string | null;
+        }
+      | undefined;
+    if (!subtask) return res.status(404).json({ error: "not_found" });
+
+    const parentTask = db
+      .prepare("SELECT id, title, assigned_agent_id, department_id FROM tasks WHERE id = ?")
+      .get(subtask.task_id) as
+      | {
+          id: string;
+          title: string;
+          assigned_agent_id: string | null;
+          department_id: string | null;
+        }
+      | undefined;
+    if (!parentTask) return res.status(404).json({ error: "task_not_found" });
+
+    const t = nowMs();
+    if (action === "retry") {
+      db.prepare(
+        "UPDATE subtasks SET status = 'pending', blocked_reason = NULL, delegated_task_id = NULL, completed_at = NULL WHERE id = ?",
+      ).run(id);
+      appendTaskLog(parentTask.id, "system", `Subtask retry requested: ${subtask.title}`);
+      processSubtaskDelegations(parentTask.id);
+    } else if (action === "move_to_owner") {
+      db.prepare(
+        "UPDATE subtasks SET target_department_id = NULL, status = 'pending', blocked_reason = NULL, delegated_task_id = NULL, completed_at = NULL, assigned_agent_id = ? WHERE id = ?",
+      ).run(parentTask.assigned_agent_id ?? subtask.assigned_agent_id ?? null, id);
+      appendTaskLog(parentTask.id, "system", `Subtask moved back to owner team: ${subtask.title}`);
+    } else if (action === "mark_done") {
+      db.prepare(
+        "UPDATE subtasks SET status = 'done', blocked_reason = NULL, completed_at = ?, delegated_task_id = NULL WHERE id = ?",
+      ).run(t, id);
+      appendTaskLog(parentTask.id, "system", `Blocked subtask manually completed: ${subtask.title}`);
+      processSubtaskDelegations(parentTask.id);
+    } else {
+      return res.status(400).json({ error: "unsupported_action" });
+    }
+
+    const updatedSubtask = db.prepare("SELECT * FROM subtasks WHERE id = ?").get(id);
+    broadcast("subtask_update", updatedSubtask);
+    res.json(updatedSubtask);
   });
 
   app.post("/api/tasks/:id/assign", (req, res) => {

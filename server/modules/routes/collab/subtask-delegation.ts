@@ -148,6 +148,8 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
   const pendingDelegationOptionsByTask = new Map<string, { includeRender?: boolean }>();
   const autoResumeRetryTimers = new Map<string, NodeJS.Timeout>();
   const autoResumeRetryAttempts = new Map<string, number>();
+  const delegationRetryTimers = new Map<string, NodeJS.Timeout>();
+  const delegationRetryAttempts = new Map<string, number>();
 
   // ---------------------------------------------------------------------------
   // Subtask cross-department delegation: sequential by department,
@@ -175,6 +177,61 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
       autoResumeRetryTimers.delete(taskId);
     }
     autoResumeRetryAttempts.delete(taskId);
+  }
+
+  function clearDelegationRetry(taskId: string): void {
+    const timer = delegationRetryTimers.get(taskId);
+    if (timer) {
+      clearTimeout(timer);
+      delegationRetryTimers.delete(taskId);
+    }
+    delegationRetryAttempts.delete(taskId);
+  }
+
+  function scheduleDelegationRetry(
+    taskId: string,
+    title: string,
+    lang: Lang,
+    ownDeptPending: number,
+    taskStatus: string,
+  ): void {
+    if (delegationRetryTimers.has(taskId)) return;
+    const nextAttempt = (delegationRetryAttempts.get(taskId) ?? 0) + 1;
+    delegationRetryAttempts.set(taskId, nextAttempt);
+    const delayMs = Math.min(15_000 * nextAttempt, 120_000);
+    appendTaskLog(
+      taskId,
+      "system",
+      `Subtask delegation retry scheduled in ${Math.round(delayMs / 1000)}s (attempt ${nextAttempt}; own_pending=${ownDeptPending}; status=${taskStatus})`,
+    );
+    if (nextAttempt === 1 || nextAttempt % 3 === 0) {
+      notifyCeo(
+        pickL(
+          l(
+            [
+              `'${title}' 는 원부서 서브태스크 ${ownDeptPending}건이 아직 남아 있어 외부 부서 위임을 잠시 대기합니다. 자동 재시도 예정입니다.`,
+            ],
+            [
+              `'${title}' is waiting to delegate external subtasks because ${ownDeptPending} origin-team subtasks are still unfinished. It will retry automatically.`,
+            ],
+            [
+              `'${title}' は元部門のサブタスク${ownDeptPending}件が未完了のため、他部門委任を一時待機しています。自動再試行します。`,
+            ],
+            [
+              `'${title}' 因原部门仍有 ${ownDeptPending} 个子任务未完成，暂缓对外部门委派。系统将自动重试。`,
+            ],
+          ),
+          lang,
+        ),
+        taskId,
+      );
+    }
+    const timer = setTimeout(() => {
+      delegationRetryTimers.delete(taskId);
+      processSubtaskDelegations(taskId);
+    }, delayMs);
+    timer.unref?.();
+    delegationRetryTimers.set(taskId, timer);
   }
 
   function scheduleAutoResumeRetry(taskId: string, reason: string): void {
@@ -259,7 +316,10 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
       ? foreignSubtasks
       : foreignSubtasks.filter((s) => !String(s.title ?? "").includes("[VIDEO_FINAL_RENDER]"));
 
-    if (eligible.length === 0) return;
+    if (eligible.length === 0) {
+      clearDelegationRetry(taskId);
+      return;
+    }
 
     const parentTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId) as
       | {
@@ -272,7 +332,10 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
           department_id: string | null;
         }
       | undefined;
-    if (!parentTask) return;
+    if (!parentTask) {
+      clearDelegationRetry(taskId);
+      return;
+    }
     const lang = resolveLang(parentTask.description ?? parentTask.title);
 
     // Origin team first: defer foreign delegation until origin team reaches review (work complete)
@@ -288,9 +351,11 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
           "system",
           `Subtask delegation deferred: origin team has ${ownDeptPending.cnt} unfinished subtask(s) (task status=${parentTask.status}). Foreign delegation will start after origin team reaches review.`,
         );
+        scheduleDelegationRetry(taskId, parentTask.title, lang, ownDeptPending.cnt, parentTask.status);
         return;
       }
     }
+    clearDelegationRetry(taskId);
     const queues = orderSubtaskQueuesByDepartment(groupSubtasksByTargetDepartment(eligible));
     const deptCount = queues.length;
     subtaskDelegationDispatchInFlight.add(taskId);
