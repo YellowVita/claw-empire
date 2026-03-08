@@ -1,6 +1,5 @@
-import { useCallback, useMemo, type ReactNode } from "react";
+import { Suspense, lazy, useCallback, useMemo, type ReactNode } from "react";
 import Sidebar from "../components/Sidebar";
-import OfficeView from "../components/OfficeView";
 import Dashboard from "../components/Dashboard";
 import TaskBoard from "../components/TaskBoard";
 import AgentManager from "../components/AgentManager";
@@ -24,6 +23,7 @@ import type {
 import type { UpdateStatus } from "../api";
 import type { OAuthCallbackResult, RoomThemeMap, View } from "./types";
 import AppHeaderBar from "./AppHeaderBar";
+import OfficeViewLoadingFallback from "./OfficeViewLoadingFallback";
 import {
   buildOfficePackStarterAgents,
   buildOfficePackPresentation,
@@ -34,6 +34,8 @@ import {
 } from "./office-workflow-pack";
 import { resolvePackAgentViews, resolvePackDepartmentsForDisplay } from "./office-pack-display";
 import { applyOfficePackToTaskInput, filterTasksByOfficePack, type TaskCreateInput } from "./task-workflow-pack";
+
+const OfficeView = lazy(() => import("../components/OfficeView"));
 
 interface AppMainLayoutLabels {
   uiLanguage: string;
@@ -472,24 +474,26 @@ export default function AppMainLayout({
 
           <div className="p-3 sm:p-4 lg:p-6">
             {view === "office" && (
-              <OfficeView
-                departments={officePresentation.departments}
-                agents={officePresentation.agents}
-                tasks={tasks}
-                subAgents={subAgents}
-                meetingPresence={meetingPresence}
-                activeMeetingTaskId={activeMeetingTaskId}
-                unreadAgentIds={unreadAgentIds}
-                crossDeptDeliveries={crossDeptDeliveries}
-                onCrossDeptDeliveryProcessed={onCrossDeptDeliveryProcessed}
-                ceoOfficeCalls={ceoOfficeCalls}
-                onCeoOfficeCallProcessed={onCeoOfficeCallProcessed}
-                onOpenActiveMeetingMinutes={onOpenActiveMeetingMinutes}
-                customDeptThemes={officePresentation.roomThemes}
-                themeHighlightTargetId={activeRoomThemeTargetId}
-                onSelectAgent={onSelectAgent}
-                onSelectDepartment={onSelectDepartment}
-              />
+              <Suspense fallback={<OfficeViewLoadingFallback uiLanguage={labels.uiLanguage} />}>
+                <OfficeView
+                  departments={officePresentation.departments}
+                  agents={officePresentation.agents}
+                  tasks={tasks}
+                  subAgents={subAgents}
+                  meetingPresence={meetingPresence}
+                  activeMeetingTaskId={activeMeetingTaskId}
+                  unreadAgentIds={unreadAgentIds}
+                  crossDeptDeliveries={crossDeptDeliveries}
+                  onCrossDeptDeliveryProcessed={onCrossDeptDeliveryProcessed}
+                  ceoOfficeCalls={ceoOfficeCalls}
+                  onCeoOfficeCallProcessed={onCeoOfficeCallProcessed}
+                  onOpenActiveMeetingMinutes={onOpenActiveMeetingMinutes}
+                  customDeptThemes={officePresentation.roomThemes}
+                  themeHighlightTargetId={activeRoomThemeTargetId}
+                  onSelectAgent={onSelectAgent}
+                  onSelectDepartment={onSelectDepartment}
+                />
+              </Suspense>
             )}
 
             {view === "dashboard" && (

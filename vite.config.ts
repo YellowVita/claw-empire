@@ -35,20 +35,63 @@ const silenceEpipe = (proxy: ProxyLike) => {
   });
 };
 
+const SOURCE_CHUNK_RULES: Array<{ chunkName: string; patterns: string[] }> = [
+  {
+    chunkName: "office-view",
+    patterns: ["/src/components/OfficeView.tsx", "/src/components/office-view/"],
+  },
+  {
+    chunkName: "taskboard",
+    patterns: ["/src/components/TaskBoard.tsx", "/src/components/taskboard/"],
+  },
+  {
+    chunkName: "agent-manager",
+    patterns: ["/src/components/AgentManager.tsx", "/src/components/agent-manager/"],
+  },
+  {
+    chunkName: "settings-panel",
+    patterns: ["/src/components/SettingsPanel.tsx", "/src/components/settings/"],
+  },
+  {
+    chunkName: "skills-library",
+    patterns: ["/src/components/SkillsLibrary.tsx", "/src/components/skills-library/"],
+  },
+  {
+    chunkName: "chat-panel",
+    patterns: ["/src/components/ChatPanel.tsx", "/src/components/chat-panel/"],
+  },
+  {
+    chunkName: "dashboard",
+    patterns: ["/src/components/Dashboard.tsx", "/src/components/dashboard/"],
+  },
+  {
+    chunkName: "terminal-panel",
+    patterns: ["/src/components/TerminalPanel.tsx", "/src/components/terminal-panel/"],
+  },
+];
+
 const manualChunks = (id: string): string | undefined => {
-  if (!id.includes("node_modules")) return undefined;
-  if (id.includes("/node_modules/@pixi/")) {
-    const match = id.match(/\/node_modules\/(@pixi\/[^/]+)\//);
+  const normalizedId = id.replace(/\\/g, "/");
+
+  for (const rule of SOURCE_CHUNK_RULES) {
+    if (rule.patterns.some((pattern) => normalizedId.includes(pattern))) {
+      return rule.chunkName;
+    }
+  }
+
+  if (!normalizedId.includes("node_modules")) return undefined;
+  if (normalizedId.includes("/node_modules/@pixi/")) {
+    const match = normalizedId.match(/\/node_modules\/(@pixi\/[^/]+)\//);
     if (match) return `vendor-${match[1].replace("@pixi/", "pixi-")}`;
   }
-  if (id.includes("/node_modules/pixi.js/")) return "vendor-pixi";
-  if (id.includes("/node_modules/pptxgenjs/")) return "vendor-pptx";
-  if (id.includes("/node_modules/react-router-dom/") || id.includes("/node_modules/react-router/"))
+  if (normalizedId.includes("/node_modules/pixi.js/")) return "vendor-pixi";
+  if (normalizedId.includes("/node_modules/pptxgenjs/")) return "vendor-pptx";
+  if (normalizedId.includes("/node_modules/react-router-dom/") || normalizedId.includes("/node_modules/react-router/"))
     return "vendor-router";
   if (
-    id.includes("/node_modules/react-dom/") ||
-    id.includes("/node_modules/react/") ||
-    id.includes("/node_modules/scheduler/")
+    normalizedId.includes("/node_modules/react-dom/") ||
+    normalizedId.includes("/node_modules/react/") ||
+    normalizedId.includes("/node_modules/scheduler/")
   )
     return "vendor-react";
   return undefined;
