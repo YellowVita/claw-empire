@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { exec } from "node:child_process";
 import type { DatabaseSync } from "node:sqlite";
 
@@ -5,6 +7,7 @@ type DbLike = Pick<DatabaseSync, "prepare">;
 
 export const TASK_EXECUTION_POLICY_SETTING_KEY = "taskExecutionPolicy";
 export const TASK_EXECUTION_HOOKS_SETTING_KEY = "taskExecutionHooks";
+export const PROJECT_TASK_EXECUTION_HOOKS_FILENAME = ".claw-workflow.json";
 
 export type TaskRetryReason = "idle_timeout" | "hard_timeout" | "orphan_recovery";
 export type TaskHookStage = "before_run" | "after_run_success" | "after_run_failure";
@@ -28,6 +31,14 @@ export type TaskExecutionHook = {
 };
 
 export type TaskExecutionHooks = Record<TaskHookStage, TaskExecutionHook[]>;
+export type TaskExecutionHookStagePresence = Record<TaskHookStage, boolean>;
+
+export type ProjectTaskExecutionHooksConfig = {
+  hooks: TaskExecutionHooks;
+  stagePresence: TaskExecutionHookStagePresence;
+  warnings: string[];
+  valid: boolean;
+};
 
 export type TaskRetryQueueRow = {
   task_id: string;
@@ -52,6 +63,12 @@ export const DEFAULT_TASK_EXECUTION_HOOKS: TaskExecutionHooks = {
   before_run: [],
   after_run_success: [],
   after_run_failure: [],
+};
+
+const EMPTY_TASK_EXECUTION_HOOK_STAGE_PRESENCE: TaskExecutionHookStagePresence = {
+  before_run: false,
+  after_run_success: false,
+  after_run_failure: false,
 };
 
 function safeJsonParse(raw: string): unknown {
@@ -122,6 +139,14 @@ function normalizeHookStageHooks(value: unknown): TaskExecutionHook[] {
     .filter((item): item is TaskExecutionHook => Boolean(item));
 }
 
+function isValidHookStageHookArray(value: unknown): boolean {
+  if (!Array.isArray(value)) return false;
+  return value.every((entry) => {
+    const raw = asObject(entry);
+    return Boolean(raw && typeof raw.command === "string" && raw.command.trim());
+  });
+}
+
 export function normalizeTaskExecutionPolicyValue(value: unknown): TaskExecutionPolicy {
   const raw = asObject(value) ?? {};
   const jitterRaw = Number(raw.jitter_ratio);
@@ -152,6 +177,89 @@ export function readTaskExecutionPolicy(db: DbLike): TaskExecutionPolicy {
 
 export function readTaskExecutionHooks(db: DbLike): TaskExecutionHooks {
   return normalizeTaskExecutionHooksValue(readSettingsJson(db, TASK_EXECUTION_HOOKS_SETTING_KEY));
+}
+
+export function readProjectTaskExecutionHooks(worktreePath: string): ProjectTaskExecutionHooksConfig | null {
+  const configPath = path.join(worktreePath, PROJECT_TASK_EXECUTION_HOOKS_FILENAME);
+  if (!fs.existsSync(configPath)) return null;
+
+  let rawText = "";
+  try {
+    rawText = fs.readFileSync(configPath, "utf8");
+  } catch {
+    return {
+      hooks: DEFAULT_TASK_EXECUTION_HOOKS,
+      stagePresence: { ...EMPTY_TASK_EXECUTION_HOOK_STAGE_PRESENCE },
+      warnings: [".claw-workflow.json parse failed, falling back to global"],
+      valid: false,
+    };
+  }
+
+  const parsed = safeJsonParse(rawText);
+  if (!parsed) {
+    return {
+      hooks: DEFAULT_TASK_EXECUTION_HOOKS,
+      stagePresence: { ...EMPTY_TASK_EXECUTION_HOOK_STAGE_PRESENCE },
+      warnings: [".claw-workflow.json parse failed, falling back to global"],
+      valid: false,
+    };
+  }
+
+  const root = asObject(parsed);
+  const taskExecutionHooksValue = root?.taskExecutionHooks;
+  const rawHooks = asObject(taskExecutionHooksValue);
+  if (!rawHooks) {
+    return {
+      hooks: DEFAULT_TASK_EXECUTION_HOOKS,
+      stagePresence: { ...EMPTY_TASK_EXECUTION_HOOK_STAGE_PRESENCE },
+      warnings: [".claw-workflow.json missing taskExecutionHooks object, falling back to global"],
+      valid: false,
+    };
+  }
+
+  const stagePresence: TaskExecutionHookStagePresence = {
+    before_run: Object.prototype.hasOwnProperty.call(rawHooks, "before_run"),
+    after_run_success: Object.prototype.hasOwnProperty.call(rawHooks, "after_run_success"),
+    after_run_failure: Object.prototype.hasOwnProperty.call(rawHooks, "after_run_failure"),
+  };
+
+  const invalidStageSchema = (Object.keys(stagePresence) as TaskHookStage[]).some(
+    (stage) => stagePresence[stage] && !isValidHookStageHookArray(rawHooks[stage]),
+  );
+  if (invalidStageSchema) {
+    return {
+      hooks: DEFAULT_TASK_EXECUTION_HOOKS,
+      stagePresence: { ...EMPTY_TASK_EXECUTION_HOOK_STAGE_PRESENCE },
+      warnings: [".claw-workflow.json invalid hook schema, falling back to global"],
+      valid: false,
+    };
+  }
+
+  return {
+    hooks: normalizeTaskExecutionHooksValue(rawHooks),
+    stagePresence,
+    warnings: [],
+    valid: true,
+  };
+}
+
+export function resolveTaskExecutionHooksForStage(
+  db: DbLike,
+  worktreePath: string,
+  stage: TaskHookStage,
+): { hooks: TaskExecutionHook[]; warnings: string[]; source: "global" | "project" } {
+  const globalHooks = readTaskExecutionHooks(db);
+  const localConfig = readProjectTaskExecutionHooks(worktreePath);
+  if (!localConfig) {
+    return { hooks: globalHooks[stage], warnings: [], source: "global" };
+  }
+  if (!localConfig.valid) {
+    return { hooks: globalHooks[stage], warnings: localConfig.warnings, source: "global" };
+  }
+  if (localConfig.stagePresence[stage]) {
+    return { hooks: localConfig.hooks[stage], warnings: [], source: "project" };
+  }
+  return { hooks: globalHooks[stage], warnings: [], source: "global" };
 }
 
 export function shouldRetryForReason(policy: TaskExecutionPolicy, reason: TaskRetryReason): boolean {
@@ -286,7 +394,11 @@ function runCommandHook(
 }
 
 export async function runTaskExecutionHooks(params: RunTaskExecutionHooksParams): Promise<RunTaskExecutionHooksResult> {
-  const hooks = readTaskExecutionHooks(params.db)[params.stage];
+  const resolved = resolveTaskExecutionHooksForStage(params.db, params.worktreePath, params.stage);
+  for (const warning of resolved.warnings) {
+    params.appendTaskLog(params.taskId, "system", warning);
+  }
+  const hooks = resolved.hooks;
   if (hooks.length <= 0) return { ok: true };
 
   const env = buildHookEnv(params);

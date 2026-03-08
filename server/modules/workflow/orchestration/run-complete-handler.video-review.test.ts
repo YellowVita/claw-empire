@@ -105,7 +105,7 @@ function createDeps(db: DatabaseSync, logsDir = "/tmp") {
 }
 
 describe("run complete handler - video preprod review transition", () => {
-  it("V2 owner_prep 완료 시 root task는 foreign_collab로 전환되고 owner_integrate는 아직 완료 처리하지 않는다", () => {
+  it("V2 owner_prep 완료 시 root task는 foreign_collab로 전환되고 owner_integrate는 아직 완료 처리하지 않는다", async () => {
     const db = createDb();
     try {
       const taskId = "task-v2-root";
@@ -147,7 +147,7 @@ describe("run complete handler - video preprod review transition", () => {
       deps.activeProcesses.set(taskId, { pid: 201 });
       const { handleTaskRunComplete } = createRunCompleteHandler(deps);
 
-      handleTaskRunComplete(taskId, 0);
+      await handleTaskRunComplete(taskId, 0);
 
       const updatedTask = db.prepare("SELECT status, orchestration_stage FROM tasks WHERE id = ?").get(taskId) as {
         status: string;
@@ -168,7 +168,7 @@ describe("run complete handler - video preprod review transition", () => {
     }
   });
 
-  it("루트 video_preprod는 서브태스크가 남아도 성공 시 review로 진입한다", () => {
+  it("루트 video_preprod는 서브태스크가 남아도 성공 시 review로 진입한다", async () => {
     const db = createDb();
     try {
       const taskId = "task-root-video";
@@ -197,7 +197,7 @@ describe("run complete handler - video preprod review transition", () => {
       deps.activeProcesses.set(taskId, { pid: 101 });
       const { handleTaskRunComplete } = createRunCompleteHandler(deps);
 
-      handleTaskRunComplete(taskId, 0);
+      await handleTaskRunComplete(taskId, 0);
 
       const updated = db.prepare("SELECT status FROM tasks WHERE id = ?").get(taskId) as { status: string };
       expect(updated.status).toBe("review");
@@ -215,7 +215,7 @@ describe("run complete handler - video preprod review transition", () => {
     }
   });
 
-  it("협업 자식 video_preprod는 산출물 게이트 없이 review로 진입한다", () => {
+  it("협업 자식 video_preprod는 산출물 게이트 없이 review로 진입한다", async () => {
     const db = createDb();
     try {
       const taskId = "task-child-video";
@@ -238,7 +238,7 @@ describe("run complete handler - video preprod review transition", () => {
       deps.activeProcesses.set(taskId, { pid: 102 });
       const { handleTaskRunComplete } = createRunCompleteHandler(deps);
 
-      handleTaskRunComplete(taskId, 0);
+      await handleTaskRunComplete(taskId, 0);
 
       const updated = db.prepare("SELECT status FROM tasks WHERE id = ?").get(taskId) as { status: string };
       expect(updated.status).toBe("review");
@@ -252,7 +252,7 @@ describe("run complete handler - video preprod review transition", () => {
     }
   });
 
-  it("[VIDEO_FINAL_RENDER]는 Remotion 증빙이 없으면 성공 종료여도 실패 처리한다", () => {
+  it("[VIDEO_FINAL_RENDER]는 Remotion 증빙이 없으면 성공 종료여도 실패 처리한다", async () => {
     const db = createDb();
     const logsDir = fs.mkdtempSync(path.join(os.tmpdir(), "climpire-run-complete-"));
     try {
@@ -277,7 +277,7 @@ describe("run complete handler - video preprod review transition", () => {
       deps.activeProcesses.set(taskId, { pid: 103 });
       const { handleTaskRunComplete } = createRunCompleteHandler(deps);
 
-      handleTaskRunComplete(taskId, 0);
+      await handleTaskRunComplete(taskId, 0);
 
       const updated = db.prepare("SELECT status FROM tasks WHERE id = ?").get(taskId) as { status: string };
       expect(updated.status).toBe("inbox");
@@ -301,7 +301,7 @@ describe("run complete handler - video preprod review transition", () => {
     }
   });
 
-  it("[VIDEO_FINAL_RENDER]는 thinking 내 정책 문구가 있어도 Remotion 렌더 증빙이 있으면 실패 처리하지 않는다", () => {
+  it("[VIDEO_FINAL_RENDER]는 thinking 내 정책 문구가 있어도 Remotion 렌더 증빙이 있으면 실패 처리하지 않는다", async () => {
     const db = createDb();
     const logsDir = fs.mkdtempSync(path.join(os.tmpdir(), "climpire-run-complete-"));
     const worktreeDir = fs.mkdtempSync(path.join(os.tmpdir(), "climpire-wt-"));
@@ -338,7 +338,7 @@ describe("run complete handler - video preprod review transition", () => {
       deps.activeProcesses.set(taskId, { pid: 105 });
       const { handleTaskRunComplete } = createRunCompleteHandler(deps);
 
-      handleTaskRunComplete(taskId, 0);
+      await handleTaskRunComplete(taskId, 0);
 
       const updated = db.prepare("SELECT status FROM tasks WHERE id = ?").get(taskId) as { status: string };
       expect(updated.status).toBe("review");
@@ -368,7 +368,7 @@ describe("run complete handler - video preprod review transition", () => {
     }
   });
 
-  it("[VIDEO_FINAL_RENDER]는 렌더 산출물과 Remotion 증빙이 있으면 비정상 종료 코드도 성공으로 복구한다", () => {
+  it("[VIDEO_FINAL_RENDER]는 렌더 산출물과 Remotion 증빙이 있으면 비정상 종료 코드도 성공으로 복구한다", async () => {
     const db = createDb();
     const logsDir = fs.mkdtempSync(path.join(os.tmpdir(), "climpire-run-complete-"));
     const worktreeDir = fs.mkdtempSync(path.join(os.tmpdir(), "climpire-wt-"));
@@ -403,7 +403,7 @@ describe("run complete handler - video preprod review transition", () => {
       deps.activeProcesses.set(taskId, { pid: 104 });
       const { handleTaskRunComplete } = createRunCompleteHandler(deps);
 
-      handleTaskRunComplete(taskId, 1);
+      await handleTaskRunComplete(taskId, 1);
 
       const updated = db.prepare("SELECT status FROM tasks WHERE id = ?").get(taskId) as { status: string };
       expect(updated.status).toBe("review");

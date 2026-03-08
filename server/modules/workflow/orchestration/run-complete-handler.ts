@@ -16,7 +16,6 @@ import { computeTaskQualitySummary, loadTaskQualityItems } from "../../routes/co
 import {
   computeRetryDelayMs,
   deleteTaskRetryQueueRow,
-  readTaskExecutionHooks,
   readTaskExecutionPolicy,
   readTaskRetryQueueRow,
   runTaskExecutionHooks,
@@ -457,8 +456,7 @@ export function createRunCompleteHandler(deps: CreateRunCompleteHandlerDeps) {
         agentRow = undefined;
       }
       const hookStage = finalExitCode === 0 ? "after_run_success" : "after_run_failure";
-      const configuredHooks = readTaskExecutionHooks(db as any)[hookStage];
-      if (wtInfo?.worktreePath && configuredHooks.length > 0) {
+      if (wtInfo?.worktreePath) {
         await runTaskExecutionHooks({
           db: db as any,
           stage: hookStage,
