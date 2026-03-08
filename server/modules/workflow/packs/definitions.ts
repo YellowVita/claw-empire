@@ -38,7 +38,7 @@ export const DEFAULT_WORKFLOW_PACK_SEEDS: WorkflowPackSeed[] = [
     name: "Development",
     inputSchema: {
       required: ["project", "instruction"],
-      optional: ["constraints", "acceptance_criteria", "deadline"],
+      optional: ["constraints", "acceptance_criteria"],
     },
     promptPreset: {
       mode: "engineering",
@@ -89,7 +89,7 @@ export const DEFAULT_WORKFLOW_PACK_SEEDS: WorkflowPackSeed[] = [
     name: "Structured Report",
     inputSchema: {
       required: ["goal", "audience", "format"],
-      optional: ["length", "tone", "deadline"],
+      optional: ["length", "tone"],
     },
     promptPreset: {
       mode: "reporting",
