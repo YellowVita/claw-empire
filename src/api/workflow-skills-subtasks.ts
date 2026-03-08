@@ -1,6 +1,6 @@
 import { del, patch, post, request } from "./core";
 
-import type { MessengerChannelType, SubTask, WorkflowPackKey } from "../types";
+import type { MessengerChannelType, SubTask, TaskStatus, WorkflowPackKey } from "../types";
 
 // Git Worktree management
 export interface TaskDiffResult {
@@ -62,8 +62,8 @@ export async function mergeTask(id: string): Promise<MergeResult> {
   return post(`/api/tasks/${id}/merge`) as Promise<MergeResult>;
 }
 
-export async function discardTask(id: string): Promise<{ ok: boolean; message: string }> {
-  return post(`/api/tasks/${id}/discard`) as Promise<{ ok: boolean; message: string }>;
+export async function discardTask(id: string): Promise<{ ok: boolean; message: string; status: TaskStatus }> {
+  return post(`/api/tasks/${id}/discard`) as Promise<{ ok: boolean; message: string; status: TaskStatus }>;
 }
 
 export async function getWorktrees(): Promise<{ ok: boolean; worktrees: WorktreeEntry[] }> {

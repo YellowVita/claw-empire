@@ -54,6 +54,12 @@ function initRepo(basePrefix: string): string {
 
 function createHarness(taskWorktrees: Map<string, { worktreePath: string; branchName: string; projectPath: string }>) {
   const appendLogCalls: Array<{ taskId: string | null; kind: string; message: string }> = [];
+  const rollbackCalls: Array<{ taskId: string; reason: string }> = [];
+  const endSessionCalls: Array<{ taskId: string; reason: string }> = [];
+  const clearWorkflowCalls: string[] = [];
+  const broadcastCalls: Array<{ event: string; payload: unknown }> = [];
+  const killPidCalls: number[] = [];
+  const stopProgressCalls: string[] = [];
   const getRoutes = new Map<string, RouteHandler>();
   const postRoutes = new Map<string, RouteHandler>();
   const app = {
@@ -68,11 +74,45 @@ function createHarness(taskWorktrees: Map<string, { worktreePath: string; branch
   };
 
   const db = new DatabaseSync(":memory:");
+  db.exec(`
+    CREATE TABLE tasks (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      status TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE TABLE agents (
+      id TEXT PRIMARY KEY,
+      status TEXT NOT NULL,
+      current_task_id TEXT
+    );
+    CREATE TABLE task_retry_queue (
+      task_id TEXT PRIMARY KEY,
+      attempt_count INTEGER NOT NULL DEFAULT 0,
+      next_run_at INTEGER NOT NULL DEFAULT 0,
+      last_reason TEXT,
+      created_at INTEGER NOT NULL DEFAULT 0,
+      updated_at INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE TABLE cli_usage_cache (
+      provider TEXT PRIMARY KEY,
+      data_json TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+  `);
+  const activeProcesses = new Map<string, { pid: number; kill?: () => void }>();
+  const stopRequestedTasks = new Set<string>();
+  const stopRequestModeByTask = new Map<string, "pause" | "cancel">();
   registerWorktreeAndUsageRoutes({
     app: app as any,
     taskWorktrees,
     mergeWorktree: () => ({ success: true, message: "merged", conflicts: [] }),
     cleanupWorktree: () => {},
+    rollbackTaskWorktree: (taskId: string, reason: string) => {
+      rollbackCalls.push({ taskId, reason });
+      taskWorktrees.delete(taskId);
+      return true;
+    },
     appendTaskLog: (taskId: string | null, kind: string, message: string) => {
       appendLogCalls.push({ taskId, kind, message });
     },
@@ -82,14 +122,45 @@ function createHarness(taskWorktrees: Map<string, { worktreePath: string; branch
     notifyCeo: () => {},
     db: db as any,
     nowMs: () => Date.now(),
+    activeProcesses,
+    stopRequestedTasks,
+    stopRequestModeByTask,
+    stopProgressTimer: (taskId: string) => {
+      stopProgressCalls.push(taskId);
+    },
+    killPidTree: (pid: number) => {
+      killPidCalls.push(pid);
+    },
+    clearTaskWorkflowState: (taskId: string) => {
+      clearWorkflowCalls.push(taskId);
+    },
+    endTaskExecutionSession: (taskId: string, reason: string) => {
+      endSessionCalls.push({ taskId, reason });
+    },
     CLI_TOOLS: [],
     fetchClaudeUsage: async () => ({ windows: [], error: "not_implemented" }),
     fetchCodexUsage: async () => ({ windows: [], error: "not_implemented" }),
     fetchGeminiUsage: async () => ({ windows: [], error: "not_implemented" }),
-    broadcast: () => {},
+    broadcast: (event: string, payload: unknown) => {
+      broadcastCalls.push({ event, payload });
+    },
   } as any);
 
-  return { db, getRoutes, postRoutes, appendLogCalls };
+  return {
+    db,
+    getRoutes,
+    postRoutes,
+    appendLogCalls,
+    rollbackCalls,
+    endSessionCalls,
+    clearWorkflowCalls,
+    broadcastCalls,
+    killPidCalls,
+    stopProgressCalls,
+    activeProcesses,
+    stopRequestedTasks,
+    stopRequestModeByTask,
+  };
 }
 
 const tempDirs: string[] = [];
@@ -224,6 +295,68 @@ describe("worktree verify-commit route", () => {
     } finally {
       db.close();
       tools.cleanupWorktree(repo, taskId);
+    }
+  });
+
+  it("discard는 worktree를 rollback하고 task를 inbox로 되돌린다", () => {
+    const taskId = "discard-task-0000";
+    const taskWorktrees = new Map<string, { worktreePath: string; branchName: string; projectPath: string }>([
+      [
+        taskId,
+        {
+          worktreePath: "/tmp/worktree-discard",
+          branchName: `climpire/${taskId}`,
+          projectPath: "/tmp/project-discard",
+        },
+      ],
+    ]);
+    const harness = createHarness(taskWorktrees);
+    try {
+      harness.db.prepare("INSERT INTO tasks (id, title, status, updated_at) VALUES (?, ?, ?, ?)").run(
+        taskId,
+        "Discard me",
+        "review",
+        1,
+      );
+      harness.db
+        .prepare("INSERT INTO agents (id, status, current_task_id) VALUES (?, ?, ?)")
+        .run("agent-1", "working", taskId);
+      harness.db
+        .prepare(
+          "INSERT INTO task_retry_queue (task_id, attempt_count, next_run_at, last_reason, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .run(taskId, 1, 1, "idle_timeout", 1, 1);
+      harness.activeProcesses.set(taskId, { pid: 4321 });
+
+      const handler = harness.postRoutes.get("/api/tasks/:id/discard");
+      expect(handler).toBeTypeOf("function");
+
+      const res = createFakeResponse();
+      handler?.({ params: { id: taskId } }, res);
+
+      expect(res.statusCode).toBe(200);
+      expect(res.payload).toEqual({
+        ok: true,
+        message: "Worktree discarded and task reset to inbox",
+        status: "inbox",
+      });
+      expect(harness.rollbackCalls).toEqual([{ taskId, reason: "manual_discard" }]);
+      expect(harness.clearWorkflowCalls).toEqual([taskId]);
+      expect(harness.endSessionCalls).toEqual([{ taskId, reason: "manual_discard" }]);
+      expect(harness.killPidCalls).toEqual([4321]);
+      expect(harness.stopProgressCalls).toEqual([taskId]);
+      expect(harness.stopRequestedTasks.has(taskId)).toBe(true);
+      expect(harness.stopRequestModeByTask.get(taskId)).toBe("cancel");
+      expect(harness.db.prepare("SELECT status FROM tasks WHERE id = ?").get(taskId)).toEqual({ status: "inbox" });
+      expect(harness.db.prepare("SELECT status, current_task_id FROM agents WHERE id = ?").get("agent-1")).toEqual({
+        status: "idle",
+        current_task_id: null,
+      });
+      expect(harness.db.prepare("SELECT * FROM task_retry_queue WHERE task_id = ?").get(taskId)).toBeUndefined();
+      expect(harness.broadcastCalls.some((entry) => entry.event === "task_update")).toBe(true);
+      expect(harness.broadcastCalls.some((entry) => entry.event === "agent_status")).toBe(true);
+    } finally {
+      harness.db.close();
     }
   });
 });

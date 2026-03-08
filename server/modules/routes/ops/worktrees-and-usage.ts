@@ -157,6 +157,7 @@ export function registerWorktreeAndUsageRoutes(ctx: RuntimeContext): {
     taskWorktrees,
     mergeWorktree,
     cleanupWorktree,
+    rollbackTaskWorktree,
     appendTaskLog,
     resolveLang,
     pickL,
@@ -164,12 +165,45 @@ export function registerWorktreeAndUsageRoutes(ctx: RuntimeContext): {
     notifyCeo,
     db,
     nowMs,
+    activeProcesses,
+    stopRequestedTasks,
+    stopRequestModeByTask,
+    stopProgressTimer,
+    killPidTree,
+    clearTaskWorkflowState,
+    endTaskExecutionSession,
     CLI_TOOLS,
     fetchClaudeUsage,
     fetchCodexUsage,
     fetchGeminiUsage,
     broadcast,
   } = ctx;
+
+  function stopActiveTaskProcess(taskId: string): void {
+    const activeChild = activeProcesses.get(taskId);
+    if (!activeChild?.pid) return;
+
+    stopRequestedTasks.add(taskId);
+    stopRequestModeByTask.set(taskId, "cancel");
+    stopProgressTimer(taskId);
+    if (activeChild.pid < 0) {
+      activeChild.kill?.();
+    } else {
+      killPidTree(activeChild.pid);
+    }
+    activeProcesses.delete(taskId);
+  }
+
+  function releaseLinkedAgents(taskId: string): void {
+    const linkedAgents = db.prepare("SELECT id FROM agents WHERE current_task_id = ?").all(taskId) as Array<{
+      id: string;
+    }>;
+    db.prepare("UPDATE agents SET status = 'idle', current_task_id = NULL WHERE current_task_id = ?").run(taskId);
+    for (const linked of linkedAgents) {
+      const updatedAgent = db.prepare("SELECT * FROM agents WHERE id = ?").get(linked.id);
+      if (updatedAgent) broadcast("agent_status", updatedAgent);
+    }
+  }
 
   app.get("/api/tasks/:id/diff", (req, res) => {
     const id = String(req.params.id);
@@ -278,23 +312,42 @@ export function registerWorktreeAndUsageRoutes(ctx: RuntimeContext): {
       return res.status(404).json({ error: "no_worktree", message: "No worktree found for this task" });
     }
 
-    cleanupWorktree(wtInfo.projectPath, id);
-    appendTaskLog(id, "system", "Worktree discarded (changes abandoned)");
+    const task = db.prepare("SELECT id, title FROM tasks WHERE id = ?").get(id) as
+      | {
+          id: string;
+          title: string;
+        }
+      | undefined;
+    if (!task) {
+      return res.status(404).json({ error: "not_found" });
+    }
+
+    stopActiveTaskProcess(id);
+    rollbackTaskWorktree(id, "manual_discard");
+    clearTaskWorkflowState(id);
+    endTaskExecutionSession(id, "manual_discard");
+    db.prepare("DELETE FROM task_retry_queue WHERE task_id = ?").run(id);
+    db.prepare("UPDATE tasks SET status = 'inbox', updated_at = ? WHERE id = ?").run(nowMs(), id);
+    releaseLinkedAgents(id);
+    appendTaskLog(id, "system", "Task discarded and reset to inbox");
     const lang = resolveLang();
     notifyCeo(
       pickL(
         l(
-          [`작업 브랜치가 폐기되었습니다: climpire/${id.slice(0, 8)}`],
-          [`Task branch discarded: climpire/${id.slice(0, 8)}`],
-          [`タスクブランチを破棄しました: climpire/${id.slice(0, 8)}`],
-          [`任务分支已丢弃: climpire/${id.slice(0, 8)}`],
+          [`작업 브랜치가 폐기되고 태스크가 inbox로 되돌아갔습니다: climpire/${id.slice(0, 8)}`],
+          [`Task branch discarded and reset to inbox: climpire/${id.slice(0, 8)}`],
+          [`タスクブランチを破棄し、タスクを inbox に戻しました: climpire/${id.slice(0, 8)}`],
+          [`任务分支已丢弃，任务已重置为 inbox: climpire/${id.slice(0, 8)}`],
         ),
         lang,
       ),
       id,
     );
 
-    res.json({ ok: true, message: "Worktree discarded" });
+    const updatedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id);
+    broadcast("task_update", updatedTask);
+
+    res.json({ ok: true, message: "Worktree discarded and task reset to inbox", status: "inbox" });
   });
 
   app.get("/api/tasks/:id/verify-commit", (req, res) => {

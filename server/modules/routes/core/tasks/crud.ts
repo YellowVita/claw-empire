@@ -29,8 +29,12 @@ export type TaskCrudRouteDeps = Pick<
   | "clearTaskWorkflowState"
   | "endTaskExecutionSession"
   | "activeProcesses"
+  | "stopRequestModeByTask"
+  | "stopProgressTimer"
   | "stopRequestedTasks"
   | "killPidTree"
+  | "taskWorktrees"
+  | "rollbackTaskWorktree"
   | "logsDir"
 >;
 
@@ -49,8 +53,12 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
     clearTaskWorkflowState,
     endTaskExecutionSession,
     activeProcesses,
+    stopRequestModeByTask,
+    stopProgressTimer,
     stopRequestedTasks,
     killPidTree,
+    taskWorktrees,
+    rollbackTaskWorktree,
     logsDir,
   } = deps;
 
@@ -97,6 +105,44 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
       items: quality.items,
       summary: quality.summary,
     };
+  }
+
+  function getTaskResetReason(nextStatus: string): string | null {
+    if (nextStatus === "cancelled") return "task_status_cancelled";
+    if (nextStatus === "inbox") return "task_status_inbox_reset";
+    if (nextStatus === "done") return "task_status_done_override";
+    return null;
+  }
+
+  function stopActiveTaskProcess(taskId: string): void {
+    const activeChild = activeProcesses.get(taskId);
+    if (!activeChild?.pid) return;
+
+    stopRequestedTasks.add(taskId);
+    stopRequestModeByTask.set(taskId, "cancel");
+    stopProgressTimer(taskId);
+    if (activeChild.pid < 0) {
+      activeChild.kill?.();
+    } else {
+      killPidTree(activeChild.pid);
+    }
+    activeProcesses.delete(taskId);
+  }
+
+  function releaseLinkedAgents(taskId: string): void {
+    const linkedAgents = db.prepare("SELECT id FROM agents WHERE current_task_id = ?").all(taskId) as Array<{
+      id: string;
+    }>;
+    db.prepare("UPDATE agents SET status = 'idle', current_task_id = NULL WHERE current_task_id = ?").run(taskId);
+    for (const linked of linkedAgents) {
+      const updatedAgent = db.prepare("SELECT * FROM agents WHERE id = ?").get(linked.id);
+      if (updatedAgent) broadcast("agent_status", updatedAgent);
+    }
+  }
+
+  function rollbackTaskIfPresent(taskId: string, reason: string | null): boolean {
+    if (!reason || !taskWorktrees.has(taskId)) return false;
+    return rollbackTaskWorktree(taskId, reason);
   }
 
   function normalizeQualityItemPatch(raw: Record<string, unknown>, now: number): Record<string, unknown> | null {
@@ -544,6 +590,12 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
         });
       }
     }
+    const resetReason = nextStatus ? getTaskResetReason(nextStatus) : null;
+    const shouldResetTask = Boolean(nextStatus && nextStatus !== existing.status && resetReason);
+    if (shouldResetTask) {
+      stopActiveTaskProcess(id);
+      rollbackTaskIfPresent(id, resetReason);
+    }
 
     const allowedFields = [
       "title",
@@ -623,12 +675,22 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
       (nextStatus === "cancelled" || nextStatus === "pending" || nextStatus === "done" || nextStatus === "inbox")
     ) {
       clearTaskWorkflowState(id);
-      if (nextStatus === "done" || nextStatus === "cancelled") {
-        endTaskExecutionSession(id, `task_status_${nextStatus}`);
+      if (resetReason) {
+        endTaskExecutionSession(id, resetReason);
       }
     }
-    if (nextStatus && (nextStatus === "pending" || nextStatus === "cancelled" || nextStatus === "done" || nextStatus === "review")) {
+    if (
+      nextStatus &&
+      (nextStatus === "pending" ||
+        nextStatus === "cancelled" ||
+        nextStatus === "done" ||
+        nextStatus === "review" ||
+        nextStatus === "inbox")
+    ) {
       deleteTaskRetryQueueRow(db as any, id);
+    }
+    if (shouldResetTask) {
+      releaseLinkedAgents(id);
     }
 
     appendTaskLog(id, "system", `Task updated: ${Object.keys(body as object).join(", ")}`);
@@ -660,26 +722,11 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
       | undefined;
     if (!existing) return res.status(404).json({ error: "not_found" });
 
+    stopActiveTaskProcess(id);
+    rollbackTaskIfPresent(id, "task_deleted");
     endTaskExecutionSession(id, "task_deleted");
     clearTaskWorkflowState(id);
-
-    const activeChild = activeProcesses.get(id);
-    if (activeChild?.pid) {
-      stopRequestedTasks.add(id);
-      if (activeChild.pid < 0) {
-        activeChild.kill();
-      } else {
-        killPidTree(activeChild.pid);
-      }
-      activeProcesses.delete(id);
-    }
-
-    if (existing.assigned_agent_id) {
-      db.prepare("UPDATE agents SET status = 'idle', current_task_id = NULL WHERE id = ? AND current_task_id = ?").run(
-        existing.assigned_agent_id,
-        id,
-      );
-    }
+    releaseLinkedAgents(id);
 
     db.prepare("DELETE FROM task_logs WHERE task_id = ?").run(id);
     db.prepare("DELETE FROM task_retry_queue WHERE task_id = ?").run(id);

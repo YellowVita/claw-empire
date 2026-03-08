@@ -372,8 +372,12 @@ export function registerRoutesPartA(ctx: RuntimeContext): Record<string, never> 
     clearTaskWorkflowState,
     endTaskExecutionSession,
     activeProcesses,
+    stopRequestModeByTask,
+    stopProgressTimer,
     stopRequestedTasks,
     killPidTree,
+    taskWorktrees,
+    rollbackTaskWorktree,
     logsDir,
   });
 

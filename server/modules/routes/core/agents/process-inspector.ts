@@ -172,6 +172,7 @@ export function registerAgentProcessInspectorRoutes(ctx: RuntimeContext): void {
     stopProgressTimer,
     endTaskExecutionSession,
     clearTaskWorkflowState,
+    rollbackTaskWorktree,
     appendTaskLog,
     broadcast,
     nowMs,
@@ -375,8 +376,9 @@ export function registerAgentProcessInspectorRoutes(ctx: RuntimeContext): void {
       stopRequestedTasks.add(trackedTaskId);
       stopRequestModeByTask.set(trackedTaskId, "cancel");
       stopProgressTimer(trackedTaskId);
-      endTaskExecutionSession(trackedTaskId, "cli_process_killed");
+      endTaskExecutionSession(trackedTaskId, "process_inspector_cancel");
       clearTaskWorkflowState(trackedTaskId);
+      db.prepare("DELETE FROM task_retry_queue WHERE task_id = ?").run(trackedTaskId);
       activeProcesses.delete(trackedTaskId);
 
       const task = db.prepare("SELECT id, title, status FROM tasks WHERE id = ?").get(trackedTaskId) as
@@ -395,6 +397,7 @@ export function registerAgentProcessInspectorRoutes(ctx: RuntimeContext): void {
           normalizedStatus !== "pending" &&
           normalizedStatus !== "inbox"
         ) {
+          rollbackTaskWorktree(trackedTaskId, "process_inspector_cancel");
           db.prepare("UPDATE tasks SET status = 'cancelled', updated_at = ? WHERE id = ?").run(nowMs(), trackedTaskId);
         }
         const updatedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(trackedTaskId);

@@ -55,6 +55,8 @@ function createTaskCrudHarness(): { db: DatabaseSync; routes: Map<string, RouteH
     CREATE TABLE agents (
       id TEXT PRIMARY KEY,
       name TEXT,
+      status TEXT,
+      current_task_id TEXT,
       avatar_emoji TEXT
     );
     CREATE TABLE departments (
@@ -124,8 +126,12 @@ function createTaskCrudHarness(): { db: DatabaseSync; routes: Map<string, RouteH
     clearTaskWorkflowState: () => {},
     endTaskExecutionSession: () => {},
     activeProcesses: new Map(),
+    stopRequestModeByTask: new Map(),
+    stopProgressTimer: () => {},
     stopRequestedTasks: new Set(),
     killPidTree: () => {},
+    taskWorktrees: new Map(),
+    rollbackTaskWorktree: () => false,
     logsDir: "/tmp",
   });
 
