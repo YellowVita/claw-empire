@@ -7,6 +7,7 @@ import type { L10n } from "./language-policy.ts";
 import type { RuntimeContext } from "../../../types/runtime-context.ts";
 import { resolveWorkflowPackKeyForTask } from "../../workflow/packs/task-pack-resolver.ts";
 import { isWorkflowPackKey } from "../../workflow/packs/definitions.ts";
+import { ORCHESTRATION_V2_VERSION } from "../../workflow/orchestration/subtask-orchestration-v2.ts";
 import { resolveConstrainedAgentScopeForTask } from "../core/tasks/execution-run-auto-assign.ts";
 import {
   buildDelegateMessage,
@@ -171,10 +172,15 @@ export function createTaskDelegationHandler(deps: TaskDelegationDeps) {
       if (projectContextHint && projectContextHint !== selectedProject.coreGoal) {
         taskDescriptionLines.push(`[PROJECT CONTEXT] ${projectContextHint}`);
       }
+      const useOrchestrationV2 = !skipPlannedMeeting;
       db.prepare(
         `
-      INSERT INTO tasks (id, title, description, department_id, assigned_agent_id, project_id, status, priority, task_type, workflow_pack_key, project_path, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, 'planned', 1, 'general', ?, ?, ?, ?)
+      INSERT INTO tasks (
+        id, title, description, department_id, assigned_agent_id, project_id,
+        status, priority, task_type, workflow_pack_key, orchestration_version, orchestration_stage,
+        project_path, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, 'planned', 1, 'general', ?, ?, ?, ?, ?, ?)
     `,
       ).run(
         taskId,
@@ -184,6 +190,8 @@ export function createTaskDelegationHandler(deps: TaskDelegationDeps) {
         teamLeader.id,
         selectedProject.id,
         workflowPackKey,
+        useOrchestrationV2 ? ORCHESTRATION_V2_VERSION : 1,
+        useOrchestrationV2 ? "owner_prep" : null,
         detectedPath,
         t,
         t,
@@ -264,6 +272,10 @@ export function createTaskDelegationHandler(deps: TaskDelegationDeps) {
 
       const runCrossDeptBeforeDelegationIfNeeded = (next: () => void) => {
         if (isTaskWorkflowInterrupted(taskId)) return;
+        if (useOrchestrationV2) {
+          next();
+          return;
+        }
         if (!(isPlanningLead && mentionedDepts.length > 0)) {
           next();
           return;
@@ -344,6 +356,7 @@ export function createTaskDelegationHandler(deps: TaskDelegationDeps) {
       };
 
       const runCrossDeptAfterMainIfNeeded = () => {
+        if (useOrchestrationV2) return;
         if (isPlanningLead || mentionedDepts.length === 0) return;
         const crossDelay = 3000 + Math.random() * 1000;
         setTimeout(() => {

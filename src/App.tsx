@@ -285,7 +285,6 @@ export default function App() {
     setDepartments,
     setAgents,
     setTasks,
-    setSubtasks,
     setStats,
     setSettings,
     setSubtasks,

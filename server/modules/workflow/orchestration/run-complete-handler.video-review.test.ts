@@ -20,6 +20,8 @@ function createDb(): DatabaseSync {
       source_task_id TEXT,
       assigned_agent_id TEXT,
       department_id TEXT,
+      orchestration_version INTEGER DEFAULT 1,
+      orchestration_stage TEXT,
       result TEXT,
       updated_at INTEGER DEFAULT 0
     );
@@ -31,7 +33,9 @@ function createDb(): DatabaseSync {
       status TEXT NOT NULL,
       target_department_id TEXT,
       delegated_task_id TEXT,
+      orchestration_phase TEXT,
       cli_tool_use_id TEXT,
+      created_at INTEGER DEFAULT 0,
       completed_at INTEGER,
       blocked_reason TEXT
     );
@@ -101,6 +105,69 @@ function createDeps(db: DatabaseSync, logsDir = "/tmp") {
 }
 
 describe("run complete handler - video preprod review transition", () => {
+  it("V2 owner_prep 완료 시 root task는 foreign_collab로 전환되고 owner_integrate는 아직 완료 처리하지 않는다", () => {
+    const db = createDb();
+    try {
+      const taskId = "task-v2-root";
+      db.prepare(
+        `
+          INSERT INTO tasks (
+            id, title, description, status, workflow_pack_key, source_task_id, assigned_agent_id, department_id,
+            project_id, project_path, orchestration_version, orchestration_stage, updated_at
+          )
+          VALUES (?, ?, ?, 'in_progress', 'development', NULL, ?, 'planning', 'project-1', ?, 2, 'owner_prep', 1)
+        `,
+      ).run(taskId, "V2 메인 업무", "계획 실행", "planning-seed-1", "/tmp/project");
+      db.prepare(
+        `
+          INSERT INTO subtasks (id, task_id, title, status, target_department_id, delegated_task_id, orchestration_phase)
+          VALUES ('prep-1', ?, '준비 작업', 'pending', NULL, NULL, 'owner_prep')
+        `,
+      ).run(taskId);
+      db.prepare(
+        `
+          INSERT INTO subtasks (id, task_id, title, status, target_department_id, delegated_task_id, orchestration_phase)
+          VALUES ('foreign-1', ?, 'QA deliverable', 'pending', 'qa', NULL, 'foreign_collab')
+        `,
+      ).run(taskId);
+      db.prepare(
+        `
+          INSERT INTO subtasks (id, task_id, title, status, target_department_id, delegated_task_id, orchestration_phase)
+          VALUES ('integrate-1', ?, '부서 산출물 통합 및 최종 정리', 'pending', NULL, NULL, 'owner_integrate')
+        `,
+      ).run(taskId);
+      db.prepare(
+        `
+          INSERT INTO agents (id, name, name_ko, status, current_task_id, department_id, stats_tasks_done, stats_xp)
+          VALUES ('planning-seed-1', 'Haru', '하루', 'working', ?, 'planning', 0, 0)
+        `,
+      ).run(taskId);
+
+      const deps = createDeps(db);
+      deps.activeProcesses.set(taskId, { pid: 201 });
+      const { handleTaskRunComplete } = createRunCompleteHandler(deps);
+
+      handleTaskRunComplete(taskId, 0);
+
+      const updatedTask = db.prepare("SELECT status, orchestration_stage FROM tasks WHERE id = ?").get(taskId) as {
+        status: string;
+        orchestration_stage: string | null;
+      };
+      const prep = db.prepare("SELECT status FROM subtasks WHERE id = 'prep-1'").get() as { status: string };
+      const integrate = db.prepare("SELECT status FROM subtasks WHERE id = 'integrate-1'").get() as { status: string };
+
+      expect(updatedTask).toEqual({
+        status: "collaborating",
+        orchestration_stage: "foreign_collab",
+      });
+      expect(prep.status).toBe("done");
+      expect(integrate.status).toBe("pending");
+      expect(deps.processSubtaskDelegations).toHaveBeenCalledWith(taskId);
+    } finally {
+      db.close();
+    }
+  });
+
   it("루트 video_preprod는 서브태스크가 남아도 성공 시 review로 진입한다", () => {
     const db = createDb();
     try {

@@ -7,6 +7,11 @@ import {
 } from "../packs/video-artifact.ts";
 import { evaluateRemotionOnlyGateFromLogFiles } from "../packs/video-render-engine-gate.ts";
 import { resolveScopedTeamLeader } from "../packs/agent-scope.ts";
+import {
+  getTaskOrchestrationStage,
+  inferOrchestrationPhaseFromSubtask,
+  isTaskOrchestrationV2,
+} from "./subtask-orchestration-v2.ts";
 
 type CreateRunCompleteHandlerDeps = Record<string, any>;
 
@@ -65,13 +70,15 @@ export function createRunCompleteHandler(deps: CreateRunCompleteHandlerDeps) {
           department_id: string | null;
           title: string;
           description: string | null;
-          status: string;
-          task_type: string | null;
-          workflow_pack_key: string | null;
-          project_id: string | null;
-          project_path: string | null;
-          source_task_id: string | null;
-        }
+        status: string;
+        task_type: string | null;
+        workflow_pack_key: string | null;
+        project_id: string | null;
+        project_path: string | null;
+        source_task_id: string | null;
+        orchestration_version: number | null;
+        orchestration_stage: string | null;
+      }
       | undefined;
     const stopRequested = stopRequestedTasks.has(taskId);
     const stopMode = stopRequestModeByTask.get(taskId);
@@ -263,6 +270,78 @@ export function createRunCompleteHandler(deps: CreateRunCompleteHandlerDeps) {
     }
 
     // Auto-complete own-department subtasks on CLI success; foreign ones get delegated
+    if (finalExitCode === 0 && task && !task.source_task_id && isTaskOrchestrationV2(task)) {
+      const orchestrationStage = getTaskOrchestrationStage(task);
+      const openSubtasks = db
+        .prepare("SELECT * FROM subtasks WHERE task_id = ? AND status NOT IN ('done', 'cancelled') ORDER BY created_at")
+        .all(taskId) as Array<Record<string, unknown>>;
+      if (orchestrationStage === "owner_prep") {
+        const prepSubtasks = openSubtasks.filter(
+          (subtask) =>
+            inferOrchestrationPhaseFromSubtask(subtask as any) === "owner_prep" &&
+            !String(subtask.target_department_id ?? "").trim(),
+        );
+        const now = nowMs();
+        for (const subtask of prepSubtasks) {
+          db.prepare("UPDATE subtasks SET status = 'done', completed_at = ? WHERE id = ?").run(now, subtask.id);
+          const updated = db.prepare("SELECT * FROM subtasks WHERE id = ?").get(subtask.id);
+          broadcast("subtask_update", updated);
+        }
+        const foreignRemaining = openSubtasks.filter(
+          (subtask) => inferOrchestrationPhaseFromSubtask(subtask as any) === "foreign_collab",
+        );
+        const integrationRemaining = openSubtasks.filter(
+          (subtask) => inferOrchestrationPhaseFromSubtask(subtask as any) === "owner_integrate",
+        );
+        if (foreignRemaining.length > 0) {
+          db.prepare("UPDATE tasks SET status = 'collaborating', orchestration_stage = 'foreign_collab', updated_at = ? WHERE id = ?").run(
+            now,
+            taskId,
+          );
+          appendTaskLog(taskId, "system", "V2 orchestration: owner_prep complete, entering foreign_collab");
+          broadcast("task_update", db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId));
+          processSubtaskDelegations(taskId);
+          return;
+        }
+        if (integrationRemaining.length > 0) {
+          db.prepare("UPDATE tasks SET status = 'collaborating', orchestration_stage = 'owner_integrate', updated_at = ? WHERE id = ?").run(
+            now,
+            taskId,
+          );
+          appendTaskLog(taskId, "system", "V2 orchestration: owner_prep complete, skipping directly to owner_integrate");
+          broadcast("task_update", db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId));
+          processSubtaskDelegations(taskId);
+          return;
+        }
+        db.prepare("UPDATE tasks SET orchestration_stage = 'review', updated_at = ? WHERE id = ?").run(now, taskId);
+      } else if (orchestrationStage === "owner_integrate") {
+        const now = nowMs();
+        const integrationSubtasks = openSubtasks.filter(
+          (subtask) =>
+            inferOrchestrationPhaseFromSubtask(subtask as any) === "owner_integrate" &&
+            !String(subtask.target_department_id ?? "").trim(),
+        );
+        for (const subtask of integrationSubtasks) {
+          db.prepare("UPDATE subtasks SET status = 'done', completed_at = ? WHERE id = ?").run(now, subtask.id);
+          const updated = db.prepare("SELECT * FROM subtasks WHERE id = ?").get(subtask.id);
+          broadcast("subtask_update", updated);
+        }
+        const finalizeRemaining = openSubtasks.filter(
+          (subtask) => inferOrchestrationPhaseFromSubtask(subtask as any) === "finalize",
+        );
+        if (finalizeRemaining.length > 0) {
+          db.prepare("UPDATE tasks SET status = 'collaborating', orchestration_stage = 'finalize', updated_at = ? WHERE id = ?").run(
+            now,
+            taskId,
+          );
+          appendTaskLog(taskId, "system", "V2 orchestration: owner_integrate complete, entering finalize");
+          broadcast("task_update", db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId));
+          processSubtaskDelegations(taskId, { includeRender: true });
+          return;
+        }
+        db.prepare("UPDATE tasks SET orchestration_stage = 'review', updated_at = ? WHERE id = ?").run(now, taskId);
+      }
+    }
     if (finalExitCode === 0) {
       const pendingSubtasks = db
         .prepare(

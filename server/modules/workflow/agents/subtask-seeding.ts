@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Lang } from "../../../types/lang.ts";
 import { resolveConstrainedAgentScopeForTask } from "../../routes/core/tasks/execution-run-auto-assign.ts";
+import { inferOrchestrationPhaseFromSubtask, type OrchestrationV2Phase } from "../orchestration/subtask-orchestration-v2.ts";
 
 type SubtaskSeedingDeps = {
   db: any;
@@ -142,6 +143,7 @@ export function createSubtaskSeedingTools(deps: SubtaskSeedingDeps) {
       assignedAgentId: string | null;
       blockedReason: string | null;
       targetDepartmentId: string | null;
+      orchestrationPhase: OrchestrationV2Phase;
     }> = [
       {
         title: pickL(
@@ -166,6 +168,7 @@ export function createSubtaskSeedingTools(deps: SubtaskSeedingDeps) {
         assignedAgentId: baseAssignee,
         blockedReason: null,
         targetDepartmentId: null,
+        orchestrationPhase: "owner_prep",
       },
     ];
     const noteDetectedDeptSet = new Set<string>();
@@ -216,6 +219,10 @@ export function createSubtaskSeedingTools(deps: SubtaskSeedingDeps) {
             )
           : null,
         targetDepartmentId: targetDeptId,
+        orchestrationPhase: inferOrchestrationPhaseFromSubtask({
+          title: clippedTitle,
+          target_department_id: targetDeptId,
+        }),
       });
     }
 
@@ -254,6 +261,7 @@ export function createSubtaskSeedingTools(deps: SubtaskSeedingDeps) {
           lang,
         ),
         targetDepartmentId: deptId,
+        orchestrationPhase: "foreign_collab",
       });
     }
 
@@ -280,6 +288,7 @@ export function createSubtaskSeedingTools(deps: SubtaskSeedingDeps) {
       assignedAgentId: baseAssignee,
       blockedReason: null,
       targetDepartmentId: null,
+      orchestrationPhase: "owner_integrate",
     });
 
     // video_preprod일 경우 최종 영상 렌더링 서브태스크 추가
@@ -315,6 +324,7 @@ export function createSubtaskSeedingTools(deps: SubtaskSeedingDeps) {
           lang,
         ),
         targetDepartmentId: "dev",
+        orchestrationPhase: "finalize",
       });
     }
 
@@ -322,8 +332,11 @@ export function createSubtaskSeedingTools(deps: SubtaskSeedingDeps) {
       const sid = randomUUID();
       db.prepare(
         `
-      INSERT INTO subtasks (id, task_id, title, description, status, assigned_agent_id, blocked_reason, target_department_id, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO subtasks (
+        id, task_id, title, description, status, assigned_agent_id, blocked_reason, orchestration_phase,
+        target_department_id, created_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
       ).run(
         sid,
@@ -333,6 +346,7 @@ export function createSubtaskSeedingTools(deps: SubtaskSeedingDeps) {
         st.status,
         st.assignedAgentId,
         st.blockedReason,
+        st.orchestrationPhase,
         st.targetDepartmentId,
         now,
       );
@@ -415,6 +429,7 @@ export function createSubtaskSeedingTools(deps: SubtaskSeedingDeps) {
       assignedAgentId: string | null;
       blockedReason: string | null;
       targetDepartmentId: string | null;
+      orchestrationPhase: OrchestrationV2Phase;
     }> = [];
 
     for (const note of uniqueNotes) {
@@ -460,6 +475,7 @@ export function createSubtaskSeedingTools(deps: SubtaskSeedingDeps) {
             )
           : null,
         targetDepartmentId: targetDeptId,
+        orchestrationPhase: targetDeptId ? "foreign_collab" : "owner_prep",
       });
     }
 
@@ -486,14 +502,17 @@ export function createSubtaskSeedingTools(deps: SubtaskSeedingDeps) {
       assignedAgentId: baseAssignee,
       blockedReason: null,
       targetDepartmentId: null,
+      orchestrationPhase: "owner_integrate",
     });
 
     const hasOpenSubtask = db.prepare(
       "SELECT 1 FROM subtasks WHERE task_id = ? AND title = ? AND status != 'done' LIMIT 1",
     );
     const insertSubtask = db.prepare(`
-    INSERT INTO subtasks (id, task_id, title, description, status, assigned_agent_id, blocked_reason, target_department_id, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO subtasks (
+      id, task_id, title, description, status, assigned_agent_id, blocked_reason, orchestration_phase, target_department_id, created_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
     let created = 0;
@@ -509,6 +528,7 @@ export function createSubtaskSeedingTools(deps: SubtaskSeedingDeps) {
         st.status,
         st.assignedAgentId,
         st.blockedReason,
+        st.orchestrationPhase,
         st.targetDepartmentId,
         now,
       );

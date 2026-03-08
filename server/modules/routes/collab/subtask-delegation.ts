@@ -1,6 +1,14 @@
+import path from "node:path";
 import type { Lang } from "../../../types/lang.ts";
 import type { AgentRow } from "./direct-chat.ts";
 import { reconcileVideoRenderDelegationState } from "../../workflow/orchestration/video-render-delegation-state.ts";
+import {
+  buildOwnerIntegrationInstruction,
+  getTaskOrchestrationStage,
+  inferOrchestrationPhaseFromSubtask,
+  isTaskOrchestrationV2,
+  ORCHESTRATION_V2_FOREIGN_PARALLELISM,
+} from "../../workflow/orchestration/subtask-orchestration-v2.ts";
 import { readYoloModeEnabled } from "../../routes/ops/messages/decision-inbox/yolo-mode.ts";
 import { createSubtaskDelegationBatch } from "./subtask-delegation-batch.ts";
 import { createSubtaskDelegationPromptBuilder } from "./subtask-delegation-prompt.ts";
@@ -170,6 +178,142 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
     hasExplicitWarningFixRequest,
   });
 
+  function stripOrchestrationBlock(description: string | null): string {
+    return String(description ?? "")
+      .replace(/\n?\[ORCHESTRATION V2\][\s\S]*$/m, "")
+      .trimEnd();
+  }
+
+  function updateTaskOrchestrationStage(taskId: string, stage: string, status?: string): void {
+    const t = nowMs();
+    if (status) {
+      db.prepare("UPDATE tasks SET orchestration_stage = ?, status = ?, updated_at = ? WHERE id = ?").run(
+        stage,
+        status,
+        t,
+        taskId,
+      );
+    } else {
+      db.prepare("UPDATE tasks SET orchestration_stage = ?, updated_at = ? WHERE id = ?").run(stage, t, taskId);
+    }
+    broadcast("task_update", db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId));
+  }
+
+  function buildSiblingWorktreeReferenceBlock(taskId: string, projectPath: string): string {
+    const siblingRows = db
+      .prepare(
+        `
+        SELECT s.title, s.target_department_id, s.delegated_task_id
+        FROM subtasks s
+        WHERE s.task_id = ?
+          AND s.status = 'done'
+          AND s.delegated_task_id IS NOT NULL
+          AND TRIM(s.delegated_task_id) != ''
+        ORDER BY s.created_at ASC
+      `,
+      )
+      .all(taskId) as Array<{
+      title: string;
+      target_department_id: string | null;
+      delegated_task_id: string | null;
+    }>;
+    const lines: string[] = [];
+    const seen = new Set<string>();
+    for (const row of siblingRows) {
+      const delegatedTaskId = String(row.delegated_task_id ?? "").trim();
+      if (!delegatedTaskId || seen.has(delegatedTaskId)) continue;
+      seen.add(delegatedTaskId);
+      const shortId = delegatedTaskId.slice(0, 8);
+      const worktreePath = path.join(projectPath, ".climpire-worktrees", shortId);
+      const deptLabel = row.target_department_id
+        ? getDeptName(row.target_department_id)
+        : pickL(l(["부서 미지정"], ["Unassigned department"], ["未指定部門"], ["未指定部门"]), getPreferredLanguage());
+      lines.push(`- [${deptLabel}] ${worktreePath}`);
+    }
+    if (lines.length === 0) return "";
+    return [
+      "[Read-only Department Deliverables]",
+      "Read the following delegated-task worktrees and integrate their outputs into the owner worktree.",
+      "These paths are read-only references. Do not modify files in those worktrees.",
+      ...lines,
+    ].join("\n");
+  }
+
+  function resumeOwnerIntegrationTask(taskId: string): void {
+    const parentTask = db
+      .prepare(
+        `
+        SELECT id, title, description, status, project_id, project_path, department_id, assigned_agent_id, workflow_pack_key,
+               orchestration_version, orchestration_stage
+        FROM tasks
+        WHERE id = ?
+      `,
+      )
+      .get(taskId) as
+      | {
+          id: string;
+          title: string;
+          description: string | null;
+          status: string;
+          project_id: string | null;
+          project_path: string | null;
+          department_id: string | null;
+          assigned_agent_id: string | null;
+          workflow_pack_key: string | null;
+          orchestration_version: number | null;
+          orchestration_stage: string | null;
+        }
+      | undefined;
+    if (!parentTask || !isTaskOrchestrationV2(parentTask)) return;
+    if (getTaskOrchestrationStage(parentTask) !== "owner_integrate") return;
+    if (activeProcesses.has(taskId)) return;
+
+    const ownRemaining = db
+      .prepare(
+        `
+        SELECT COUNT(*) AS cnt
+        FROM subtasks
+        WHERE task_id = ?
+          AND status NOT IN ('done', 'cancelled')
+          AND (orchestration_phase = 'owner_integrate' OR (orchestration_phase IS NULL AND target_department_id IS NULL))
+      `,
+      )
+      .get(taskId) as { cnt: number };
+    if ((ownRemaining?.cnt ?? 0) === 0) return;
+
+    const assignee = parentTask.assigned_agent_id
+      ? (db.prepare("SELECT * FROM agents WHERE id = ?").get(parentTask.assigned_agent_id) as AgentRow | undefined)
+      : undefined;
+    if (!assignee) {
+      appendTaskLog(taskId, "system", "Owner integration resume blocked: assigned owner agent not found");
+      return;
+    }
+    if (assignee.status === "working" && assignee.current_task_id && assignee.current_task_id !== taskId) {
+      appendTaskLog(taskId, "system", `Owner integration resume deferred: ${assignee.name} is busy on ${assignee.current_task_id}`);
+      return;
+    }
+
+    const projectPath = resolveProjectPath({
+      project_id: parentTask.project_id,
+      project_path: parentTask.project_path,
+      description: parentTask.description,
+      title: parentTask.title,
+    });
+    const ownerIntegrationBlock = [
+      buildOwnerIntegrationInstruction(parentTask.title),
+      buildSiblingWorktreeReferenceBlock(taskId, projectPath),
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+    const nextDescription = [stripOrchestrationBlock(parentTask.description), ownerIntegrationBlock]
+      .filter(Boolean)
+      .join("\n\n");
+    db.prepare("UPDATE tasks SET description = ?, updated_at = ? WHERE id = ?").run(nextDescription, nowMs(), taskId);
+    updateTaskOrchestrationStage(taskId, "owner_integrate", "planned");
+    appendTaskLog(taskId, "system", "V2 orchestration: foreign collaboration complete, resuming owner integration");
+    startTaskExecutionForAgent(taskId, assignee, parentTask.department_id, getDeptName(parentTask.department_id ?? ""));
+  }
+
   function clearAutoResumeRetry(taskId: string): void {
     const timer = autoResumeRetryTimers.get(taskId);
     if (timer) {
@@ -305,22 +449,6 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
       return;
     }
 
-    const foreignSubtasks = db
-      .prepare(
-        "SELECT * FROM subtasks WHERE task_id = ? AND target_department_id IS NOT NULL AND status NOT IN ('done', 'cancelled') AND (delegated_task_id IS NULL OR delegated_task_id = '') ORDER BY created_at",
-      )
-      .all(taskId) as unknown as SubtaskRow[];
-
-    // VIDEO_FINAL_RENDER must wait for other subtasks — exclude from initial batch
-    const eligible = opts?.includeRender
-      ? foreignSubtasks
-      : foreignSubtasks.filter((s) => !String(s.title ?? "").includes("[VIDEO_FINAL_RENDER]"));
-
-    if (eligible.length === 0) {
-      clearDelegationRetry(taskId);
-      return;
-    }
-
     const parentTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId) as
       | {
           id: string;
@@ -330,6 +458,9 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
           project_id: string | null;
           project_path: string | null;
           department_id: string | null;
+          assigned_agent_id: string | null;
+          orchestration_version: number | null;
+          orchestration_stage: string | null;
         }
       | undefined;
     if (!parentTask) {
@@ -337,9 +468,60 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
       return;
     }
     const lang = resolveLang(parentTask.description ?? parentTask.title);
+    const isV2 = isTaskOrchestrationV2(parentTask);
+    const orchestrationStage = getTaskOrchestrationStage(parentTask);
 
-    // Origin team first: defer foreign delegation until origin team reaches review (work complete)
-    if (!["review", "done"].includes(parentTask.status)) {
+    if (isV2 && orchestrationStage === "owner_integrate") {
+      clearDelegationRetry(taskId);
+      resumeOwnerIntegrationTask(taskId);
+      return;
+    }
+
+    const foreignSubtasksAll = db
+      .prepare(
+        "SELECT * FROM subtasks WHERE task_id = ? AND target_department_id IS NOT NULL AND status NOT IN ('done', 'cancelled') ORDER BY created_at",
+      )
+      .all(taskId) as unknown as SubtaskRow[];
+
+    const relevantForeignSubtasks = isV2
+      ? foreignSubtasksAll.filter((subtask) => {
+          const phase = inferOrchestrationPhaseFromSubtask(subtask);
+          if (orchestrationStage === "finalize") return phase === "finalize";
+          if (orchestrationStage === "foreign_collab") return phase === "foreign_collab";
+          return false;
+        })
+      : foreignSubtasksAll;
+
+    if (relevantForeignSubtasks.length === 0) {
+      clearDelegationRetry(taskId);
+      if (isV2 && orchestrationStage === "foreign_collab") {
+        updateTaskOrchestrationStage(taskId, "owner_integrate", "collaborating");
+        resumeOwnerIntegrationTask(taskId);
+      }
+      return;
+    }
+
+    const incompleteForeign = relevantForeignSubtasks;
+    const undelegatedForeign = incompleteForeign.filter((subtask) => !String(subtask.delegated_task_id ?? "").trim());
+    const eligible = undelegatedForeign.filter((subtask) => {
+      if (isV2 && orchestrationStage === "finalize") return true;
+      if (opts?.includeRender) return true;
+      return !String(subtask.title ?? "").includes("[VIDEO_FINAL_RENDER]");
+    });
+
+    if (eligible.length === 0) {
+      clearDelegationRetry(taskId);
+      if (isV2 && orchestrationStage === "foreign_collab") {
+        const unresolvedForeign = incompleteForeign.filter((subtask) => subtask.status !== "blocked");
+        if (unresolvedForeign.length === 0) {
+          appendTaskLog(taskId, "system", "V2 orchestration: foreign collaboration remains blocked; owner integration will not start");
+        }
+      }
+      return;
+    }
+
+    // Origin team first: legacy path waits until origin team reaches review.
+    if (!isV2 && !["review", "done"].includes(parentTask.status)) {
       const ownDeptPending = db
         .prepare(
           "SELECT COUNT(*) as cnt FROM subtasks WHERE task_id = ? AND (target_department_id IS NULL OR target_department_id = ?) AND status NOT IN ('done', 'cancelled')",
@@ -364,12 +546,26 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
     notifyCeo(
       pickL(
         l(
-          [`'${parentTask.title}' 의 외부 부서 서브태스크 ${eligible.length}건을 부서별 배치로 순차 위임합니다.`],
           [
-            `Delegating ${eligible.length} external-department subtasks for '${parentTask.title}' sequentially by department, one batched request at a time.`,
+            isV2 && orchestrationStage === "foreign_collab"
+              ? `'${parentTask.title}' 의 foreign_collab 서브태스크 ${eligible.length}건을 최대 ${ORCHESTRATION_V2_FOREIGN_PARALLELISM}개 부서까지 제한 병렬로 위임합니다.`
+              : `'${parentTask.title}' 의 외부 부서 서브태스크 ${eligible.length}건을 부서별 배치로 순차 위임합니다.`,
           ],
-          [`'${parentTask.title}' の他部門サブタスク${eligible.length}件を、部門ごとにバッチ化して順次委任します。`],
-          [`将把'${parentTask.title}'的${eligible.length}个外部门 SubTask 按部门批量后顺序委派。`],
+          [
+            isV2 && orchestrationStage === "foreign_collab"
+              ? `Delegating ${eligible.length} foreign_collab subtasks for '${parentTask.title}' with capped parallelism (${ORCHESTRATION_V2_FOREIGN_PARALLELISM} departments max).`
+              : `Delegating ${eligible.length} external-department subtasks for '${parentTask.title}' sequentially by department, one batched request at a time.`,
+          ],
+          [
+            isV2 && orchestrationStage === "foreign_collab"
+              ? `'${parentTask.title}' の foreign_collab サブタスク${eligible.length}件を、最大${ORCHESTRATION_V2_FOREIGN_PARALLELISM}部門まで制限並列で委任します。`
+              : `'${parentTask.title}' の他部門サブタスク${eligible.length}件を、部門ごとにバッチ化して順次委任します。`,
+          ],
+          [
+            isV2 && orchestrationStage === "foreign_collab"
+              ? `将把'${parentTask.title}'的 ${eligible.length} 个 foreign_collab 子任务以最多 ${ORCHESTRATION_V2_FOREIGN_PARALLELISM} 个部门的限制并行方式委派。`
+              : `将把'${parentTask.title}'的${eligible.length}个外部门 SubTask 按部门批量后顺序委派。`,
+          ],
         ),
         lang,
       ),
@@ -378,39 +574,75 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
     appendTaskLog(
       taskId,
       "system",
-      `Subtask delegation mode: sequential_by_department_batched (queues=${deptCount}, items=${eligible.length})`,
+      isV2 && orchestrationStage === "foreign_collab"
+        ? `Subtask delegation mode: capped_parallel_by_department_batched (parallelism=${ORCHESTRATION_V2_FOREIGN_PARALLELISM}, queues=${deptCount}, items=${eligible.length})`
+        : `Subtask delegation mode: sequential_by_department_batched (queues=${deptCount}, items=${eligible.length})`,
     );
-    const runQueue = (index: number) => {
-      if (index >= queues.length) {
-        const pending = pendingDelegationOptionsByTask.get(taskId);
-        if (pending) {
-          appendTaskLog(
-            taskId,
-            "system",
-            `Subtask delegation draining deferred request (includeRender=${pending.includeRender === true})`,
-          );
-          setTimeout(() => {
-            const nextPending = pendingDelegationOptionsByTask.get(taskId) ?? pending;
-            pendingDelegationOptionsByTask.delete(taskId);
-            subtaskDelegationDispatchInFlight.delete(taskId);
-            processSubtaskDelegations(taskId, nextPending);
-            maybeNotifyAllSubtasksComplete(parentTask.id);
-          }, 150);
-          return;
-        }
-        subtaskDelegationDispatchInFlight.delete(taskId);
-        maybeNotifyAllSubtasksComplete(parentTask.id);
+    const drainDeferred = () => {
+      const pending = pendingDelegationOptionsByTask.get(taskId);
+      if (pending) {
+        appendTaskLog(
+          taskId,
+          "system",
+          `Subtask delegation draining deferred request (includeRender=${pending.includeRender === true})`,
+        );
+        setTimeout(() => {
+          const nextPending = pendingDelegationOptionsByTask.get(taskId) ?? pending;
+          pendingDelegationOptionsByTask.delete(taskId);
+          processSubtaskDelegations(taskId, nextPending);
+          maybeNotifyAllSubtasksComplete(parentTask.id);
+        }, 150);
         return;
       }
-      delegateSubtaskBatch(queues[index], index, queues.length, parentTask, () => {
-        const nextDelay = 900 + Math.random() * 700;
-        setTimeout(() => runQueue(index + 1), nextDelay);
-      });
+      maybeNotifyAllSubtasksComplete(parentTask.id);
     };
-    runQueue(0);
+
+    if (!isV2 || orchestrationStage !== "foreign_collab") {
+      const runQueue = (index: number) => {
+        if (index >= queues.length) {
+          subtaskDelegationDispatchInFlight.delete(taskId);
+          drainDeferred();
+          return;
+        }
+        delegateSubtaskBatch(queues[index], index, queues.length, parentTask, () => {
+          const nextDelay = 900 + Math.random() * 700;
+          setTimeout(() => runQueue(index + 1), nextDelay);
+        });
+      };
+      runQueue(0);
+      return;
+    }
+
+    const activeDelegatedTasks = new Set(
+      incompleteForeign.map((subtask) => String(subtask.delegated_task_id ?? "").trim()).filter((id) => id.length > 0),
+    );
+    const availableSlots = Math.max(0, ORCHESTRATION_V2_FOREIGN_PARALLELISM - activeDelegatedTasks.size);
+    if (availableSlots === 0) {
+      subtaskDelegationDispatchInFlight.delete(taskId);
+      appendTaskLog(taskId, "system", `V2 orchestration: foreign collaboration slots full (${activeDelegatedTasks.size}/${ORCHESTRATION_V2_FOREIGN_PARALLELISM})`);
+      return;
+    }
+
+    const launchCount = Math.min(availableSlots, queues.length);
+    for (let index = 0; index < launchCount; index += 1) {
+      delegateSubtaskBatch(queues[index], index, queues.length, parentTask, () => {
+        setTimeout(() => processSubtaskDelegations(taskId), 250);
+      });
+    }
+    subtaskDelegationDispatchInFlight.delete(taskId);
+    if (launchCount < queues.length) {
+      appendTaskLog(
+        taskId,
+        "system",
+        `V2 orchestration: launched ${launchCount}/${queues.length} foreign department batches; remaining queues wait for free slots`,
+      );
+    }
   }
 
   function maybeNotifyAllSubtasksComplete(parentTaskId: string): void {
+    const allOpenSubtasks = db
+      .prepare("SELECT * FROM subtasks WHERE task_id = ? AND status NOT IN ('done', 'cancelled') ORDER BY created_at")
+      .all(parentTaskId) as unknown as SubtaskRow[];
     const remaining = db
       .prepare("SELECT COUNT(*) as cnt FROM subtasks WHERE task_id = ? AND status NOT IN ('done', 'cancelled')")
       .get(parentTaskId) as { cnt: number };
@@ -463,7 +695,8 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
     const parentTask = db
       .prepare(
         `
-        SELECT title, description, status, workflow_pack_key, source_task_id, assigned_agent_id, department_id
+        SELECT title, description, status, workflow_pack_key, source_task_id, assigned_agent_id, department_id,
+               orchestration_version, orchestration_stage
         FROM tasks
         WHERE id = ?
       `,
@@ -477,9 +710,54 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
           source_task_id: string | null;
           assigned_agent_id: string | null;
           department_id: string | null;
+          orchestration_version: number | null;
+          orchestration_stage: string | null;
         }
       | undefined;
     if (!parentTask) return;
+    const isV2 = isTaskOrchestrationV2(parentTask);
+    const orchestrationStage = getTaskOrchestrationStage(parentTask);
+
+    if (isV2 && !parentTask.source_task_id) {
+      const foreignOpen = allOpenSubtasks.filter((subtask) => inferOrchestrationPhaseFromSubtask(subtask) === "foreign_collab");
+      const ownerIntegrateOpen = allOpenSubtasks.filter(
+        (subtask) => inferOrchestrationPhaseFromSubtask(subtask) === "owner_integrate",
+      );
+      const finalizeOpen = allOpenSubtasks.filter((subtask) => inferOrchestrationPhaseFromSubtask(subtask) === "finalize");
+
+      if (orchestrationStage === "foreign_collab") {
+        if (foreignOpen.length === 0) {
+          updateTaskOrchestrationStage(parentTaskId, "owner_integrate", "collaborating");
+          resumeOwnerIntegrationTask(parentTaskId);
+        }
+        return;
+      }
+
+      if (orchestrationStage === "finalize" && remaining.cnt === 0) {
+        updateTaskOrchestrationStage(parentTaskId, "review", "review");
+        appendTaskLog(parentTaskId, "system", "V2 orchestration: finalize complete, entering review");
+        const yolo = readYoloModeEnabled(db);
+        setTimeout(
+          () =>
+            finishReview(parentTaskId, parentTask.title, {
+              bypassProjectDecisionGate: yolo,
+              trigger: "v2_finalize_complete",
+            }),
+          1200,
+        );
+        return;
+      }
+
+      if (orchestrationStage === "owner_integrate" && remaining.cnt > 0) {
+        const unresolvedNonFinalize = ownerIntegrateOpen.length + foreignOpen.length;
+        if (unresolvedNonFinalize === 0 && finalizeOpen.length > 0) {
+          updateTaskOrchestrationStage(parentTaskId, "finalize", "collaborating");
+          appendTaskLog(parentTaskId, "system", "V2 orchestration: owner integration complete, dispatching finalize phase");
+          processSubtaskDelegations(parentTaskId, { includeRender: true });
+        }
+        return;
+      }
+    }
 
     // Auto-resume retry should continue even after completion notice was already sent.
     if (remaining.cnt === 0) {

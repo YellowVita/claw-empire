@@ -115,6 +115,7 @@ export function registerTaskSubtaskRoutes(deps: TaskSubtaskRouteDeps): void {
       "status",
       "assigned_agent_id",
       "blocked_reason",
+      "orchestration_phase",
       "target_department_id",
       "delegated_task_id",
     ];

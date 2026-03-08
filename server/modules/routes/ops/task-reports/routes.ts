@@ -129,7 +129,7 @@ export function registerTaskReportRoutes(ctx: RuntimeContext): void {
       const rootSubtasks = db
         .prepare(
           `
-      SELECT s.id, s.title, s.status, s.assigned_agent_id, s.target_department_id, s.delegated_task_id, s.completed_at,
+      SELECT s.id, s.title, s.status, s.assigned_agent_id, s.target_department_id, s.delegated_task_id, s.orchestration_phase, s.completed_at,
              COALESCE(a.name, '') AS agent_name, COALESCE(a.name_ko, '') AS agent_name_ko,
              COALESCE(d.name, '') AS target_dept_name, COALESCE(d.name_ko, '') AS target_dept_name_ko
       FROM subtasks s

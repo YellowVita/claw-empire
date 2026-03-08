@@ -96,6 +96,9 @@ CREATE TABLE IF NOT EXISTS tasks (
   priority INTEGER DEFAULT 0,
   task_type TEXT DEFAULT 'general' CHECK(task_type IN ('general','development','design','analysis','presentation','documentation')),
   workflow_pack_key TEXT NOT NULL DEFAULT 'development',
+  orchestration_version INTEGER NOT NULL DEFAULT 1,
+  orchestration_stage TEXT
+    CHECK(orchestration_stage IN ('owner_prep','foreign_collab','owner_integrate','finalize','review')),
   workflow_meta_json TEXT,
   output_format TEXT,
   project_path TEXT,
@@ -264,6 +267,8 @@ CREATE TABLE IF NOT EXISTS subtasks (
     CHECK(status IN ('pending','in_progress','done','blocked')),
   assigned_agent_id TEXT REFERENCES agents(id),
   blocked_reason TEXT,
+  orchestration_phase TEXT
+    CHECK(orchestration_phase IN ('owner_prep','foreign_collab','owner_integrate','finalize')),
   cli_tool_use_id TEXT,
   created_at INTEGER DEFAULT (unixepoch()*1000),
   completed_at INTEGER

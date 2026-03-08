@@ -117,7 +117,26 @@ export function applyTaskSchemaMigrations(db: DbLike): void {
     /* already exists */
   }
   try {
+    db.exec("ALTER TABLE tasks ADD COLUMN orchestration_version INTEGER NOT NULL DEFAULT 1");
+  } catch {
+    /* already exists */
+  }
+  try {
+    db.exec(
+      "ALTER TABLE tasks ADD COLUMN orchestration_stage TEXT CHECK(orchestration_stage IN ('owner_prep','foreign_collab','owner_integrate','finalize','review'))",
+    );
+  } catch {
+    /* already exists */
+  }
+  try {
     db.exec("ALTER TABLE tasks ADD COLUMN output_format TEXT");
+  } catch {
+    /* already exists */
+  }
+  try {
+    db.exec(
+      "ALTER TABLE subtasks ADD COLUMN orchestration_phase TEXT CHECK(orchestration_phase IN ('owner_prep','foreign_collab','owner_integrate','finalize'))",
+    );
   } catch {
     /* already exists */
   }
@@ -496,6 +515,9 @@ function migrateLegacyTasksStatusSchema(db: DbLike): void {
           task_type TEXT DEFAULT 'general'
             CHECK(task_type IN ('general','development','design','analysis','presentation','documentation')),
           workflow_pack_key TEXT NOT NULL DEFAULT 'development',
+          orchestration_version INTEGER NOT NULL DEFAULT 1,
+          orchestration_stage TEXT
+            CHECK(orchestration_stage IN ('owner_prep','foreign_collab','owner_integrate','finalize','review')),
           workflow_meta_json TEXT,
           output_format TEXT,
           project_path TEXT,
@@ -512,17 +534,22 @@ function migrateLegacyTasksStatusSchema(db: DbLike): void {
       const hasSourceTaskId = cols.some((c) => c.name === "source_task_id");
       const hasProjectId = cols.some((c) => c.name === "project_id");
       const hasWorkflowPackKey = cols.some((c) => c.name === "workflow_pack_key");
+      const hasOrchestrationVersion = cols.some((c) => c.name === "orchestration_version");
+      const hasOrchestrationStage = cols.some((c) => c.name === "orchestration_stage");
       const hasWorkflowMeta = cols.some((c) => c.name === "workflow_meta_json");
       const hasOutputFormat = cols.some((c) => c.name === "output_format");
       const sourceTaskIdExpr = hasSourceTaskId ? "source_task_id" : "NULL AS source_task_id";
       const projectIdExpr = hasProjectId ? "project_id" : "NULL AS project_id";
       const workflowPackExpr = hasWorkflowPackKey ? "workflow_pack_key" : "'development' AS workflow_pack_key";
+      const orchestrationVersionExpr = hasOrchestrationVersion ? "orchestration_version" : "1 AS orchestration_version";
+      const orchestrationStageExpr = hasOrchestrationStage ? "orchestration_stage" : "NULL AS orchestration_stage";
       const workflowMetaExpr = hasWorkflowMeta ? "workflow_meta_json" : "NULL AS workflow_meta_json";
       const outputFormatExpr = hasOutputFormat ? "output_format" : "NULL AS output_format";
       db.exec(`
         INSERT INTO ${newTable} (
           id, title, description, department_id, assigned_agent_id,
-          project_id, status, priority, task_type, workflow_pack_key, workflow_meta_json, output_format, project_path, result,
+          project_id, status, priority, task_type, workflow_pack_key, orchestration_version, orchestration_stage,
+          workflow_meta_json, output_format, project_path, result,
           started_at, completed_at, created_at, updated_at, source_task_id
         )
         SELECT
@@ -533,7 +560,8 @@ function migrateLegacyTasksStatusSchema(db: DbLike): void {
               THEN status
             ELSE 'inbox'
           END,
-          priority, task_type, ${workflowPackExpr}, ${workflowMetaExpr}, ${outputFormatExpr}, project_path, result,
+          priority, task_type, ${workflowPackExpr}, ${orchestrationVersionExpr}, ${orchestrationStageExpr},
+          ${workflowMetaExpr}, ${outputFormatExpr}, project_path, result,
           started_at, completed_at, created_at, updated_at, ${sourceTaskIdExpr}
         FROM tasks;
       `);
@@ -631,6 +659,8 @@ function repairLegacyTaskForeignKeys(db: DbLike): void {
             CHECK(status IN ('pending','in_progress','done','blocked')),
           assigned_agent_id TEXT REFERENCES agents(id),
           blocked_reason TEXT,
+          orchestration_phase TEXT
+            CHECK(orchestration_phase IN ('owner_prep','foreign_collab','owner_integrate','finalize')),
           cli_tool_use_id TEXT,
           created_at INTEGER DEFAULT (unixepoch()*1000),
           completed_at INTEGER,
@@ -641,15 +671,16 @@ function repairLegacyTaskForeignKeys(db: DbLike): void {
       const subtasksCols = db.prepare(`PRAGMA table_info(${subtasksOld})`).all() as Array<{ name: string }>;
       const hasTargetDept = subtasksCols.some((c) => c.name === "target_department_id");
       const hasDelegatedTask = subtasksCols.some((c) => c.name === "delegated_task_id");
+      const hasOrchestrationPhase = subtasksCols.some((c) => c.name === "orchestration_phase");
       db.exec(`
         INSERT INTO subtasks (
           id, task_id, title, description, status, assigned_agent_id,
-          blocked_reason, cli_tool_use_id, created_at, completed_at,
+          blocked_reason, orchestration_phase, cli_tool_use_id, created_at, completed_at,
           target_department_id, delegated_task_id
         )
         SELECT
           id, task_id, title, description, status, assigned_agent_id,
-          blocked_reason, cli_tool_use_id, created_at, completed_at,
+          blocked_reason, ${hasOrchestrationPhase ? "orchestration_phase" : "NULL"}, cli_tool_use_id, created_at, completed_at,
           ${hasTargetDept ? "target_department_id" : "NULL"},
           ${hasDelegatedTask ? "delegated_task_id" : "NULL"}
         FROM ${subtasksOld};
