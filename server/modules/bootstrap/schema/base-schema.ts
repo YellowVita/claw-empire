@@ -154,6 +154,31 @@ CREATE TABLE IF NOT EXISTS task_logs (
   created_at INTEGER DEFAULT (unixepoch()*1000)
 );
 
+CREATE TABLE IF NOT EXISTS task_retry_queue (
+  task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  next_run_at INTEGER NOT NULL,
+  last_reason TEXT NOT NULL,
+  created_at INTEGER DEFAULT (unixepoch()*1000),
+  updated_at INTEGER DEFAULT (unixepoch()*1000)
+);
+
+CREATE TABLE IF NOT EXISTS task_quality_items (
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK(kind IN ('acceptance','validation')),
+  label TEXT NOT NULL,
+  details TEXT,
+  required INTEGER NOT NULL DEFAULT 1 CHECK(required IN (0,1)),
+  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','passed','failed','waived')),
+  evidence_markdown TEXT,
+  source TEXT NOT NULL DEFAULT 'manual' CHECK(source IN ('manual','workflow_meta','workflow_pack','system')),
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER DEFAULT (unixepoch()*1000),
+  updated_at INTEGER DEFAULT (unixepoch()*1000),
+  completed_at INTEGER
+);
+
 CREATE TABLE IF NOT EXISTS task_interrupt_injections (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -354,6 +379,8 @@ CREATE INDEX IF NOT EXISTS idx_projects_recent ON projects(last_used_at DESC, up
 CREATE INDEX IF NOT EXISTS idx_task_creation_audits_task ON task_creation_audits(task_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_task_creation_audits_trigger ON task_creation_audits(trigger, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_task_logs_task ON task_logs(task_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_task_retry_queue_next_run ON task_retry_queue(next_run_at, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_task_quality_items_task ON task_quality_items(task_id, sort_order ASC, created_at ASC);
 CREATE INDEX IF NOT EXISTS idx_task_interrupt_injections_task
   ON task_interrupt_injections(task_id, session_id, consumed_at, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_receiver ON messages(receiver_type, receiver_id, created_at DESC);

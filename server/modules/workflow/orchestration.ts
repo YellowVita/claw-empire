@@ -453,6 +453,7 @@ export function initializeWorkflowPartC(ctx: RuntimeContext): WorkflowOrchestrat
     notifyTaskStatus,
     resolveProjectPath,
     createWorktree,
+    cleanupWorktree,
     getDeptRoleConstraint,
     getRecentConversationContext,
     getTaskContinuationContext,
@@ -655,7 +656,10 @@ export function initializeWorkflowPartC(ctx: RuntimeContext): WorkflowOrchestrat
   });
 
   function handleTaskRunComplete(taskId: string, exitCode: number): void {
-    runCompleteHandler.handleTaskRunComplete(taskId, exitCode);
+    void runCompleteHandler.handleTaskRunComplete(taskId, exitCode).catch((error: unknown) => {
+      const message = error instanceof Error ? error.stack || error.message : String(error);
+      appendTaskLog(taskId, "error", `RUN completion handler error: ${message}`);
+    });
   }
 
   const reviewFinalizeTools = createReviewFinalizeTools({

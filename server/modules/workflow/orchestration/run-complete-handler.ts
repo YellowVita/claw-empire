@@ -12,6 +12,18 @@ import {
   inferOrchestrationPhaseFromSubtask,
   isTaskOrchestrationV2,
 } from "./subtask-orchestration-v2.ts";
+import { computeTaskQualitySummary, loadTaskQualityItems } from "../../routes/core/tasks/quality.ts";
+import {
+  computeRetryDelayMs,
+  deleteTaskRetryQueueRow,
+  readTaskExecutionHooks,
+  readTaskExecutionPolicy,
+  readTaskRetryQueueRow,
+  runTaskExecutionHooks,
+  shouldRetryForReason,
+  upsertTaskRetryQueueRow,
+  type TaskRetryReason,
+} from "./task-execution-policy.ts";
 
 type CreateRunCompleteHandlerDeps = Record<string, any>;
 
@@ -59,7 +71,78 @@ export function createRunCompleteHandler(deps: CreateRunCompleteHandlerDeps) {
     hasVisibleDiffSummary,
   } = deps;
 
-  function handleTaskRunComplete(taskId: string, exitCode: number): void {
+  function detectRetryReason(result: string | null): TaskRetryReason | null {
+    if (!result) return null;
+    if (result.includes("RUN TIMEOUT (no output")) return "idle_timeout";
+    if (result.includes("RUN TIMEOUT (exceeded max runtime")) return "hard_timeout";
+    return null;
+  }
+
+  function scheduleAutomaticRetry(task: {
+    id: string;
+    title: string;
+    description: string | null;
+  }, reason: TaskRetryReason): "scheduled" | "exhausted" | "skipped" {
+    const policy = readTaskExecutionPolicy(db as any);
+    if (!shouldRetryForReason(policy, reason)) return "skipped";
+
+    const existingRow = readTaskRetryQueueRow(db as any, task.id);
+    const attemptCount = (existingRow?.attempt_count ?? 0) + 1;
+    const lang = resolveLang(task.description ?? task.title);
+
+    if (attemptCount > policy.max_auto_retries) {
+      deleteTaskRetryQueueRow(db as any, task.id);
+      db.prepare("UPDATE tasks SET status = 'inbox', updated_at = ? WHERE id = ?").run(nowMs(), task.id);
+      appendTaskLog(task.id, "system", `Automatic retry exhausted (${reason}, max=${policy.max_auto_retries}) -> inbox`);
+      notifyTaskStatus(task.id, task.title, "inbox", lang);
+      notifyCeo(
+        pickL(
+          l(
+            [`'${task.title}' 자동 재시도 한도를 초과해 inbox로 되돌렸습니다. (reason=${reason})`],
+            [`'${task.title}' exceeded the automatic retry limit and was moved back to inbox. (reason=${reason})`],
+            [`'${task.title}' は自動再試行上限を超えたため inbox に戻しました。 (reason=${reason})`],
+            [`'${task.title}' 已超过自动重试上限，已移回 inbox。 (reason=${reason})`],
+          ),
+          lang,
+        ),
+        task.id,
+      );
+      return "exhausted";
+    }
+
+    const delayMs = computeRetryDelayMs(policy, attemptCount);
+    const now = nowMs();
+    upsertTaskRetryQueueRow(db as any, {
+      task_id: task.id,
+      attempt_count: attemptCount,
+      next_run_at: now + delayMs,
+      last_reason: reason,
+      created_at: existingRow?.created_at ?? now,
+      updated_at: now,
+    });
+    db.prepare("UPDATE tasks SET status = 'pending', updated_at = ? WHERE id = ?").run(now, task.id);
+    appendTaskLog(
+      task.id,
+      "system",
+      `Automatic retry scheduled (${reason}, attempt=${attemptCount}, delay_ms=${delayMs})`,
+    );
+    notifyTaskStatus(task.id, task.title, "pending", lang);
+    notifyCeo(
+      pickL(
+        l(
+          [`'${task.title}' 자동 재시도를 예약했습니다. (${reason}, ${attemptCount}회차)`],
+          [`Scheduled an automatic retry for '${task.title}'. (${reason}, attempt ${attemptCount})`],
+          [`'${task.title}' の自動再試行を予約しました。 (${reason}, ${attemptCount}回目)`],
+          [`已为 '${task.title}' 安排自动重试。 (${reason}，第 ${attemptCount} 次)`],
+        ),
+        lang,
+      ),
+      task.id,
+    );
+    return "scheduled";
+  }
+
+  async function handleTaskRunComplete(taskId: string, exitCode: number): Promise<void> {
     activeProcesses.delete(taskId);
     stopProgressTimer(taskId);
 
@@ -363,6 +446,33 @@ export function createRunCompleteHandler(deps: CreateRunCompleteHandlerDeps) {
       processSubtaskDelegations(taskId);
     }
 
+    if (task?.assigned_agent_id) {
+      const wtInfo = taskWorktrees.get(taskId) as { worktreePath?: string; projectPath?: string } | undefined;
+      let agentRow: { cli_provider: string | null } | undefined;
+      try {
+        agentRow = db.prepare("SELECT cli_provider FROM agents WHERE id = ?").get(task.assigned_agent_id) as
+          | { cli_provider: string | null }
+          | undefined;
+      } catch {
+        agentRow = undefined;
+      }
+      const hookStage = finalExitCode === 0 ? "after_run_success" : "after_run_failure";
+      const configuredHooks = readTaskExecutionHooks(db as any)[hookStage];
+      if (wtInfo?.worktreePath && configuredHooks.length > 0) {
+        await runTaskExecutionHooks({
+          db: db as any,
+          stage: hookStage,
+          taskId,
+          taskTitle: task.title,
+          projectPath: task.project_path || wtInfo.projectPath || process.cwd(),
+          worktreePath: wtInfo.worktreePath,
+          agentId: task.assigned_agent_id,
+          provider: agentRow?.cli_provider || "claude",
+          appendTaskLog,
+        });
+      }
+    }
+
     // Update agent status back to idle
     if (task?.assigned_agent_id) {
       db.prepare("UPDATE agents SET status = 'idle', current_task_id = NULL WHERE id = ?").run(task.assigned_agent_id);
@@ -560,6 +670,30 @@ export function createRunCompleteHandler(deps: CreateRunCompleteHandlerDeps) {
         );
         return;
       }
+
+      deleteTaskRetryQueueRow(db as any, taskId);
+      const qualityItems = loadTaskQualityItems(db as any, taskId);
+      const qualitySummary = computeTaskQualitySummary(qualityItems);
+      if (qualitySummary.blocked_review) {
+        db.prepare("UPDATE tasks SET status = 'pending', updated_at = ? WHERE id = ?").run(t, taskId);
+        appendTaskLog(taskId, "system", "Status -> pending (quality gate blocked review entry)");
+        const updatedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId);
+        broadcast("task_update", updatedTask);
+        notifyTaskStatus(taskId, task.title, "pending", resolveLang(task.description ?? task.title));
+        notifyCeo(
+          pickL(
+            l(
+              [`'${task.title}' 은(는) 필수 quality 항목이 남아 있어 review 진입이 차단되었습니다.`],
+              [`'${task.title}' could not enter review because required quality items are still incomplete.`],
+              [`'${task.title}' は必須 quality 項目が残っているため review へ進めませんでした。`],
+              [`'${task.title}' 因必填 quality 项未完成，无法进入 review。`],
+            ),
+            resolveLang(task.description ?? task.title),
+          ),
+          taskId,
+        );
+        return;
+      }
     }
 
     if (finalExitCode === 0) {
@@ -744,8 +878,24 @@ export function createRunCompleteHandler(deps: CreateRunCompleteHandlerDeps) {
         }, 2500);
       }, 2500);
     } else {
+      const retryReason = detectRetryReason(result);
+      if (task && retryReason) {
+        const retryOutcome = scheduleAutomaticRetry({ id: taskId, title: task.title, description: task.description }, retryReason);
+        if (retryOutcome === "scheduled" || retryOutcome === "exhausted") {
+          const updatedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId);
+          broadcast("task_update", updatedTask);
+          const failWtInfo = taskWorktrees.get(taskId);
+          if (failWtInfo) {
+            cleanupWorktree(failWtInfo.projectPath, taskId);
+            appendTaskLog(taskId, "system", "Worktree cleaned up after retry scheduling");
+          }
+          return;
+        }
+      }
+
       // ── FAILURE: Reset to inbox, team leader reports failure ──
       db.prepare("UPDATE tasks SET status = 'inbox', updated_at = ? WHERE id = ?").run(t, taskId);
+      deleteTaskRetryQueueRow(db as any, taskId);
 
       if (task?.source_task_id) {
         reconcileDelegatedSubtasksAfterRun(taskId, finalExitCode);

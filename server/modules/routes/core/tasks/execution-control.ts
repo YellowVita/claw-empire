@@ -12,6 +12,7 @@ import {
   queueInterruptPrompt,
   sanitizeInterruptPrompt,
 } from "../../../workflow/core/interrupt-injection-tools.ts";
+import { deleteTaskRetryQueueRow } from "../../../workflow/orchestration/task-execution-policy.ts";
 
 export type TaskExecutionControlRouteDeps = Pick<
   RuntimeContext,
@@ -301,6 +302,7 @@ export function registerTaskExecutionControlRoutes(deps: TaskExecutionControlRou
     const lang = resolveLang(task.title);
 
     stopProgressTimer(id);
+    deleteTaskRetryQueueRow(db as any, id);
 
     const activeChild = activeProcesses.get(id);
     if (!activeChild?.pid) {

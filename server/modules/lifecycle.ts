@@ -9,6 +9,16 @@ import { startDiscordReceiver } from "../messenger/discord-receiver.ts";
 import { startTelegramReceiver } from "../messenger/telegram-receiver.ts";
 import { registerGracefulShutdownHandlers } from "./lifecycle/register-graceful-shutdown.ts";
 import { filterStartupReviewRecoveryRows } from "./lifecycle/review-recovery.ts";
+import {
+  computeRetryDelayMs,
+  deleteTaskRetryQueueRow,
+  listDueTaskRetryQueueRows,
+  readTaskExecutionPolicy,
+  readTaskRetryQueueRow,
+  rescheduleBusyTaskRetryQueueRow,
+  shouldRetryForReason,
+  upsertTaskRetryQueueRow,
+} from "./workflow/orchestration/task-execution-policy.ts";
 
 export function startLifecycle(ctx: RuntimeContext): void {
   const {
@@ -45,6 +55,7 @@ export function startLifecycle(ctx: RuntimeContext): void {
     resolveLang,
     rollbackTaskWorktree,
     runInTransaction,
+    startTaskExecutionForAgent,
     stopProgressTimer,
     stopRequestedTasks,
     wsClients,
@@ -168,6 +179,126 @@ export function startLifecycle(ctx: RuntimeContext): void {
   type InProgressRecoveryReason = "startup" | "interval";
   const ORPHAN_RECENT_ACTIVITY_WINDOW_MS = Math.max(120_000, IN_PROGRESS_ORPHAN_GRACE_MS);
 
+  function enqueueOrphanRetry(task: { id: string; title: string; updated_at: number | null }): boolean {
+    const policy = readTaskExecutionPolicy(db as any);
+    if (!shouldRetryForReason(policy, "orphan_recovery")) return false;
+
+    const existingRow = readTaskRetryQueueRow(db as any, task.id);
+    const attemptCount = (existingRow?.attempt_count ?? 0) + 1;
+    const now = nowMs();
+    if (attemptCount > policy.max_auto_retries) {
+      deleteTaskRetryQueueRow(db as any, task.id);
+      db.prepare("UPDATE tasks SET status = 'inbox', updated_at = ? WHERE id = ?").run(now, task.id);
+      appendTaskLog(
+        task.id,
+        "system",
+        `Recovery watchdog exhausted orphan retries (max=${policy.max_auto_retries}) -> inbox`,
+      );
+      return false;
+    }
+
+    const delayMs = computeRetryDelayMs(policy, attemptCount);
+    upsertTaskRetryQueueRow(db as any, {
+      task_id: task.id,
+      attempt_count: attemptCount,
+      next_run_at: now + delayMs,
+      last_reason: "orphan_recovery",
+      created_at: existingRow?.created_at ?? now,
+      updated_at: now,
+    });
+    db.prepare("UPDATE tasks SET status = 'pending', updated_at = ? WHERE id = ?").run(now, task.id);
+    appendTaskLog(
+      task.id,
+      "system",
+      `Recovery watchdog queued automatic retry (reason=orphan_recovery, attempt=${attemptCount}, delay_ms=${delayMs})`,
+    );
+    return true;
+  }
+
+  function sweepTaskRetryQueue(): void {
+    const policy = readTaskExecutionPolicy(db as any);
+    if (!policy.enabled) return;
+
+    const dueRows = listDueTaskRetryQueueRows(db as any, nowMs(), 20);
+    for (const row of dueRows) {
+      const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(row.task_id) as
+        | {
+            id: string;
+            title: string;
+            status: string;
+            assigned_agent_id: string | null;
+          }
+        | undefined;
+      if (!task || task.status !== "pending") {
+        deleteTaskRetryQueueRow(db as any, row.task_id);
+        continue;
+      }
+      if (!task.assigned_agent_id) {
+        deleteTaskRetryQueueRow(db as any, row.task_id);
+        appendTaskLog(row.task_id, "system", "Automatic retry dropped: no assigned agent");
+        continue;
+      }
+
+      const agent = db
+        .prepare(
+          `SELECT a.id, a.name, a.department_id, a.status, COALESCE(d.name, 'Unassigned') AS department_name
+                  , a.name_ko, a.role, a.cli_provider, a.oauth_account_id, a.api_provider_id,
+                    a.api_model, a.cli_model, a.cli_reasoning_level, a.personality
+           FROM agents a
+           LEFT JOIN departments d ON d.id = a.department_id
+           WHERE a.id = ?`,
+        )
+        .get(task.assigned_agent_id) as
+        | {
+            id: string;
+            name: string;
+            name_ko: string | null;
+            department_id: string | null;
+            status: string;
+            role: string;
+            cli_provider: string | null;
+            oauth_account_id: string | null;
+            api_provider_id: string | null;
+            api_model: string | null;
+            cli_model: string | null;
+            cli_reasoning_level: string | null;
+            personality: string | null;
+            department_name: string;
+          }
+        | undefined;
+      if (!agent) {
+        deleteTaskRetryQueueRow(db as any, row.task_id);
+        appendTaskLog(row.task_id, "system", "Automatic retry dropped: assigned agent missing");
+        continue;
+      }
+      if (activeProcesses.has(row.task_id)) {
+        deleteTaskRetryQueueRow(db as any, row.task_id);
+        continue;
+      }
+      if (agent.status === "working" || (agent.status !== "idle" && agent.status !== "break")) {
+        rescheduleBusyTaskRetryQueueRow(db as any, row.task_id, nowMs(), 30_000);
+        appendTaskLog(row.task_id, "system", `Automatic retry deferred: agent busy (${agent.status})`);
+        continue;
+      }
+
+      deleteTaskRetryQueueRow(db as any, row.task_id);
+      appendTaskLog(row.task_id, "system", `Automatic retry dispatching (attempt=${row.attempt_count})`);
+      startTaskExecutionForAgent(row.task_id, agent, agent.department_id ?? null, agent.department_name || "Unassigned");
+    }
+  }
+
+  function scheduleTaskRetrySweep(delayMs?: number): void {
+    const policy = readTaskExecutionPolicy(db as any);
+    const nextDelay = Math.max(1_000, delayMs ?? policy.queue_sweep_ms);
+    setTimeout(() => {
+      try {
+        sweepTaskRetryQueue();
+      } finally {
+        scheduleTaskRetrySweep();
+      }
+    }, nextDelay);
+  }
+
   function recoverOrphanInProgressTasks(reason: InProgressRecoveryReason): void {
     const inProgressTasks = db
       .prepare(
@@ -266,11 +397,14 @@ export function startLifecycle(ctx: RuntimeContext): void {
         continue;
       }
 
-      const t = nowMs();
-      const move = db
-        .prepare("UPDATE tasks SET status = 'inbox', updated_at = ? WHERE id = ? AND status = 'in_progress'")
-        .run(t, task.id) as { changes?: number };
-      if ((move.changes ?? 0) === 0) continue;
+      const retried = enqueueOrphanRetry(task);
+      if (!retried) {
+        const t = nowMs();
+        const move = db
+          .prepare("UPDATE tasks SET status = 'inbox', updated_at = ? WHERE id = ? AND status = 'in_progress'")
+          .run(t, task.id) as { changes?: number };
+        if ((move.changes ?? 0) === 0) continue;
+      }
 
       stopProgressTimer(task.id);
       clearTaskWorkflowState(task.id);
@@ -278,7 +412,7 @@ export function startLifecycle(ctx: RuntimeContext): void {
       appendTaskLog(
         task.id,
         "system",
-        `Recovery (${reason}): in_progress without active process/run log (age_ms=${ageMs}) → inbox`,
+        `Recovery (${reason}): in_progress without active process/run log (age_ms=${ageMs}) -> ${retried ? "pending/retry" : "inbox"}`,
       );
 
       if (task.assigned_agent_id) {
@@ -292,15 +426,23 @@ export function startLifecycle(ctx: RuntimeContext): void {
       const updatedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id);
       broadcast("task_update", updatedTask);
       const lang = resolveLang(task.title);
-      notifyTaskStatus(task.id, task.title, "inbox", lang);
+      notifyTaskStatus(task.id, task.title, retried ? "pending" : "inbox", lang);
       const watchdogMessage =
-        lang === "en"
-          ? `[WATCHDOG] '${task.title}' was in progress but had no active process. Recovered to inbox.`
-          : lang === "ja"
-            ? `[WATCHDOG] '${task.title}' は in_progress でしたが実行プロセスが存在しないため inbox に復旧しました。`
-            : lang === "zh"
-              ? `[WATCHDOG] '${task.title}' 处于 in_progress，但未发现执行进程，已恢复到 inbox。`
-              : `[WATCHDOG] '${task.title}' 작업이 in_progress 상태였지만 실행 프로세스가 없어 inbox로 복구했습니다.`;
+        retried
+          ? lang === "en"
+            ? `[WATCHDOG] '${task.title}' lost its active process and was queued for automatic retry.`
+            : lang === "ja"
+              ? `[WATCHDOG] '${task.title}' は実行プロセスを失ったため、自動再試行キューに入れました。`
+              : lang === "zh"
+                ? `[WATCHDOG] '${task.title}' 丢失了执行进程，已加入自动重试队列。`
+                : `[WATCHDOG] '${task.title}' 작업이 실행 프로세스를 잃어 자동 재시도 대기열에 넣었습니다.`
+          : lang === "en"
+            ? `[WATCHDOG] '${task.title}' was in progress but had no active process. Recovered to inbox.`
+            : lang === "ja"
+              ? `[WATCHDOG] '${task.title}' は in_progress でしたが実行プロセスが存在しないため inbox に復旧しました。`
+              : lang === "zh"
+                ? `[WATCHDOG] '${task.title}' 处于 in_progress，但未发现执行进程，已恢复到 inbox。`
+                : `[WATCHDOG] '${task.title}' 작업이 in_progress 상태였지만 실행 프로세스가 없어 inbox로 복구했습니다.`;
       notifyCeo(watchdogMessage, task.id);
     }
   }
@@ -420,6 +562,7 @@ export function startLifecycle(ctx: RuntimeContext): void {
   setInterval(rotateBreaks, 60_000);
   setTimeout(recoverInterruptedWorkflowOnStartup, 3_000);
   setInterval(() => recoverOrphanInProgressTasks("interval"), IN_PROGRESS_ORPHAN_SWEEP_MS);
+  scheduleTaskRetrySweep(4_000);
   setTimeout(sweepPendingSubtaskDelegations, 4_000);
   setInterval(sweepPendingSubtaskDelegations, SUBTASK_DELEGATION_SWEEP_MS);
   setTimeout(autoAssignAgentProviders, 4_000);

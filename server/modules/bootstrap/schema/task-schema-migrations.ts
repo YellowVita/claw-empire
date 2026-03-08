@@ -145,6 +145,45 @@ export function applyTaskSchemaMigrations(db: DbLike): void {
   } catch {
     /* already exists */
   }
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS task_retry_queue (
+        task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+        attempt_count INTEGER NOT NULL DEFAULT 0,
+        next_run_at INTEGER NOT NULL,
+        last_reason TEXT NOT NULL,
+        created_at INTEGER DEFAULT (unixepoch()*1000),
+        updated_at INTEGER DEFAULT (unixepoch()*1000)
+      )
+    `);
+    db.exec("CREATE INDEX IF NOT EXISTS idx_task_retry_queue_next_run ON task_retry_queue(next_run_at, updated_at DESC)");
+  } catch {
+    /* already exists */
+  }
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS task_quality_items (
+        id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL CHECK(kind IN ('acceptance','validation')),
+        label TEXT NOT NULL,
+        details TEXT,
+        required INTEGER NOT NULL DEFAULT 1 CHECK(required IN (0,1)),
+        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','passed','failed','waived')),
+        evidence_markdown TEXT,
+        source TEXT NOT NULL DEFAULT 'manual' CHECK(source IN ('manual','workflow_meta','workflow_pack','system')),
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER DEFAULT (unixepoch()*1000),
+        updated_at INTEGER DEFAULT (unixepoch()*1000),
+        completed_at INTEGER
+      )
+    `);
+    db.exec(
+      "CREATE INDEX IF NOT EXISTS idx_task_quality_items_task ON task_quality_items(task_id, sort_order ASC, created_at ASC)",
+    );
+  } catch {
+    /* already exists */
+  }
 
   ensureOfficePackScopedDepartmentSchema(db);
   ensureProjectReviewDecisionEventSchema(db);

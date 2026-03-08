@@ -92,6 +92,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Validate PR body
+        run: pnpm run pr:body:check:ci
+
       - name: Run format check
         run: pnpm run format:check
 

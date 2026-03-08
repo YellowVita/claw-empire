@@ -24,7 +24,7 @@ const baseTask: Task = {
   result: null,
   project_id: null,
   project_path: null,
-  assigned_agent: null,
+  assigned_agent: undefined,
   agent_name: "Dev Lead",
   agent_name_ko: "개발팀장",
   subtask_total: 1,

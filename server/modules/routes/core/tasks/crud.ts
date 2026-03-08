@@ -7,6 +7,12 @@ import type { RuntimeContext } from "../../../../types/runtime-context.ts";
 import type { MeetingMinuteEntryRow, MeetingMinutesRow } from "../../shared/types.ts";
 import { isWorkflowPackKey } from "../../../workflow/packs/definitions.ts";
 import { resolveWorkflowPackKeyForTask } from "../../../workflow/packs/task-pack-resolver.ts";
+import {
+  computeTaskQualitySummary,
+  loadTaskQualityItems,
+  seedTaskQualityItemsFromWorkflowMeta,
+} from "./quality.ts";
+import { deleteTaskRetryQueueRow } from "../../../workflow/orchestration/task-execution-policy.ts";
 
 export type TaskCrudRouteDeps = Pick<
   RuntimeContext,
@@ -67,6 +73,56 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
 
     const absolute = path.isAbsolute(candidate) ? candidate : path.resolve(process.cwd(), candidate);
     return path.normalize(absolute);
+  }
+
+  function buildQualityPayload(taskId: string): {
+    items: Array<Record<string, unknown>>;
+    summary: ReturnType<typeof computeTaskQualitySummary>;
+  } {
+    const items = loadTaskQualityItems(db as any, taskId);
+    return {
+      items,
+      summary: computeTaskQualitySummary(items),
+    };
+  }
+
+  function canEnterReview(taskId: string): {
+    ok: boolean;
+    items: Array<Record<string, unknown>>;
+    summary: ReturnType<typeof computeTaskQualitySummary>;
+  } {
+    const quality = buildQualityPayload(taskId);
+    return {
+      ok: !quality.summary.blocked_review,
+      items: quality.items,
+      summary: quality.summary,
+    };
+  }
+
+  function normalizeQualityItemPatch(raw: Record<string, unknown>, now: number): Record<string, unknown> | null {
+    const next: Record<string, unknown> = {};
+    if ("status" in raw) {
+      const status = typeof raw.status === "string" ? raw.status.trim() : "";
+      if (!["pending", "passed", "failed", "waived"].includes(status)) return null;
+      next.status = status;
+      next.completed_at = status === "passed" || status === "waived" ? now : null;
+    }
+    if ("details" in raw) {
+      next.details = typeof raw.details === "string" && raw.details.trim() ? raw.details.trim() : null;
+    }
+    if ("evidence_markdown" in raw) {
+      next.evidence_markdown =
+        typeof raw.evidence_markdown === "string" && raw.evidence_markdown.trim() ? raw.evidence_markdown.trim() : null;
+    }
+    if ("required" in raw) {
+      next.required = raw.required === false || raw.required === 0 ? 0 : 1;
+    }
+    if ("sort_order" in raw) {
+      const value = Number(raw.sort_order);
+      if (!Number.isFinite(value)) return null;
+      next.sort_order = Math.trunc(value);
+    }
+    return next;
   }
 
   app.get("/api/tasks", (req, res) => {
@@ -259,6 +315,16 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
       t,
       t,
     );
+    seedTaskQualityItemsFromWorkflowMeta(
+      db as any,
+      id,
+      typeof (body as any).workflow_meta_json === "string"
+        ? (body as any).workflow_meta_json
+        : (body as any).workflow_meta_json
+          ? JSON.stringify((body as any).workflow_meta_json)
+          : null,
+      t,
+    );
     recordTaskCreationAudit({
       taskId: id,
       taskTitle: title,
@@ -370,8 +436,45 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
 
     const logs = db.prepare("SELECT * FROM task_logs WHERE task_id = ? ORDER BY created_at DESC LIMIT 200").all(id);
     const subtasks = db.prepare("SELECT * FROM subtasks WHERE task_id = ? ORDER BY created_at").all(id);
+    const quality = buildQualityPayload(id);
 
-    res.json({ task, logs, subtasks });
+    res.json({ task: { ...(task as Record<string, unknown>), quality_summary: quality.summary }, logs, subtasks });
+  });
+
+  app.get("/api/tasks/:id/quality", (req, res) => {
+    const id = String(req.params.id);
+    const task = db.prepare("SELECT id FROM tasks WHERE id = ?").get(id);
+    if (!task) return res.status(404).json({ error: "not_found" });
+    res.json(buildQualityPayload(id));
+  });
+
+  app.patch("/api/tasks/:id/quality/items/:itemId", (req, res) => {
+    const id = String(req.params.id);
+    const itemId = String(req.params.itemId);
+    const task = db.prepare("SELECT id FROM tasks WHERE id = ?").get(id);
+    if (!task) return res.status(404).json({ error: "not_found" });
+
+    const item = db.prepare("SELECT id FROM task_quality_items WHERE id = ? AND task_id = ?").get(itemId, id);
+    if (!item) return res.status(404).json({ error: "quality_item_not_found" });
+
+    const patch = normalizeQualityItemPatch((req.body ?? {}) as Record<string, unknown>, nowMs());
+    if (!patch || Object.keys(patch).length <= 0) {
+      return res.status(400).json({ error: "invalid_quality_patch" });
+    }
+
+    const updates = Object.keys(patch)
+      .map((field) => `${field} = ?`)
+      .join(", ");
+    const values = Object.keys(patch).map((field) => patch[field]);
+    db.prepare(`UPDATE task_quality_items SET ${updates}, updated_at = ? WHERE id = ? AND task_id = ?`).run(
+      ...(values as SQLInputValue[]),
+      nowMs(),
+      itemId,
+      id,
+    );
+
+    const updated = db.prepare("SELECT * FROM task_quality_items WHERE id = ? AND task_id = ?").get(itemId, id);
+    res.json({ ok: true, item: updated, summary: buildQualityPayload(id).summary });
   });
 
   app.get("/api/tasks/:id/meeting-minutes", (req, res) => {
@@ -402,7 +505,11 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
 
   app.patch("/api/tasks/:id", (req, res) => {
     const id = String(req.params.id);
-    const existing = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id);
+    const existing = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as
+      | {
+          status: string;
+        }
+      | undefined;
     if (!existing) return res.status(404).json({ error: "not_found" });
 
     const body = { ...(req.body ?? {}) } as Record<string, unknown>;
@@ -425,6 +532,17 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
     }
     if ("output_format" in body && body.output_format !== null && typeof body.output_format !== "string") {
       return res.status(400).json({ error: "invalid_output_format" });
+    }
+    const nextStatus = typeof (body as any).status === "string" ? (body as any).status : null;
+    if (nextStatus === "review" && (existing.status === "in_progress" || existing.status === "collaborating")) {
+      const qualityGate = canEnterReview(id);
+      if (!qualityGate.ok) {
+        return res.status(409).json({
+          error: "quality_gate_failed",
+          items: qualityGate.items,
+          summary: qualityGate.summary,
+        });
+      }
     }
 
     const allowedFields = [
@@ -497,7 +615,6 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
       );
     }
 
-    const nextStatus = typeof (body as any).status === "string" ? (body as any).status : null;
     if (nextStatus) {
       setTaskCreationAuditCompletion(id, nextStatus === "done");
     }
@@ -509,6 +626,9 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
       if (nextStatus === "done" || nextStatus === "cancelled") {
         endTaskExecutionSession(id, `task_status_${nextStatus}`);
       }
+    }
+    if (nextStatus && (nextStatus === "pending" || nextStatus === "cancelled" || nextStatus === "done" || nextStatus === "review")) {
+      deleteTaskRetryQueueRow(db as any, id);
     }
 
     appendTaskLog(id, "system", `Task updated: ${Object.keys(body as object).join(", ")}`);
@@ -562,6 +682,8 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
     }
 
     db.prepare("DELETE FROM task_logs WHERE task_id = ?").run(id);
+    db.prepare("DELETE FROM task_retry_queue WHERE task_id = ?").run(id);
+    db.prepare("DELETE FROM task_quality_items WHERE task_id = ?").run(id);
     db.prepare("DELETE FROM messages WHERE task_id = ?").run(id);
     db.prepare("DELETE FROM tasks WHERE id = ?").run(id);
 

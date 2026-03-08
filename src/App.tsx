@@ -336,6 +336,7 @@ export default function App() {
     setAgents,
     setDepartments,
     setTasks,
+    setSubtasks,
     setStats,
     setMessages,
     setChatAgent,

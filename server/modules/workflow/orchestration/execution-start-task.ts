@@ -9,6 +9,7 @@ import {
   consumeInterruptPrompts,
   loadPendingInterruptPrompts,
 } from "../core/interrupt-injection-tools.ts";
+import { deleteTaskRetryQueueRow, readTaskExecutionHooks, runTaskExecutionHooks } from "./task-execution-policy.ts";
 
 type CreateExecutionStartTaskToolsDeps = {
   nowMs: RuntimeContext["nowMs"];
@@ -21,6 +22,7 @@ type CreateExecutionStartTaskToolsDeps = {
   notifyTaskStatus: (...args: any[]) => any;
   resolveProjectPath: RuntimeContext["resolveProjectPath"];
   createWorktree: RuntimeContext["createWorktree"];
+  cleanupWorktree: RuntimeContext["cleanupWorktree"];
   getDeptRoleConstraint: RuntimeContext["getDeptRoleConstraint"];
   getRecentConversationContext: RuntimeContext["getRecentConversationContext"];
   getTaskContinuationContext: RuntimeContext["getTaskContinuationContext"];
@@ -53,6 +55,7 @@ export function createExecutionStartTaskTools(deps: CreateExecutionStartTaskTool
     notifyTaskStatus,
     resolveProjectPath,
     createWorktree,
+    cleanupWorktree,
     getDeptRoleConstraint,
     getRecentConversationContext,
     getTaskContinuationContext,
@@ -73,7 +76,12 @@ export function createExecutionStartTaskTools(deps: CreateExecutionStartTaskTool
     startProgressTimer,
   } = deps;
 
-  function startTaskExecutionForAgent(taskId: string, execAgent: any, deptId: string | null, deptName: string): void {
+  async function startTaskExecutionForAgent(
+    taskId: string,
+    execAgent: any,
+    deptId: string | null,
+    deptName: string,
+  ): Promise<void> {
     const execName = execAgent.name_ko || execAgent.name;
     const t = nowMs();
     db.prepare(
@@ -139,6 +147,7 @@ export function createExecutionStartTaskTools(deps: CreateExecutionStartTaskTool
         rollbackAt,
         taskId,
       );
+      deleteTaskRetryQueueRow(db as any, taskId);
       db.prepare(
         "UPDATE agents SET status = 'idle', current_task_id = CASE WHEN current_task_id = ? THEN NULL ELSE current_task_id END WHERE id = ?",
       ).run(taskId, execAgent.id);
@@ -169,6 +178,48 @@ export function createExecutionStartTaskTools(deps: CreateExecutionStartTaskTool
     }
     const agentCwd = worktreePath;
     appendTaskLog(taskId, "system", `Git worktree created: ${worktreePath} (branch: climpire/${taskId.slice(0, 8)})`);
+    const beforeRunHooks = readTaskExecutionHooks(db as any).before_run;
+    if (beforeRunHooks.length > 0) {
+      const beforeRunResult = await runTaskExecutionHooks({
+        db: db as any,
+        stage: "before_run",
+        taskId,
+        taskTitle: taskData.title,
+        projectPath: projPath,
+        worktreePath,
+        agentId: execAgent.id,
+        provider,
+        appendTaskLog,
+      });
+      if (!beforeRunResult.ok) {
+        const rollbackAt = nowMs();
+        db.prepare("UPDATE tasks SET status = 'pending', started_at = NULL, updated_at = ? WHERE id = ?").run(
+          rollbackAt,
+          taskId,
+        );
+        deleteTaskRetryQueueRow(db as any, taskId);
+        db.prepare(
+          "UPDATE agents SET status = 'idle', current_task_id = CASE WHEN current_task_id = ? THEN NULL ELSE current_task_id END WHERE id = ?",
+        ).run(taskId, execAgent.id);
+        cleanupWorktree(projPath, taskId);
+        broadcast("task_update", db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId));
+        broadcast("agent_status", db.prepare("SELECT * FROM agents WHERE id = ?").get(execAgent.id));
+        notifyTaskStatus(taskId, taskData.title, "pending", taskLang);
+        notifyCeo(
+          pickL(
+            l(
+              [`'${taskData.title}' 실행이 before_run hook 실패로 중단되어 pending으로 되돌렸습니다.`],
+              [`Execution for '${taskData.title}' was blocked by a failing before_run hook and moved back to pending.`],
+              [`'${taskData.title}' の実行は before_run hook 失敗で中断され、pending に戻しました。`],
+              [`'${taskData.title}' 的执行因 before_run hook 失败而中止，并已退回 pending。`],
+            ),
+            taskLang,
+          ),
+          taskId,
+        );
+        return;
+      }
+    }
     const logFilePath = path.join(logsDir, `${taskId}.log`);
     const roleLabels: Record<string, string> = {
       team_leader: "Team Leader",

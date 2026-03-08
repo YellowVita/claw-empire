@@ -1,5 +1,6 @@
 import type { RuntimeContext } from "../../../../types/runtime-context.ts";
 import { createTaskReportHelpers } from "./helpers.ts";
+import { computeTaskQualitySummary, loadTaskQualityItems } from "../../core/tasks/quality.ts";
 
 export function registerTaskReportRoutes(ctx: RuntimeContext): void {
   const { app, db, nowMs, archivePlanningConsolidatedReport } = ctx;
@@ -172,6 +173,8 @@ export function registerTaskReportRoutes(ctx: RuntimeContext): void {
         .prepare("SELECT kind, message, created_at FROM task_logs WHERE task_id = ? ORDER BY created_at ASC")
         .all(rootTaskId);
       const rootMinutes = fetchMeetingMinutesForTask(rootTaskId);
+      const qualityItems = loadTaskQualityItems(db as any, rootTaskId);
+      const qualitySummary = computeTaskQualitySummary(qualityItems);
 
       const archiveRow = db
         .prepare(
@@ -248,6 +251,10 @@ export function registerTaskReportRoutes(ctx: RuntimeContext): void {
         task: rootTask,
         logs: rootLogs,
         subtasks: rootSubtasks,
+        quality: {
+          items: qualityItems,
+          summary: qualitySummary,
+        },
         meeting_minutes: rootMinutes,
         planning_summary: planningSummary,
         team_reports: teamReports,

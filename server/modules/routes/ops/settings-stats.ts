@@ -4,6 +4,14 @@ import {
   encryptMessengerChannelsForStorage,
 } from "../../../messenger/token-crypto.ts";
 import { syncOfficePackAgentsForPack } from "../collab/office-pack-agent-hydration.ts";
+import {
+  DEFAULT_TASK_EXECUTION_HOOKS,
+  DEFAULT_TASK_EXECUTION_POLICY,
+  TASK_EXECUTION_HOOKS_SETTING_KEY,
+  TASK_EXECUTION_POLICY_SETTING_KEY,
+  normalizeTaskExecutionHooksValue,
+  normalizeTaskExecutionPolicyValue,
+} from "../../workflow/orchestration/task-execution-policy.ts";
 
 const MESSENGER_SETTINGS_KEY = "messengerChannels";
 const OFFICE_PACK_PROFILES_KEY = "officePackProfiles";
@@ -130,6 +138,20 @@ export function registerOpsSettingsStatsRoutes(ctx: RuntimeContext): void {
         settings[row.key] = row.value;
       }
     }
+    if (!(TASK_EXECUTION_POLICY_SETTING_KEY in settings)) {
+      settings[TASK_EXECUTION_POLICY_SETTING_KEY] = DEFAULT_TASK_EXECUTION_POLICY;
+    } else {
+      settings[TASK_EXECUTION_POLICY_SETTING_KEY] = normalizeTaskExecutionPolicyValue(
+        settings[TASK_EXECUTION_POLICY_SETTING_KEY],
+      );
+    }
+    if (!(TASK_EXECUTION_HOOKS_SETTING_KEY in settings)) {
+      settings[TASK_EXECUTION_HOOKS_SETTING_KEY] = DEFAULT_TASK_EXECUTION_HOOKS;
+    } else {
+      settings[TASK_EXECUTION_HOOKS_SETTING_KEY] = normalizeTaskExecutionHooksValue(
+        settings[TASK_EXECUTION_HOOKS_SETTING_KEY],
+      );
+    }
     res.json({ settings });
   });
 
@@ -153,6 +175,14 @@ export function registerOpsSettingsStatsRoutes(ctx: RuntimeContext): void {
 
         if (key === OFFICE_PACK_PROFILES_KEY && !readBooleanLikeSetting(OFFICE_PACK_SEED_INIT_KEY)) {
           markSeedInitDone();
+        }
+        if (key === TASK_EXECUTION_POLICY_SETTING_KEY) {
+          upsert.run(key, JSON.stringify(normalizeTaskExecutionPolicyValue(value)));
+          continue;
+        }
+        if (key === TASK_EXECUTION_HOOKS_SETTING_KEY) {
+          upsert.run(key, JSON.stringify(normalizeTaskExecutionHooksValue(value)));
+          continue;
         }
         upsert.run(key, typeof value === "string" ? value : JSON.stringify(value));
       }
