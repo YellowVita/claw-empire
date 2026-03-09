@@ -69,7 +69,7 @@ export type DirectChatDeps = {
   runAgentOneShot: (
     agent: AgentRow,
     prompt: string,
-    opts: { projectPath: string; rawOutput: true; noTools?: boolean },
+    opts: { projectPath?: string; rawOutput: true; noTools?: boolean; allowNeutralCwd?: boolean; timeoutMs?: number },
   ) => Promise<DirectReplyPayload>;
   executeApiProviderAgent: RuntimeContext["executeApiProviderAgent"];
   executeCopilotAgent: RuntimeContext["executeCopilotAgent"];

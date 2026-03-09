@@ -1,6 +1,7 @@
 import type { RuntimeContext } from "../../../../types/runtime-context.ts";
 import type { AgentRow } from "../../shared/types.ts";
 import { createHash } from "node:crypto";
+import { getTaskShortId } from "../../../workflow/core/worktree/lifecycle.ts";
 import {
   buildTaskInterruptControlToken,
   hasValidCsrfToken,
@@ -285,7 +286,11 @@ export function registerTaskExecutionControlRoutes(deps: TaskExecutionControlRou
             `Delegation queue state preserved (other delegated tasks still active: ${remainingDelegated?.cnt ?? 0})`,
           );
         }
-        appendTaskLog(parentTaskId, "system", `Delegation queue stopped (child task cancelled: ${id.slice(0, 8)})`);
+        appendTaskLog(
+          parentTaskId,
+          "system",
+          `Delegation queue stopped (child task cancelled: ${getTaskShortId(id)})`,
+        );
       }
     };
 

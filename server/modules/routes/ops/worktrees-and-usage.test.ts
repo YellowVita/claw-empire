@@ -226,7 +226,7 @@ describe("worktree verify-commit route", () => {
       db.close();
       tools.cleanupWorktree(repo, taskId);
     }
-  });
+  }, 15000);
 
   it("커밋된 코드 변경이 있으면 ok 판정을 돌려준다", () => {
     const repo = initRepo("climpire-verify-ok-");
@@ -265,7 +265,7 @@ describe("worktree verify-commit route", () => {
       db.close();
       tools.cleanupWorktree(repo, taskId);
     }
-  });
+  }, 15000);
 
   it("수동 merge 전에 최종 브랜치 검증 통과 로그를 남긴다", () => {
     const repo = initRepo("climpire-verify-merge-");

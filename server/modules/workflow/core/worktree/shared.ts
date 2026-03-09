@@ -1,5 +1,6 @@
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { getTaskShortId } from "./lifecycle.ts";
 
 export const DIFF_SUMMARY_NONE = "__DIFF_NONE__";
 export const DIFF_SUMMARY_ERROR = "__DIFF_ERROR__";
@@ -266,7 +267,7 @@ export function autoCommitWorktreePendingChanges(
         "user.email=claw-empire@local",
         "commit",
         "-m",
-        `chore: auto-commit pending task changes (${taskId.slice(0, 8)})`,
+        `chore: auto-commit pending task changes (${getTaskShortId(taskId)})`,
       ],
       {
         cwd: info.worktreePath,

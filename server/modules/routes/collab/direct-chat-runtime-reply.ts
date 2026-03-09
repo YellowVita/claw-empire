@@ -12,10 +12,7 @@ import { isMessengerChannel } from "../../../messenger/channels.ts";
 import type { Lang } from "../../../types/lang.ts";
 import type { DelegationOptions } from "./project-resolution.ts";
 import { normalizeAgentReply, shouldPreserveStructuredFallback } from "./direct-chat-intent-utils.ts";
-import {
-  requiresProjectContextForDirectChat,
-  resolveNeutralOneShotCwd,
-} from "./direct-chat-execution-policy.ts";
+import { requiresProjectContextForDirectChat } from "./direct-chat-execution-policy.ts";
 import type { AgentRow, DirectChatDeps } from "./direct-chat-types.ts";
 
 type DirectReplyRuntimeDeps = Pick<
@@ -173,9 +170,9 @@ export function createDirectReplyRuntime(deps: DirectReplyRuntimeDeps) {
 
       try {
         const run = await deps.runAgentOneShot(agent, prompt, {
-          projectPath: resolveNeutralOneShotCwd(deps.logsDir),
           rawOutput: true,
           noTools: true,
+          allowNeutralCwd: true,
         });
         const picked = normalizeAgentReply(deps.chooseSafeReply(run, lang, "direct", agent));
         const introLine = picked.split(/\r?\n/, 1)[0] ?? "";
@@ -207,9 +204,9 @@ export function createDirectReplyRuntime(deps: DirectReplyRuntimeDeps) {
 
     try {
       const run = await deps.runAgentOneShot(agent, prompt, {
-        projectPath: resolveNeutralOneShotCwd(deps.logsDir),
         rawOutput: true,
         noTools: true,
+        allowNeutralCwd: true,
       });
       const picked = normalizeAgentReply(deps.chooseSafeReply(run, lang, "direct", agent));
       if (picked) return picked;
@@ -305,9 +302,9 @@ export function createDirectReplyRuntime(deps: DirectReplyRuntimeDeps) {
 
           if (!projectPath) {
             const run = await deps.runAgentOneShot(agent, built.prompt, {
-              projectPath: resolveNeutralOneShotCwd(deps.logsDir),
               rawOutput: true,
               noTools: true,
+              allowNeutralCwd: true,
             });
             const reply = normalizeAgentReply(deps.chooseSafeReply(run, built.lang, "direct", agent));
             deps.sendAgentMessage(agent, reply);

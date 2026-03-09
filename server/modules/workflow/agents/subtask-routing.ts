@@ -30,7 +30,6 @@ export function createSubtaskRoutingTools(deps: SubtaskRoutingDeps) {
     DEPT_KEYWORDS,
     detectTargetDepartments,
     runAgentOneShot,
-    resolveProjectPath,
     resolveLang,
     findTeamLeader,
     getDeptName,
@@ -304,12 +303,14 @@ export function createSubtaskRoutingTools(deps: SubtaskRoutingDeps) {
         .filter(Boolean)
         .join("\n");
 
+      const explicitProjectPath = String(task.project_path ?? "").trim();
+      if (!explicitProjectPath) {
+        appendTaskLog(taskId, "system", `Planning reroute skipped: missing project path (${phase})`);
+        return;
+      }
+
       const run = await runAgentOneShot(planningLeader, reroutePrompt, {
-        projectPath: resolveProjectPath({
-          title: task.title,
-          description: task.description,
-          project_path: task.project_path,
-        }),
+        projectPath: explicitProjectPath,
         timeoutMs: 180_000,
         rawOutput: true,
         noTools: true,

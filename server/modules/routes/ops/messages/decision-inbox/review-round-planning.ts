@@ -115,7 +115,7 @@ export function createReviewRoundPlanningHelpers(deps: ReviewRoundPlanningDeps):
         );
 
         let plannerSummary = fallbackSummary;
-        if (planningLeader) {
+        if (planningLeader && input.projectPath) {
           const sourceBlock =
             input.optionNotes.length > 0
               ? input.optionNotes.map((note, idx) => `${idx + 1}) ${clip(note, 320)}`).join("\n")
@@ -139,7 +139,7 @@ export function createReviewRoundPlanningHelpers(deps: ReviewRoundPlanningDeps):
           ].join("\n");
           try {
             const run = await runAgentOneShot(planningLeader, prompt, {
-              projectPath: input.projectPath || process.cwd(),
+              projectPath: input.projectPath,
               timeoutMs: 45_000,
               noTools: true,
             });

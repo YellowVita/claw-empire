@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { decryptSecret } from "../../../../oauth/helpers.ts";
-import type { WorktreeInfo } from "./lifecycle.ts";
+import { getTaskShortId, type WorktreeInfo } from "./lifecycle.ts";
 import {
   autoCommitWorktreePendingChanges,
   DIFF_SUMMARY_ERROR,
@@ -41,6 +41,7 @@ export function createWorktreeMergeTools(deps: CreateWorktreeMergeToolsDeps) {
         }
       | undefined;
     const lang = resolveLang(taskRow?.description ?? taskRow?.title ?? "");
+    const taskShortId = getTaskShortId(taskId);
 
     try {
       const autoCommit = autoCommitWorktreePendingChanges(taskId, info, appendTaskLog);
@@ -115,7 +116,7 @@ export function createWorktreeMergeTools(deps: CreateWorktreeMergeToolsDeps) {
         /* proceed */
       }
 
-      const mergeMsg = `Merge climpire task ${taskId.slice(0, 8)} (branch ${info.branchName})`;
+      const mergeMsg = `Merge climpire task ${taskShortId} (branch ${info.branchName})`;
       execFileSync("git", ["merge", info.branchName, "--no-ff", "-m", mergeMsg], {
         cwd: projectPath,
         stdio: "pipe",
@@ -209,7 +210,8 @@ export function createWorktreeMergeTools(deps: CreateWorktreeMergeToolsDeps) {
     const info = taskWorktrees.get(taskId);
     if (!info) return { success: false, message: "No worktree found for this task" };
     const taskRow = db.prepare("SELECT title FROM tasks WHERE id = ?").get(taskId) as { title: string } | undefined;
-    const taskTitle = taskRow?.title ?? taskId.slice(0, 8);
+    const taskShortId = getTaskShortId(taskId);
+    const taskTitle = taskRow?.title ?? taskShortId;
 
     try {
       const autoCommit = autoCommitWorktreePendingChanges(taskId, info, appendTaskLog);
@@ -237,7 +239,7 @@ export function createWorktreeMergeTools(deps: CreateWorktreeMergeToolsDeps) {
             stdio: "pipe",
             timeout: 5000,
           });
-          console.log(`[Claw-Empire] Created dev branch from main for task ${taskId.slice(0, 8)}`);
+          console.log(`[Claw-Empire] Created dev branch from main for task ${taskShortId}`);
         }
       } catch {
         try {
@@ -257,7 +259,7 @@ export function createWorktreeMergeTools(deps: CreateWorktreeMergeToolsDeps) {
         timeout: 5000,
       });
 
-      const mergeMsg = `Merge climpire task ${taskId.slice(0, 8)} (branch ${info.branchName})`;
+      const mergeMsg = `Merge climpire task ${taskShortId} (branch ${info.branchName})`;
       execFileSync("git", ["merge", info.branchName, "--no-ff", "-m", mergeMsg], {
         cwd: projectPath,
         stdio: "pipe",
@@ -302,7 +304,7 @@ export function createWorktreeMergeTools(deps: CreateWorktreeMergeToolsDeps) {
                 },
                 body: JSON.stringify({
                   title: `[Climpire] ${taskTitle}`,
-                  body: `## Climpire Task\n\n**Task:** ${taskTitle}\n**Task ID:** ${taskId.slice(0, 8)}\n\nAutomatically created by Climpire workflow.`,
+                  body: `## Climpire Task\n\n**Task:** ${taskTitle}\n**Task ID:** ${taskShortId}\n\nAutomatically created by Climpire workflow.`,
                   head: "dev",
                   base: "main",
                 }),

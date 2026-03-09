@@ -24,6 +24,7 @@ import type { UpdateStatus } from "../api";
 import type { OAuthCallbackResult, RoomThemeMap, View } from "./types";
 import AppHeaderBar from "./AppHeaderBar";
 import OfficeViewLoadingFallback from "./OfficeViewLoadingFallback";
+import { loadOfficeView } from "./loadOfficeView";
 import {
   buildOfficePackStarterAgents,
   buildOfficePackPresentation,
@@ -35,7 +36,7 @@ import {
 import { resolvePackAgentViews, resolvePackDepartmentsForDisplay } from "./office-pack-display";
 import { applyOfficePackToTaskInput, filterTasksByOfficePack, type TaskCreateInput } from "./task-workflow-pack";
 
-const OfficeView = lazy(() => import("../components/OfficeView"));
+const OfficeView = lazy(loadOfficeView);
 
 interface AppMainLayoutLabels {
   uiLanguage: string;

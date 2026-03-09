@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDirectReplyRuntime } from "./direct-chat-runtime-reply.ts";
-import { resolveNeutralOneShotCwd } from "./direct-chat-execution-policy.ts";
 import type { AgentRow } from "./direct-chat-types.ts";
 
 const baseAgent: AgentRow = {
@@ -76,10 +75,9 @@ describe("createDirectReplyRuntime", () => {
       expect.objectContaining({
         noTools: true,
         rawOutput: true,
-        projectPath: resolveNeutralOneShotCwd(harness.logsDir),
+        allowNeutralCwd: true,
       }),
     );
-    expect(harness.runAgentOneShot.mock.calls[0]?.[2]?.projectPath).not.toBe(process.cwd());
     expect(harness.sendAgentMessage).toHaveBeenCalledWith(baseAgent, "General reply");
   });
 

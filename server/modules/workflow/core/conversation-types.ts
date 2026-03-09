@@ -28,6 +28,7 @@ export type MeetingReviewDecision = "reviewing" | "approved" | "hold";
 
 export interface OneShotRunOptions {
   projectPath?: string;
+  allowNeutralCwd?: boolean;
   timeoutMs?: number;
   streamTaskId?: string | null;
   rawOutput?: boolean;

@@ -45,6 +45,13 @@ export function createOneShotRunner(deps: CreateOneShotRunnerDeps) {
     return CLI_TOOL_SIGNAL_REGEX.test(text);
   }
 
+  function createNeutralOneShotCwd(runId: string): string {
+    const neutralRoot = path.join(logsDir, "one-shot-neutral");
+    const neutralCwd = path.join(neutralRoot, runId);
+    fs.mkdirSync(neutralCwd, { recursive: true });
+    return neutralCwd;
+  }
+
   function createSafeLogStreamOps(logStream: any): {
     safeWrite: (text: string) => boolean;
     safeEnd: (onDone?: () => void) => void;
@@ -85,13 +92,19 @@ export function createOneShotRunner(deps: CreateOneShotRunnerDeps) {
   ): Promise<OneShotRunResult> {
     const provider = agent.cli_provider || "claude";
     const timeoutMs = opts.timeoutMs ?? 180_000;
-    const projectPath = opts.projectPath || process.cwd();
     const streamTaskId = opts.streamTaskId ?? null;
     const noTools = opts.noTools === true;
     const runId = `meeting-${agent.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const projectPath =
+      opts.projectPath ||
+      (opts.allowNeutralCwd && noTools ? createNeutralOneShotCwd(runId) : null);
+    if (!projectPath) {
+      return { text: "", error: "missing_project_path" };
+    }
     const logPath = path.join(logsDir, `${runId}.log`);
     const logStream = fs.createWriteStream(logPath, { flags: "w" });
     const { safeWrite, safeEnd } = createSafeLogStreamOps(logStream);
+    const shouldCleanupNeutralCwd = !opts.projectPath && opts.allowNeutralCwd === true && noTools;
     let rawOutput = "";
     let exitCode = 0;
     let activeChild: any = null;
@@ -303,6 +316,13 @@ export function createOneShotRunner(deps: CreateOneShotRunnerDeps) {
       abortActiveRun = null;
       detachChildListeners();
       await new Promise<void>((resolve) => safeEnd(resolve));
+      if (shouldCleanupNeutralCwd) {
+        try {
+          fs.rmSync(projectPath, { recursive: true, force: true });
+        } catch {
+          // best effort cleanup only
+        }
+      }
     }
 
     if (exitCode !== 0 && !rawOutput.trim()) {

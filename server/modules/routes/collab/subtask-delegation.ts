@@ -1,6 +1,7 @@
 import path from "node:path";
 import type { Lang } from "../../../types/lang.ts";
 import type { AgentRow } from "./direct-chat.ts";
+import { buildManagedWorktreePath, getTaskShortId } from "../../workflow/core/worktree/lifecycle.ts";
 import { reconcileVideoRenderDelegationState } from "../../workflow/orchestration/video-render-delegation-state.ts";
 import {
   buildOwnerIntegrationInstruction,
@@ -223,8 +224,7 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
       const delegatedTaskId = String(row.delegated_task_id ?? "").trim();
       if (!delegatedTaskId || seen.has(delegatedTaskId)) continue;
       seen.add(delegatedTaskId);
-      const shortId = delegatedTaskId.slice(0, 8);
-      const worktreePath = path.join(projectPath, ".climpire-worktrees", shortId);
+      const worktreePath = buildManagedWorktreePath(projectPath, getTaskShortId(delegatedTaskId));
       const deptLabel = row.target_department_id
         ? getDeptName(row.target_department_id)
         : pickL(l(["부서 미지정"], ["Unassigned department"], ["未指定部門"], ["未指定部门"]), getPreferredLanguage());

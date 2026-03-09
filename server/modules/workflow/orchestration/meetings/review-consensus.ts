@@ -12,7 +12,6 @@ export function createReviewConsensusTools(deps: ReviewConsensusDeps) {
     getTaskStatusById,
     getReviewRoundMode,
     scheduleNextReviewRound,
-    resolveProjectPath,
     resolveLang,
     runAgentOneShot,
     chooseSafeReply,
@@ -164,12 +163,26 @@ export function createReviewConsensusTools(deps: ReviewConsensusDeps) {
           | undefined;
         const taskDescription = taskCtx?.description ?? null;
         const taskWorkflowPackKey = taskCtx?.workflow_pack_key ?? null;
-        const projectPath = resolveProjectPath({
-          title: taskTitle,
-          description: taskDescription,
-          project_path: taskCtx?.project_path ?? null,
-        });
+        const projectPath = String(taskCtx?.project_path ?? "").trim();
         const lang = resolveLang(taskDescription ?? taskTitle);
+        if (!projectPath) {
+          appendTaskLog(taskId, "system", "Review meeting blocked: missing project path");
+          notifyCeo(
+            pickL(
+              l(
+                [`[CEO OFFICE] '${taskTitle}' 리뷰 회의를 시작하지 않았습니다. 현재 프로젝트 경로가 필요합니다.`],
+                [`[CEO OFFICE] Review meeting for '${taskTitle}' was not started because a current project path is required.`],
+                [`[CEO OFFICE] '${taskTitle}' のレビュー会議は現在のプロジェクトパスが必要なため開始しませんでした。`],
+                [`[CEO OFFICE] 未启动'${taskTitle}'的评审会议，因为需要当前项目路径。`],
+              ),
+              lang,
+            ),
+            taskId,
+          );
+          reviewRoundState.delete(taskId);
+          reviewInFlight.delete(taskId);
+          return;
+        }
         const transcript: any[] = [];
         const oneShotTimeoutMs = Math.max(5_000, Number(reviewMeetingOneShotTimeoutMs ?? 65_000));
         const oneShotOptions = { projectPath, timeoutMs: oneShotTimeoutMs, noTools: true };

@@ -1,7 +1,3 @@
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-
 import { isProjectProgressInquiry, shouldTreatDirectChatAsTask } from "./direct-chat-intent-utils.ts";
 
 const PROJECT_SCOPE_PATTERNS = [
@@ -17,13 +13,6 @@ const PROJECT_ACTION_PATTERNS = [
   /(分析|レビュー|確認|修正|編集|実装|デバッグ|調査|解決|実行|開始|継続)/i,
   /(分析|评审|检查|修复|修改|编辑|实现|调试|调查|解决|执行|开始|继续)/i,
 ];
-
-export function resolveNeutralOneShotCwd(baseDir?: string | null): string {
-  const root = baseDir?.trim() ? path.resolve(baseDir) : path.join(os.tmpdir(), "claw-empire");
-  const neutralDir = path.join(root, "one-shot-neutral");
-  fs.mkdirSync(neutralDir, { recursive: true });
-  return neutralDir;
-}
 
 export function requiresProjectContextForDirectChat(text: string, messageType: string = "chat"): boolean {
   if (shouldTreatDirectChatAsTask(text, messageType)) return true;

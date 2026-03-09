@@ -324,7 +324,7 @@ export function createProjectReviewPlanningHelpers(deps: ProjectReviewPlanningDe
         );
 
         let plannerSummary = fallbackSummary;
-        if (planningLeader) {
+        if (planningLeader && projectPath) {
           const sourceLines = taskRows
             .map((task, idx) => `${idx + 1}) ${task.title}\n- latest_report: ${clip(task.latest_report)}`)
             .join("\n");
@@ -346,7 +346,7 @@ export function createProjectReviewPlanningHelpers(deps: ProjectReviewPlanningDe
           ].join("\n");
           try {
             const run = await runAgentOneShot(planningLeader, prompt, {
-              projectPath: projectPath || process.cwd(),
+              projectPath,
               timeoutMs: 45_000,
               noTools: true,
             });

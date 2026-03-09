@@ -3,6 +3,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 
 import type { Lang } from "../../../types/lang.ts";
+import { buildManagedWorktreePath, getTaskShortId } from "../../workflow/core/worktree/lifecycle.ts";
 import { resolveWorkflowPackKeyForTask } from "../../workflow/packs/task-pack-resolver.ts";
 import { ensureVideoPreprodRemotionBestPracticesSkill } from "../../workflow/core/video-skill-bootstrap.ts";
 import { resolveConstrainedAgentScopeForTask } from "../core/tasks/execution-run-auto-assign.ts";
@@ -494,10 +495,11 @@ export function createSubtaskDelegationBatch(deps: BatchDeps) {
             return;
           }
           const agentCwd = worktreePath;
+          const delegatedTaskShortId = getTaskShortId(delegatedTaskId);
           appendTaskLog(
             delegatedTaskId,
             "system",
-            `Git worktree created: ${worktreePath} (branch: climpire/${delegatedTaskId.slice(0, 8)})`,
+            `Git worktree created: ${worktreePath} (branch: climpire/${delegatedTaskShortId})`,
           );
           const logFilePath = path.join(logsDir, `${delegatedTaskId}.log`);
           ensureVideoPreprodRemotionBestPracticesSkill({
@@ -516,7 +518,7 @@ export function createSubtaskDelegationBatch(deps: BatchDeps) {
             targetDeptName,
           );
           const executionSession = ensureTaskExecutionSession(delegatedTaskId, execAgent.id, execProvider);
-          const worktreeNote = `\nNOTE: You are working in an isolated Git worktree branch (climpire/${delegatedTaskId.slice(0, 8)}). Commit your changes normally.`;
+          const worktreeNote = `\nNOTE: You are working in an isolated Git worktree branch (climpire/${delegatedTaskShortId}). Commit your changes normally.`;
 
           // Build sibling worktree reference block so agents can read prior departments' work
           let siblingWorktreeBlock = "";
@@ -532,8 +534,7 @@ export function createSubtaskDelegationBatch(deps: BatchDeps) {
             }>;
             const validSiblings: string[] = [];
             for (const sib of siblingRows) {
-              const shortId = sib.delegated_task_id.slice(0, 8);
-              const wtPath = path.join(projPath, ".climpire-worktrees", shortId);
+              const wtPath = buildManagedWorktreePath(projPath, getTaskShortId(sib.delegated_task_id));
               if (fs.existsSync(wtPath)) {
                 const deptLabel = sib.target_department_id
                   ? getDeptName(sib.target_department_id, parentTask.workflow_pack_key)

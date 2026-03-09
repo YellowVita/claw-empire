@@ -1,16 +1,29 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 
-async function loadAppMainLayoutWithPendingOfficeView() {
-  vi.resetModules();
-  const pendingOfficeView = new Promise<never>(() => {});
-  vi.doMock("../components/OfficeView", () => ({
-    __esModule: true,
-    default() {
-      throw pendingOfficeView;
+function createDeferredImport() {
+  let resolve: ((value: { default: () => JSX.Element }) => void) | null = null;
+  const promise = new Promise<{ default: () => JSX.Element }>((done) => {
+    resolve = done;
+  });
+  return {
+    promise,
+    resolve(value: { default: () => JSX.Element }) {
+      resolve?.(value);
     },
+  };
+}
+
+async function loadAppMainLayoutWithDeferredOfficeView() {
+  vi.resetModules();
+  const deferredImport = createDeferredImport();
+  vi.doMock("./loadOfficeView", () => ({
+    loadOfficeView: () => deferredImport.promise,
   }));
-  return (await import("./AppMainLayout")).default;
+  return {
+    deferredImport,
+    AppMainLayout: (await import("./AppMainLayout")).default,
+  };
 }
 
 function createBaseProps() {
@@ -110,15 +123,36 @@ function createBaseProps() {
 afterEach(() => {
   cleanup();
   vi.resetModules();
-  vi.doUnmock("../components/OfficeView");
+  vi.doUnmock("./loadOfficeView");
 });
 
 describe("AppMainLayout office lazy loading", () => {
-  it("office view chunk가 아직 로드되지 않았으면 fallback을 먼저 보여준다", async () => {
-    const AppMainLayout = await loadAppMainLayoutWithPendingOfficeView();
+  it("office view chunk가 아직 로드되지 않았으면 fallback을 먼저 보여주고 resolve 후 경고 없이 로드한다", async () => {
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { deferredImport, AppMainLayout } = await loadAppMainLayoutWithDeferredOfficeView();
+    const props = createBaseProps();
 
-    render(<AppMainLayout {...createBaseProps()} />);
+    const view = render(<AppMainLayout {...props} />);
 
     expect(screen.getByText("Loading office view...")).toBeInTheDocument();
-  });
+
+    await act(async () => {
+      deferredImport.resolve({
+        default() {
+          return <div>Office loaded</div>;
+        },
+      });
+      await deferredImport.promise;
+      view.rerender(<AppMainLayout {...props} />);
+      await Promise.resolve();
+    });
+
+    expect(await screen.findByText("Office loaded")).toBeInTheDocument();
+    expect(
+      consoleErrorSpy.mock.calls.some((call) =>
+        call.some((value) => String(value).includes("A suspended resource finished loading inside a test")),
+      ),
+    ).toBe(false);
+    consoleErrorSpy.mockRestore();
+  }, 15000);
 });

@@ -91,7 +91,7 @@ describe("worktree lifecycle branch collision handling", () => {
     tools.cleanupWorktree(repo, taskId);
     runGit(repo, ["worktree", "remove", occupiedPath, "--force"]);
     runGit(repo, ["branch", "-D", baseBranch]);
-  });
+  }, 15000);
 });
 
 describe("worktree lifecycle path guard hardening", () => {

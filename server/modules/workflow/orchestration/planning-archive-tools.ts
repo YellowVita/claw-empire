@@ -220,7 +220,7 @@ export function createPlanningArchiveTools(deps: CreatePlanningArchiveToolsDeps)
       });
 
       const lang = resolveLang(rootTask.description ?? rootTask.title);
-      const projectPath = rootTask.project_path || process.cwd();
+      const projectPath = String(rootTask.project_path ?? "").trim() || null;
       const evidenceBlock = entries
         .map((entry, idx) =>
           [
@@ -250,17 +250,19 @@ export function createPlanningArchiveTools(deps: CreatePlanningArchiveToolsDeps)
       ].join("\n");
 
       let summaryMarkdown = "";
-      try {
-        const run = await runAgentOneShot(planningLeader, consolidationPrompt, {
-          projectPath,
-          timeoutMs: 45_000,
-          noTools: true,
-        });
-        summaryMarkdown = cleanArchiveText(
-          normalizeConversationReply(run.text || "", 12_000, { maxSentences: 0 }).trim(),
-        );
-      } catch {
-        summaryMarkdown = "";
+      if (projectPath) {
+        try {
+          const run = await runAgentOneShot(planningLeader, consolidationPrompt, {
+            projectPath,
+            timeoutMs: 45_000,
+            noTools: true,
+          });
+          summaryMarkdown = cleanArchiveText(
+            normalizeConversationReply(run.text || "", 12_000, { maxSentences: 0 }).trim(),
+          );
+        } catch {
+          summaryMarkdown = "";
+        }
       }
 
       if (!summaryMarkdown || summaryMarkdown.length < 240) {

@@ -142,7 +142,13 @@ export type FindTeamLeader = (departmentKey: string, candidateAgentIds?: string[
 export type RunAgentOneShot = (
   agent: AgentRow,
   prompt: string,
-  options: { projectPath: string; timeoutMs?: number; rawOutput?: boolean; noTools?: boolean },
+  options: {
+    projectPath?: string;
+    timeoutMs?: number;
+    rawOutput?: boolean;
+    noTools?: boolean;
+    allowNeutralCwd?: boolean;
+  },
 ) => Promise<AgentOneShotResult>;
 export type ChooseSafeReply = (
   run: AgentOneShotResult,

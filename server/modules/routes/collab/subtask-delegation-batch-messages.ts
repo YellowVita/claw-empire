@@ -1,4 +1,5 @@
 import type { Lang } from "../../../types/lang.ts";
+import { getTaskShortId } from "../../workflow/core/worktree/lifecycle.ts";
 import type { L10n } from "./language-policy.ts";
 
 interface MessageDeps {
@@ -147,12 +148,13 @@ export function buildWorktreeCeoNote(
   hasWorktree: boolean,
 ): string {
   if (!hasWorktree) return "";
+  const taskShortId = getTaskShortId(delegatedTaskId);
   return deps.pickL(
     deps.l(
-      [` (격리 브랜치: climpire/${delegatedTaskId.slice(0, 8)})`],
-      [` (isolated branch: climpire/${delegatedTaskId.slice(0, 8)})`],
-      [` (分離ブランチ: climpire/${delegatedTaskId.slice(0, 8)})`],
-      [`（隔离分支: climpire/${delegatedTaskId.slice(0, 8)}）`],
+      [` (격리 브랜치: climpire/${taskShortId})`],
+      [` (isolated branch: climpire/${taskShortId})`],
+      [` (分離ブランチ: climpire/${taskShortId})`],
+      [`（隔离分支: climpire/${taskShortId}）`],
     ),
     lang,
   );
