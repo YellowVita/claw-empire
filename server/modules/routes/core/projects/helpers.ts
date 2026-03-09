@@ -16,7 +16,7 @@ export function createProjectRouteHelpers({ db, normalizeTextField }: CreateProj
     const value = normalizeTextField(raw);
     if (!value) return false;
 
-    let candidate = value;
+    const candidate = value;
     if (candidate === "~" || candidate.startsWith("~/")) return false;
     if (candidate === "/Projects" || candidate.startsWith("/Projects/")) return false;
     if (candidate === "/projects" || candidate.startsWith("/projects/")) return false;

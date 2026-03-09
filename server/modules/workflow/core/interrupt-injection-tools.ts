@@ -4,7 +4,9 @@ import { createHash } from "node:crypto";
 type DbLike = Pick<DatabaseSync, "prepare">;
 
 const MAX_INTERRUPT_PROMPT_CHARS = 4000;
+// eslint-disable-next-line no-control-regex
 const ANSI_ESCAPE_REGEX = /\u001b(?:\[[0-?]*[ -/]*[@-~]|][^\u0007]*(?:\u0007|\u001b\\)|[@-Z\\-_])/g;
+// eslint-disable-next-line no-control-regex
 const CONTROL_CHAR_REGEX = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
 const TEMPLATE_BREAKOUT_PATTERNS = [
   /<\/?(system|assistant|developer|tool)>/i,

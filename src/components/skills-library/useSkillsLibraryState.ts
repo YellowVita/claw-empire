@@ -211,8 +211,9 @@ export function useSkillsLibraryState({ agents, localeTag, t }: { agents: Agent[
   const preferKoreanName = localeTag.startsWith("ko");
 
   useEffect(() => {
+    const unlearnEffectTimers = unlearnEffectTimersRef.current;
     return () => {
-      for (const timerId of Object.values(unlearnEffectTimersRef.current)) {
+      for (const timerId of Object.values(unlearnEffectTimers)) {
         if (typeof timerId === "number") {
           window.clearTimeout(timerId);
         }
@@ -249,7 +250,7 @@ export function useSkillsLibraryState({ agents, localeTag, t }: { agents: Agent[
     if (learnJob.status === "succeeded" || learnJob.status === "failed") {
       setHistoryRefreshToken((prev) => prev + 1);
     }
-  }, [learnJob?.id, learnJob?.status]);
+  }, [learnJob]);
 
   const openLearningModal = useCallback(
     (skill: CategorizedSkill) => {

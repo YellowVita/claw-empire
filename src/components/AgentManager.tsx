@@ -230,6 +230,7 @@ export default function AgentManager({
     isIsolatedPack,
     modalAgent,
     onAgentsChange,
+    officePackKey,
     persistIsolatedProfile,
     useDbBackedPack,
   ]);
@@ -362,7 +363,7 @@ export default function AgentManager({
     } finally {
       setReorderSaving(false);
     }
-  }, [agents, deptOrder, isIsolatedPack, onAgentsChange, persistIsolatedProfile, useDbBackedPack]);
+  }, [agents, deptOrder, isIsolatedPack, officePackKey, onAgentsChange, persistIsolatedProfile, useDbBackedPack]);
 
   const resetDeptOrder = useCallback(() => {
     setDeptOrder([...departments].sort((a, b) => a.sort_order - b.sort_order));

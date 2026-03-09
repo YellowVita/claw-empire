@@ -5,10 +5,13 @@ export function usePolling<T>(fetcher: () => Promise<T>, intervalMs: number = 30
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval>>(undefined);
+  const fetcherRef = useRef(fetcher);
+  const depsRef = useRef(deps);
+  fetcherRef.current = fetcher;
 
   const refresh = useCallback(async () => {
     try {
-      const result = await fetcher();
+      const result = await fetcherRef.current();
       setData(result);
       setError(null);
     } catch (e: unknown) {
@@ -16,7 +19,7 @@ export function usePolling<T>(fetcher: () => Promise<T>, intervalMs: number = 30
     } finally {
       setLoading(false);
     }
-  }, deps);
+  }, []);
 
   useEffect(() => {
     refresh();
@@ -36,6 +39,19 @@ export function usePolling<T>(fetcher: () => Promise<T>, intervalMs: number = 30
       document.removeEventListener("visibilitychange", handleVisibility);
     };
   }, [refresh, intervalMs]);
+
+  useEffect(() => {
+    const previousDeps = depsRef.current;
+    const depsChanged =
+      previousDeps.length !== deps.length || previousDeps.some((value, index) => !Object.is(value, deps[index]));
+
+    if (!depsChanged) return;
+
+    depsRef.current = deps;
+    clearInterval(timerRef.current);
+    void refresh();
+    timerRef.current = setInterval(refresh, intervalMs);
+  }, [deps, intervalMs, refresh]);
 
   return { data, loading, error, refresh };
 }

@@ -72,7 +72,7 @@ export function ChatPanel({
   const { t, locale } = useI18n();
   const isKorean = locale.startsWith("ko");
 
-  const tr = (ko: string, en: string, ja = en, zh = en) => t({ ko, en, ja, zh });
+  const tr = useCallback((ko: string, en: string, ja = en, zh = en) => t({ ko, en, ja, zh }), [t]);
 
   const getAgentName = (agent: Agent | null | undefined) => {
     if (!agent) return "";
@@ -223,7 +223,7 @@ export function ChatPanel({
     setExistingProjectError("");
     setSelectedProject(picked);
     setProjectFlowStep("confirm");
-  }, [existingProjectInput, resolveExistingProjectSelection]);
+  }, [existingProjectInput, resolveExistingProjectSelection, tr]);
 
   const handleChooseExistingProject = useCallback(() => {
     setProjectFlowStep("existing");

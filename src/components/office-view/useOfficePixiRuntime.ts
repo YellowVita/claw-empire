@@ -88,7 +88,9 @@ export function useOfficePixiRuntime({
       if (initIdRef.current !== currentInitId) {
         try {
           app.destroy();
-        } catch {}
+        } catch {
+          /* ignore redundant destroy during init cancellation */
+        }
         return;
       }
 
@@ -114,7 +116,9 @@ export function useOfficePixiRuntime({
               .then((texture) => {
                 textures[key] = texture;
               })
-              .catch(() => {}),
+              .catch(() => {
+                /* ignore missing optional sprite frames */
+              }),
           );
         }
 
@@ -125,7 +129,9 @@ export function useOfficePixiRuntime({
               .then((texture) => {
                 textures[key] = texture;
               })
-              .catch(() => {}),
+              .catch(() => {
+                /* ignore missing optional side frames */
+              }),
           );
         }
       }
@@ -135,7 +141,9 @@ export function useOfficePixiRuntime({
           .then((texture) => {
             textures.ceo = texture;
           })
-          .catch(() => {}),
+          .catch(() => {
+            /* ignore missing CEO sprite */
+          }),
       );
 
       await Promise.all(loads);
@@ -143,7 +151,9 @@ export function useOfficePixiRuntime({
       if (initIdRef.current !== currentInitId) {
         try {
           app.destroy();
-        } catch {}
+        } catch {
+          /* ignore redundant destroy during re-init */
+        }
         return;
       }
 
@@ -202,9 +212,11 @@ export function useOfficePixiRuntime({
 
     resizeObserver.observe(element);
 
+    const nextInitId = currentInitId + 1;
+
     return () => {
       destroyedRef.current = true;
-      initIdRef.current++;
+      initIdRef.current = nextInitId;
       resizeObserver.disconnect();
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);

@@ -104,7 +104,7 @@ export default function ProjectManagerModal({ agents, departments = [], onClose 
 
   useEffect(() => {
     void loadProjects(1, search);
-  }, []);
+  }, [loadProjects, search]);
 
   useEffect(() => {
     if (!selectedProjectId) {

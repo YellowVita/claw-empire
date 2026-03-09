@@ -353,3 +353,90 @@ export type RuntimeContext = BaseRuntimeContext &
   RouteCollabExports &
   RouteOpsExports &
   RuntimeContextAutoAugmented;
+
+export type RouteCollabLanguageRuntimeDeps = Pick<RuntimeContext, "db">;
+
+export type RouteCollabSubtaskRuntimeDeps = Pick<
+  RuntimeContext,
+  | "db"
+  | "nowMs"
+  | "broadcast"
+  | "appendTaskLog"
+  | "finishReview"
+  | "findTeamLeader"
+  | "recordTaskCreationAudit"
+  | "createWorktree"
+  | "logsDir"
+  | "ensureTaskExecutionSession"
+  | "ensureClaudeMd"
+  | "getProviderModelConfig"
+  | "spawnCliAgent"
+  | "getNextHttpAgentPid"
+  | "launchApiProviderAgent"
+  | "launchHttpAgent"
+  | "startProgressTimer"
+  | "startTaskExecutionForAgent"
+  | "activeProcesses"
+  | "handleTaskRunComplete"
+  | "stopRequestedTasks"
+  | "stopRequestModeByTask"
+  | "delegatedTaskToSubtask"
+  | "subtaskDelegationCallbacks"
+  | "subtaskDelegationDispatchInFlight"
+  | "subtaskDelegationCompletionNoticeSent"
+  | "getRecentConversationContext"
+  | "getAgentDisplayName"
+  | "buildTaskExecutionPrompt"
+  | "hasExplicitWarningFixRequest"
+>;
+
+export type RouteCollabCoordinationRuntimeDeps = Pick<
+  RuntimeContext,
+  | "db"
+  | "appendTaskLog"
+  | "broadcast"
+  | "buildTaskExecutionPrompt"
+  | "buildAvailableSkillsPromptBlock"
+  | "crossDeptNextCallbacks"
+  | "delegatedTaskToSubtask"
+  | "ensureTaskExecutionSession"
+  | "findBestSubordinate"
+  | "findTeamLeader"
+  | "getAgentDisplayName"
+  | "getDeptName"
+  | "getDeptRoleConstraint"
+  | "getProviderModelConfig"
+  | "getRecentConversationContext"
+  | "handleTaskRunComplete"
+  | "hasExplicitWarningFixRequest"
+  | "isTaskWorkflowInterrupted"
+  | "logsDir"
+  | "notifyCeo"
+  | "nowMs"
+  | "randomDelay"
+  | "recordTaskCreationAudit"
+  | "sendAgentMessage"
+  | "spawnCliAgent"
+  | "startProgressTimer"
+  | "startTaskExecutionForAgent"
+>;
+
+export type RouteCollabDirectChatRuntimeDeps = Pick<
+  RuntimeContext,
+  | "db"
+  | "logsDir"
+  | "nowMs"
+  | "randomDelay"
+  | "broadcast"
+  | "appendTaskLog"
+  | "recordTaskCreationAudit"
+  | "chooseSafeReply"
+  | "buildCliFailureMessage"
+  | "buildDirectReplyPrompt"
+  | "runAgentOneShot"
+  | "executeApiProviderAgent"
+  | "executeCopilotAgent"
+  | "executeAntigravityAgent"
+  | "isTaskWorkflowInterrupted"
+  | "startTaskExecutionForAgent"
+>;

@@ -83,7 +83,7 @@ function collectDepartmentAliases(input: unknown): string[] {
   add(base);
   add(base.replace(/[\s_-]+/g, ""));
   add(base.replace(/\s*(팀장|팀|부서|department|dept|team|チーム|部門|组长|组|組|部门)\s*$/i, ""));
-  add(base.replace(/[(){}\[\]<>]/g, " "));
+  add(base.replace(/[(){}[\]<>]/g, " "));
 
   return [...out];
 }

@@ -27,6 +27,7 @@ export function createCliTools(deps: CreateCliToolsDeps) {
           path.join(os.homedir(), "bin"),
         ];
 
+  // eslint-disable-next-line no-control-regex
   const ANSI_ESCAPE_REGEX = /\u001b(?:\[[0-?]*[ -/]*[@-~]|][^\u0007]*(?:\u0007|\u001b\\)|[@-Z\\-_])/g;
   const CLI_SPINNER_LINE_REGEX = /^[\s.·•◦○●◌◍◐◓◑◒◉◎|/\\\-⠁-⣿]+$/u;
   const cliOutputDedupCache = new Map<string, { normalized: string; ts: number }>();

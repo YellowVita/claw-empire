@@ -35,6 +35,12 @@ import {
 } from "./office-workflow-pack";
 import { resolvePackAgentViews, resolvePackDepartmentsForDisplay } from "./office-pack-display";
 import { applyOfficePackToTaskInput, filterTasksByOfficePack, type TaskCreateInput } from "./task-workflow-pack";
+import type {
+  AppOfficeSectionProps,
+  AppSettingsSectionProps,
+  AppShellSectionProps,
+  AppTaskBoardSectionProps,
+} from "./useAppLayoutSections";
 
 const OfficeView = lazy(loadOfficeView);
 
@@ -70,71 +76,11 @@ interface AppMainLayoutProps {
   connected: boolean;
   view: View;
   setView: (view: View) => void;
-  departments: Department[];
-  agents: Agent[];
-  stats: CompanyStats | null;
-  tasks: Task[];
-  subtasks: SubTask[];
-  subAgents: SubAgent[];
-  meetingPresence: MeetingPresence[];
-  settings: CompanySettings;
-  cliStatus: CliStatusMap | null;
-  oauthResult: OAuthCallbackResult | null;
   labels: AppMainLayoutLabels;
-  mobileNavOpen: boolean;
-  setMobileNavOpen: (open: boolean) => void;
-  mobileHeaderMenuOpen: boolean;
-  setMobileHeaderMenuOpen: (open: boolean) => void;
-  theme: "light" | "dark";
-  toggleTheme: () => void;
-  decisionInboxLoading: boolean;
-  decisionInboxCount: number;
-  activeMeetingTaskId: string | null;
-  unreadAgentIds: Set<string>;
-  crossDeptDeliveries: CrossDeptDelivery[];
-  ceoOfficeCalls: CeoOfficeCall[];
-  customRoomThemes: RoomThemeMap;
-  activeRoomThemeTargetId: string | null;
-  onCrossDeptDeliveryProcessed: (id: string) => void;
-  onCeoOfficeCallProcessed: (id: string) => void;
-  onOpenActiveMeetingMinutes: (taskId: string) => void;
-  onSelectAgent: (agent: Agent) => void;
-  onSelectDepartment: (department: Department) => void;
-  onCreateTask: (input: {
-    title: string;
-    description?: string;
-    department_id?: string;
-    task_type?: string;
-    priority?: number;
-    project_id?: string;
-    project_path?: string;
-    assigned_agent_id?: string;
-    workflow_pack_key?: WorkflowPackKey;
-  }) => Promise<void>;
-  onUpdateTask: (id: string, data: Partial<Task>) => Promise<void>;
-  onDeleteTask: (id: string) => Promise<void>;
-  onAssignTask: (taskId: string, agentId: string) => Promise<void>;
-  onRunTask: (id: string) => Promise<void>;
-  onStopTask: (id: string) => Promise<void>;
-  onPauseTask: (id: string) => Promise<void>;
-  onResumeTask: (id: string) => Promise<void>;
-  onOpenTerminal: (taskId: string) => void;
-  onOpenMeetingMinutes: (taskId: string) => void;
-  onRunSubtaskAction: (subtaskId: string, action: "retry" | "move_to_owner" | "mark_done") => Promise<void>;
-  onAgentsChange: () => void;
-  activeOfficeWorkflowPack: WorkflowPackKey;
-  onChangeOfficeWorkflowPack: (packKey: WorkflowPackKey) => void;
-  onSaveSettings: (settings: CompanySettings) => Promise<void>;
-  onRefreshCli: () => Promise<void>;
-  onOauthResultClear: () => void;
-  onOpenDecisionInbox: () => void;
-  onOpenAgentStatus: () => void;
-  onOpenReportHistory: () => void;
-  onOpenAnnouncement: () => void;
-  onOpenRoomManager: () => void;
-  onDismissAutoUpdateNotice: () => Promise<void>;
-  onDismissUpdate: () => void;
-  officePackBootstrappingLabel?: string | null;
+  shellProps: AppShellSectionProps;
+  officeProps: AppOfficeSectionProps;
+  taskBoardProps: AppTaskBoardSectionProps;
+  settingsProps: AppSettingsSectionProps;
   children?: ReactNode;
 }
 
@@ -142,63 +88,68 @@ export default function AppMainLayout({
   connected,
   view,
   setView,
-  departments,
-  agents,
-  stats,
-  tasks,
-  subtasks,
-  subAgents,
-  meetingPresence,
-  settings,
-  cliStatus,
-  oauthResult,
   labels,
-  mobileNavOpen,
-  setMobileNavOpen,
-  mobileHeaderMenuOpen,
-  setMobileHeaderMenuOpen,
-  theme,
-  toggleTheme,
-  decisionInboxLoading,
-  decisionInboxCount,
-  activeMeetingTaskId,
-  unreadAgentIds,
-  crossDeptDeliveries,
-  ceoOfficeCalls,
-  customRoomThemes,
-  activeRoomThemeTargetId,
-  onCrossDeptDeliveryProcessed,
-  onCeoOfficeCallProcessed,
-  onOpenActiveMeetingMinutes,
-  onSelectAgent,
-  onSelectDepartment,
-  onCreateTask,
-  onUpdateTask,
-  onDeleteTask,
-  onAssignTask,
-  onRunTask,
-  onStopTask,
-  onPauseTask,
-  onResumeTask,
-  onOpenTerminal,
-  onOpenMeetingMinutes,
-  onRunSubtaskAction,
-  onAgentsChange,
-  activeOfficeWorkflowPack,
-  onChangeOfficeWorkflowPack,
-  onSaveSettings,
-  onRefreshCli,
-  onOauthResultClear,
-  onOpenDecisionInbox,
-  onOpenAgentStatus,
-  onOpenReportHistory,
-  onOpenAnnouncement,
-  onOpenRoomManager,
-  onDismissAutoUpdateNotice,
-  onDismissUpdate,
-  officePackBootstrappingLabel,
+  shellProps,
+  officeProps,
+  taskBoardProps,
+  settingsProps,
   children,
 }: AppMainLayoutProps) {
+  const {
+    mobileNavOpen,
+    setMobileNavOpen,
+    mobileHeaderMenuOpen,
+    setMobileHeaderMenuOpen,
+    theme,
+    toggleTheme,
+    decisionInboxLoading,
+    decisionInboxCount,
+    onOpenDecisionInbox,
+    onOpenAgentStatus,
+    onOpenReportHistory,
+    onOpenAnnouncement,
+    onOpenRoomManager,
+    onDismissAutoUpdateNotice,
+    onDismissUpdate,
+    officePackBootstrappingLabel,
+  } = shellProps;
+  const {
+    departments,
+    agents,
+    meetingPresence,
+    activeMeetingTaskId,
+    unreadAgentIds,
+    crossDeptDeliveries,
+    ceoOfficeCalls,
+    customRoomThemes,
+    activeRoomThemeTargetId,
+    onCrossDeptDeliveryProcessed,
+    onCeoOfficeCallProcessed,
+    onOpenActiveMeetingMinutes,
+    onSelectAgent,
+    onSelectDepartment,
+    activeOfficeWorkflowPack,
+    onChangeOfficeWorkflowPack,
+    onAgentsChange,
+  } = officeProps;
+  const {
+    stats,
+    tasks,
+    subtasks,
+    subAgents,
+    onCreateTask,
+    onUpdateTask,
+    onDeleteTask,
+    onAssignTask,
+    onRunTask,
+    onStopTask,
+    onPauseTask,
+    onResumeTask,
+    onOpenTerminal,
+    onOpenMeetingMinutes,
+    onRunSubtaskAction,
+  } = taskBoardProps;
+  const { settings, cliStatus, oauthResult, onSaveSettings, onRefreshCli, onOauthResultClear } = settingsProps;
   const uiLanguage =
     labels.uiLanguage === "ko" || labels.uiLanguage === "ja" || labels.uiLanguage === "zh" ? labels.uiLanguage : "en";
   const officePackKey = normalizeOfficeWorkflowPack(activeOfficeWorkflowPack);

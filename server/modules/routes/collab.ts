@@ -1,4 +1,10 @@
-import type { RuntimeContext, RouteCollabExports } from "../../types/runtime-context.ts";
+import type {
+  RuntimeContext,
+  RouteCollabExports,
+  RouteCollabDirectChatRuntimeDeps,
+  RouteCollabLanguageRuntimeDeps,
+  RouteCollabSubtaskRuntimeDeps,
+} from "../../types/runtime-context.ts";
 import type { Lang } from "../../types/lang.ts";
 import { randomUUID } from "node:crypto";
 import { sendMessengerMessage, sendMessengerSessionMessage, type MessengerChannel } from "../../gateway/client.ts";
@@ -59,6 +65,68 @@ export function registerRoutesPartB(ctx: RuntimeContext): RouteCollabExports {
   const subtaskDelegationCompletionNoticeSent = __ctx.subtaskDelegationCompletionNoticeSent;
   const subtaskDelegationDispatchInFlight = __ctx.subtaskDelegationDispatchInFlight;
   const resolveProjectPathBase = (...args: any[]) => __ctx.resolveProjectPath(...args);
+
+  function buildLanguagePolicyDeps(ctx: RouteCollabLanguageRuntimeDeps) {
+    return {
+      db: ctx.db,
+    };
+  }
+
+  function buildSubtaskDelegationDeps(ctx: RouteCollabSubtaskRuntimeDeps) {
+    return {
+      db: ctx.db,
+      nowMs: ctx.nowMs,
+      broadcast: ctx.broadcast,
+      appendTaskLog: ctx.appendTaskLog,
+      finishReview: ctx.finishReview,
+      findTeamLeader: ctx.findTeamLeader,
+      recordTaskCreationAudit: ctx.recordTaskCreationAudit,
+      createWorktree: ctx.createWorktree,
+      logsDir: ctx.logsDir,
+      ensureTaskExecutionSession: ctx.ensureTaskExecutionSession,
+      ensureClaudeMd: ctx.ensureClaudeMd,
+      getProviderModelConfig: ctx.getProviderModelConfig,
+      spawnCliAgent: ctx.spawnCliAgent,
+      getNextHttpAgentPid: ctx.getNextHttpAgentPid,
+      launchApiProviderAgent: ctx.launchApiProviderAgent,
+      launchHttpAgent: ctx.launchHttpAgent,
+      startProgressTimer: ctx.startProgressTimer,
+      startTaskExecutionForAgent: ctx.startTaskExecutionForAgent,
+      activeProcesses: ctx.activeProcesses,
+      handleTaskRunComplete: ctx.handleTaskRunComplete,
+      stopRequestedTasks: ctx.stopRequestedTasks,
+      stopRequestModeByTask: ctx.stopRequestModeByTask,
+      delegatedTaskToSubtask: ctx.delegatedTaskToSubtask,
+      subtaskDelegationCallbacks: ctx.subtaskDelegationCallbacks,
+      subtaskDelegationDispatchInFlight: ctx.subtaskDelegationDispatchInFlight,
+      subtaskDelegationCompletionNoticeSent: ctx.subtaskDelegationCompletionNoticeSent,
+      getRecentConversationContext: ctx.getRecentConversationContext,
+      getAgentDisplayName: ctx.getAgentDisplayName,
+      buildTaskExecutionPrompt: ctx.buildTaskExecutionPrompt,
+      hasExplicitWarningFixRequest: ctx.hasExplicitWarningFixRequest,
+    };
+  }
+
+  function buildDirectChatRuntimeDeps(ctx: RouteCollabDirectChatRuntimeDeps) {
+    return {
+      db: ctx.db,
+      logsDir: ctx.logsDir,
+      nowMs: ctx.nowMs,
+      randomDelay: ctx.randomDelay,
+      broadcast: ctx.broadcast,
+      appendTaskLog: ctx.appendTaskLog,
+      recordTaskCreationAudit: ctx.recordTaskCreationAudit,
+      chooseSafeReply: ctx.chooseSafeReply,
+      buildCliFailureMessage: ctx.buildCliFailureMessage,
+      buildDirectReplyPrompt: ctx.buildDirectReplyPrompt,
+      runAgentOneShot: ctx.runAgentOneShot,
+      executeApiProviderAgent: ctx.executeApiProviderAgent,
+      executeCopilotAgent: ctx.executeCopilotAgent,
+      executeAntigravityAgent: ctx.executeAntigravityAgent,
+      isTaskWorkflowInterrupted: ctx.isTaskWorkflowInterrupted,
+      startTaskExecutionForAgent: ctx.startTaskExecutionForAgent,
+    };
+  }
 
   // ---------------------------------------------------------------------------
   // Agent auto-reply & task delegation logic
@@ -494,7 +562,7 @@ export function registerRoutesPartB(ctx: RuntimeContext): RouteCollabExports {
     analyzeDirectivePolicy,
     shouldExecuteDirectiveDelegation,
     detectTargetDepartments,
-  } = initializeCollabLanguagePolicy({ db });
+  } = initializeCollabLanguagePolicy(buildLanguagePolicyDeps(__ctx));
 
   const { generateChatReply } = createChatReplyGenerator({
     db,
@@ -765,46 +833,17 @@ export function registerRoutesPartB(ctx: RuntimeContext): RouteCollabExports {
     processSubtaskDelegations,
     maybeNotifyAllSubtasksComplete,
   } = initializeSubtaskDelegation({
-    db,
+    ...buildSubtaskDelegationDeps(__ctx),
     l,
     pickL,
     resolveLang,
     getPreferredLanguage,
     getDeptName,
     getDeptRoleConstraint,
-    getRecentConversationContext,
-    getAgentDisplayName,
-    buildTaskExecutionPrompt,
-    hasExplicitWarningFixRequest,
-    delegatedTaskToSubtask,
-    subtaskDelegationCallbacks,
-    subtaskDelegationDispatchInFlight,
-    subtaskDelegationCompletionNoticeSent,
+    findBestSubordinate,
     notifyCeo,
     sendAgentMessage,
-    appendTaskLog,
-    finishReview,
-    findTeamLeader,
-    findBestSubordinate,
-    nowMs,
-    broadcast,
-    handleTaskRunComplete,
-    stopRequestedTasks,
-    stopRequestModeByTask,
-    recordTaskCreationAudit,
     resolveProjectPath: resolveProjectPathBase,
-    createWorktree,
-    logsDir,
-    ensureTaskExecutionSession,
-    ensureClaudeMd,
-    getProviderModelConfig,
-    spawnCliAgent,
-    getNextHttpAgentPid,
-    launchApiProviderAgent,
-    launchHttpAgent,
-    startProgressTimer,
-    startTaskExecutionForAgent,
-    activeProcesses,
   });
 
   const collabCoordination = initializeCollabCoordination({
@@ -864,13 +903,7 @@ export function registerRoutesPartB(ctx: RuntimeContext): RouteCollabExports {
   });
 
   const { scheduleAgentReply, resetDirectChatState } = createDirectChatHandlers({
-    db,
-    logsDir,
-    nowMs,
-    randomDelay,
-    broadcast,
-    appendTaskLog,
-    recordTaskCreationAudit,
+    ...buildDirectChatRuntimeDeps(__ctx),
     resolveLang,
     resolveProjectPath,
     detectProjectPath,
@@ -882,15 +915,6 @@ export function registerRoutesPartB(ctx: RuntimeContext): RouteCollabExports {
     pickL,
     sendAgentMessage,
     registerTaskMessengerRoute,
-    chooseSafeReply,
-    buildCliFailureMessage,
-    buildDirectReplyPrompt,
-    runAgentOneShot,
-    executeApiProviderAgent,
-    executeCopilotAgent,
-    executeAntigravityAgent,
-    isTaskWorkflowInterrupted,
-    startTaskExecutionForAgent,
     handleTaskDelegation,
   });
 

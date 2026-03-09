@@ -111,8 +111,9 @@ export default function SkillHistoryPanel({
   }, [providerFilter, tab]);
 
   useEffect(() => {
+    const unlearnEffectTimers = unlearnEffectTimersRef.current;
     return () => {
-      for (const timerId of Object.values(unlearnEffectTimersRef.current)) {
+      for (const timerId of Object.values(unlearnEffectTimers)) {
         if (typeof timerId === "number") {
           window.clearTimeout(timerId);
         }

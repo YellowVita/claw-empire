@@ -28,6 +28,7 @@ export function createPlanningArchiveTools(deps: CreatePlanningArchiveToolsDeps)
       .replace(/\\r\\n/g, "\n")
       .replace(/\\n/g, "\n")
       .replace(/\\t/g, " ")
+      // eslint-disable-next-line no-control-regex
       .replace(/\u001b\[[0-9;]*m/g, "");
     const lines = normalized
       .split(/\n+/)
@@ -42,7 +43,7 @@ export function createPlanningArchiveTools(deps: CreatePlanningArchiveToolsDeps)
           )
         )
           return false;
-        if (/"aggregated_output"|\"exit_code\"|\"session_id\"|\"total_cost_usd\"|\"usage\"/i.test(line)) return false;
+        if (/"aggregated_output"|"exit_code"|"session_id"|"total_cost_usd"|"usage"/i.test(line)) return false;
         if (/^\(Use `node --trace-warnings/i.test(line)) return false;
         if (/^command\s+["'`]/i.test(line)) return false;
         if (/^\[[A-Za-z-]+\]\s+/.test(line) && line.includes("listening on http://")) return false;

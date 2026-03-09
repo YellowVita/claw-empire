@@ -41,6 +41,7 @@ import { useUpdateStatusPolling } from "./app/useUpdateStatusPolling";
 import { useAppViewEffects } from "./app/useAppViewEffects";
 import { useAppBootstrapData } from "./app/useAppBootstrapData";
 import { useLiveSyncScheduler } from "./app/useLiveSyncScheduler";
+import { useAppLayoutSections } from "./app/useAppLayoutSections";
 import { resolvePackAgentViews, resolvePackDepartmentsForDisplay } from "./app/office-pack-display";
 import {
   buildOfficePackPresentation,
@@ -383,6 +384,89 @@ export default function App() {
       }),
     [activePackKey, activePackProfile?.agents, agents],
   );
+  const handleSelectDepartment = useCallback(
+    (department: Department) => {
+      const leader =
+        overlayAgents.find((agent) => agent.department_id === department.id && agent.role === "team_leader") ??
+        (department.id === "planning"
+          ? overlayAgents.find(
+              (agent) => agent.role === "team_leader" && Number(agent.acts_as_planning_leader ?? 0) === 1,
+            )
+          : undefined);
+      if (leader) actions.handleOpenChat(leader);
+    },
+    [actions, overlayAgents],
+  );
+  const layoutSections = useAppLayoutSections({
+    shellProps: {
+      mobileNavOpen,
+      setMobileNavOpen,
+      mobileHeaderMenuOpen,
+      setMobileHeaderMenuOpen,
+      theme,
+      toggleTheme,
+      decisionInboxLoading,
+      decisionInboxCount: decisionInboxItems.length,
+      onOpenDecisionInbox: actions.handleOpenDecisionInbox,
+      onOpenAgentStatus: () => setShowAgentStatus(true),
+      onOpenReportHistory: () => setShowReportHistory(true),
+      onOpenAnnouncement: actions.handleOpenAnnouncement,
+      onOpenRoomManager: () => setShowRoomManager(true),
+      onDismissAutoUpdateNotice: actions.handleDismissAutoUpdateNotice,
+      onDismissUpdate: () => {
+        const latest = labels.effectiveUpdateStatus?.latest_version ?? "";
+        setDismissedUpdateVersion(latest);
+        if (typeof window !== "undefined") {
+          window.localStorage.setItem(UPDATE_BANNER_DISMISS_STORAGE_KEY, latest);
+        }
+      },
+      officePackBootstrappingLabel,
+    },
+    officeProps: {
+      departments,
+      agents,
+      meetingPresence,
+      activeMeetingTaskId,
+      unreadAgentIds,
+      crossDeptDeliveries,
+      ceoOfficeCalls,
+      customRoomThemes,
+      activeRoomThemeTargetId,
+      onCrossDeptDeliveryProcessed: (id) => setCrossDeptDeliveries((prev) => prev.filter((delivery) => delivery.id !== id)),
+      onCeoOfficeCallProcessed: (id) => setCeoOfficeCalls((prev) => prev.filter((call) => call.id !== id)),
+      onOpenActiveMeetingMinutes: (taskId) => setTaskPanel({ taskId, tab: "minutes" }),
+      onSelectAgent: setSelectedAgent,
+      onSelectDepartment: handleSelectDepartment,
+      activeOfficeWorkflowPack: settings.officeWorkflowPack ?? "development",
+      onChangeOfficeWorkflowPack: handleOfficeWorkflowPackChange,
+      onAgentsChange: actions.handleAgentsChange,
+    },
+    taskBoardProps: {
+      stats,
+      tasks,
+      subtasks,
+      subAgents,
+      onCreateTask: actions.handleCreateTask,
+      onUpdateTask: actions.handleUpdateTask,
+      onDeleteTask: actions.handleDeleteTask,
+      onAssignTask: actions.handleAssignTask,
+      onRunTask: actions.handleRunTask,
+      onStopTask: actions.handleStopTask,
+      onPauseTask: actions.handlePauseTask,
+      onResumeTask: actions.handleResumeTask,
+      onOpenTerminal: (taskId) => setTaskPanel({ taskId, tab: "terminal" }),
+      onOpenMeetingMinutes: (taskId) => setTaskPanel({ taskId, tab: "minutes" }),
+      onRunSubtaskAction: actions.handleRunSubtaskAction,
+    },
+    settingsProps: {
+      settings,
+      cliStatus,
+      oauthResult,
+      onSaveSettings: actions.handleSaveSettings,
+      onRefreshCli: actions.handleRefreshCli,
+      onOauthResultClear: () => setOauthResult(null),
+    },
+  });
 
   if (loading) {
     return (
@@ -395,77 +479,11 @@ export default function App() {
       connected={connected}
       view={view}
       setView={setView}
-      departments={departments}
-      agents={agents}
-      stats={stats}
-      tasks={tasks}
-      subtasks={subtasks}
-      subAgents={subAgents}
-      meetingPresence={meetingPresence}
-      settings={settings}
-      cliStatus={cliStatus}
-      oauthResult={oauthResult}
       labels={labels}
-      mobileNavOpen={mobileNavOpen}
-      setMobileNavOpen={setMobileNavOpen}
-      mobileHeaderMenuOpen={mobileHeaderMenuOpen}
-      setMobileHeaderMenuOpen={setMobileHeaderMenuOpen}
-      theme={theme}
-      toggleTheme={toggleTheme}
-      decisionInboxLoading={decisionInboxLoading}
-      decisionInboxCount={decisionInboxItems.length}
-      activeMeetingTaskId={activeMeetingTaskId}
-      unreadAgentIds={unreadAgentIds}
-      crossDeptDeliveries={crossDeptDeliveries}
-      ceoOfficeCalls={ceoOfficeCalls}
-      customRoomThemes={customRoomThemes}
-      activeRoomThemeTargetId={activeRoomThemeTargetId}
-      onCrossDeptDeliveryProcessed={(id) => setCrossDeptDeliveries((prev) => prev.filter((d) => d.id !== id))}
-      onCeoOfficeCallProcessed={(id) => setCeoOfficeCalls((prev) => prev.filter((d) => d.id !== id))}
-      onOpenActiveMeetingMinutes={(taskId) => setTaskPanel({ taskId, tab: "minutes" })}
-      onSelectAgent={setSelectedAgent}
-      onSelectDepartment={(department) => {
-        const candidateAgents = overlayAgents;
-        const leader =
-          candidateAgents.find((agent) => agent.department_id === department.id && agent.role === "team_leader") ??
-          (department.id === "planning"
-            ? candidateAgents.find(
-                (agent) => agent.role === "team_leader" && Number(agent.acts_as_planning_leader ?? 0) === 1,
-              )
-            : undefined);
-        if (leader) actions.handleOpenChat(leader);
-      }}
-      onCreateTask={actions.handleCreateTask}
-      onUpdateTask={actions.handleUpdateTask}
-      onDeleteTask={actions.handleDeleteTask}
-      onAssignTask={actions.handleAssignTask}
-      onRunTask={actions.handleRunTask}
-      onStopTask={actions.handleStopTask}
-      onPauseTask={actions.handlePauseTask}
-      onResumeTask={actions.handleResumeTask}
-      onOpenTerminal={(taskId) => setTaskPanel({ taskId, tab: "terminal" })}
-      onOpenMeetingMinutes={(taskId) => setTaskPanel({ taskId, tab: "minutes" })}
-      onRunSubtaskAction={actions.handleRunSubtaskAction}
-      onAgentsChange={actions.handleAgentsChange}
-      activeOfficeWorkflowPack={settings.officeWorkflowPack ?? "development"}
-      onChangeOfficeWorkflowPack={handleOfficeWorkflowPackChange}
-      onSaveSettings={actions.handleSaveSettings}
-      onRefreshCli={actions.handleRefreshCli}
-      onOauthResultClear={() => setOauthResult(null)}
-      onOpenDecisionInbox={actions.handleOpenDecisionInbox}
-      onOpenAgentStatus={() => setShowAgentStatus(true)}
-      onOpenReportHistory={() => setShowReportHistory(true)}
-      onOpenAnnouncement={actions.handleOpenAnnouncement}
-      onOpenRoomManager={() => setShowRoomManager(true)}
-      onDismissAutoUpdateNotice={actions.handleDismissAutoUpdateNotice}
-      onDismissUpdate={() => {
-        const latest = labels.effectiveUpdateStatus?.latest_version ?? "";
-        setDismissedUpdateVersion(latest);
-        if (typeof window !== "undefined") {
-          window.localStorage.setItem(UPDATE_BANNER_DISMISS_STORAGE_KEY, latest);
-        }
-      }}
-      officePackBootstrappingLabel={officePackBootstrappingLabel}
+      shellProps={layoutSections.shellProps}
+      officeProps={layoutSections.officeProps}
+      taskBoardProps={layoutSections.taskBoardProps}
+      settingsProps={layoutSections.settingsProps}
     >
       <AppOverlays
         showChat={showChat}
