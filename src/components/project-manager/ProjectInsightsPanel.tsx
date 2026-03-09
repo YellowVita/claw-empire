@@ -76,6 +76,24 @@ export default function ProjectInsightsPanel({
             <p className="break-all text-slate-200">
               <span className="text-slate-500">Goal:</span> {selectedProject.core_goal}
             </p>
+            <p className="text-slate-200">
+              <span className="text-slate-500">
+                {t({ ko: "DB 기본 Pack", en: "DB Default Pack", ja: "DB既定Pack", zh: "DB 默认 Pack" })}:
+              </span>{" "}
+              {selectedProject.default_pack_key || "development"}
+            </p>
+            <p className="text-slate-200">
+              <span className="text-slate-500">
+                {t({ ko: "파일 감지 Pack", en: "Detected File Pack", ja: "検出されたファイルPack", zh: "文件检测 Pack" })}:
+              </span>{" "}
+              {selectedProject.detected_workflow_pack_key || "-"}
+            </p>
+            <p className="text-slate-200">
+              <span className="text-slate-500">
+                {t({ ko: "현재 Source", en: "Current Source", ja: "現在のSource", zh: "当前 Source" })}:
+              </span>{" "}
+              {selectedProject.workflow_pack_source || "-"}
+            </p>
           </div>
         )}
       </div>

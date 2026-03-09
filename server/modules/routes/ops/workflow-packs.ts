@@ -7,6 +7,7 @@ import {
   isWorkflowPackKey,
   type WorkflowPackKey,
 } from "../../workflow/packs/definitions.ts";
+import { resolveTaskWorkflowPackSelection } from "../../workflow/packs/task-pack-resolver.ts";
 import {
   buildWorkflowPackExportDocument,
   importWorkflowPackDocument,
@@ -274,6 +275,7 @@ export function registerWorkflowPackRoutes(
     const explicitPackKey = normalizeTextField(body.workflow_pack_key ?? body.packKey);
     const sessionKey = normalizeTextField(body.session_key ?? body.sessionKey);
     const projectId = normalizeTextField(body.project_id ?? body.projectId);
+    const projectPath = normalizeTextField(body.project_path ?? body.projectPath);
 
     const enabledRows = db.prepare("SELECT key FROM workflow_packs WHERE enabled = 1").all() as Array<{ key: string }>;
     const enabledSet = new Set<WorkflowPackKey>(
@@ -289,6 +291,31 @@ export function registerWorkflowPackRoutes(
         candidates: [{ packKey: explicitPackKey, confidence: 1, reason: "explicit_request" }],
         requiresConfirmation: false,
       });
+    }
+
+    const projectSelection =
+      projectId || projectPath
+        ? resolveTaskWorkflowPackSelection({
+            db: db as any,
+            projectId,
+            projectPath,
+          })
+        : null;
+    if (projectSelection) {
+      for (const warning of projectSelection.warnings) {
+        console.warn(`[workflow-route] ${warning}`);
+      }
+      if (isEnabled(projectSelection.packKey) && projectSelection.source !== "fallback_default") {
+        const reason = projectSelection.source === "file_default" ? "project_file_default" : "project_default";
+        const confidence = projectSelection.source === "file_default" ? 0.92 : 0.9;
+        return res.json({
+          packKey: projectSelection.packKey,
+          confidence,
+          reason,
+          candidates: [{ packKey: projectSelection.packKey, confidence, reason }],
+          requiresConfirmation: false,
+        });
+      }
     }
 
     if (sessionKey) {

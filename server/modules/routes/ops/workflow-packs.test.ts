@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 
@@ -42,6 +45,11 @@ function createHarness() {
       cost_profile_json TEXT NOT NULL,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
+    );
+    CREATE TABLE projects (
+      id TEXT PRIMARY KEY,
+      project_path TEXT,
+      default_pack_key TEXT NOT NULL DEFAULT 'development'
     );
   `);
   db.prepare(
@@ -347,6 +355,58 @@ describe("workflow pack import/export routes", () => {
         harness.db.prepare("SELECT name FROM workflow_packs WHERE key = ?").get("development"),
       ).toEqual({ name: "Development" });
     } finally {
+      harness.db.close();
+    }
+  });
+
+  it("workflow route preview는 project_path file default를 project default보다 우선한다", () => {
+    const harness = createHarness();
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "claw-route-pack-"));
+    try {
+      fs.writeFileSync(
+        path.join(projectDir, ".claw-workflow.json"),
+        JSON.stringify({ defaultWorkflowPackKey: "report" }, null, 2),
+        "utf8",
+      );
+      harness.db
+        .prepare(
+          `
+            INSERT INTO workflow_packs (
+              key, name, enabled, input_schema_json, prompt_preset_json, qa_rules_json,
+              output_template_json, routing_keywords_json, cost_profile_json, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `,
+        )
+        .run(
+          "report",
+          "Structured Report",
+          1,
+          '{"required":["goal"]}',
+          '{"mode":"reporting"}',
+          '{"failOnMissingSections":true}',
+          '{"sections":["summary"]}',
+          '["report"]',
+          '{"maxRounds":2}',
+          1,
+          1,
+        );
+      harness.db.prepare("INSERT INTO projects (id, project_path, default_pack_key) VALUES (?, ?, ?)").run(
+        "project-1",
+        projectDir,
+        "development",
+      );
+      const handler = harness.postRoutes.get("/api/workflow/route");
+      const res = createFakeResponse();
+      handler?.({ body: { text: "plain task", project_id: "project-1" } }, res);
+
+      expect(res.statusCode).toBe(200);
+      expect(res.payload).toMatchObject({
+        packKey: "report",
+        reason: "project_file_default",
+        requiresConfirmation: false,
+      });
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
       harness.db.close();
     }
   });

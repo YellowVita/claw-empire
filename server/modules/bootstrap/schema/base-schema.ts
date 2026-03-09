@@ -96,6 +96,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   priority INTEGER DEFAULT 0,
   task_type TEXT DEFAULT 'general' CHECK(task_type IN ('general','development','design','analysis','presentation','documentation')),
   workflow_pack_key TEXT NOT NULL DEFAULT 'development',
+  workflow_pack_source TEXT
+    CHECK(workflow_pack_source IN ('explicit','file_default','project_default','fallback_default')),
   orchestration_version INTEGER NOT NULL DEFAULT 1,
   orchestration_stage TEXT
     CHECK(orchestration_stage IN ('owner_prep','foreign_collab','owner_integrate','finalize','review')),

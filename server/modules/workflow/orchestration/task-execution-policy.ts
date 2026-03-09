@@ -1,14 +1,12 @@
-import fs from "node:fs";
-import path from "node:path";
 import { exec } from "node:child_process";
 import type { DatabaseSync } from "node:sqlite";
 import { recordTaskExecutionEvent } from "./task-execution-events.ts";
+import { readProjectWorkflowConfig } from "../packs/project-config.ts";
 
 type DbLike = Pick<DatabaseSync, "prepare">;
 
 export const TASK_EXECUTION_POLICY_SETTING_KEY = "taskExecutionPolicy";
 export const TASK_EXECUTION_HOOKS_SETTING_KEY = "taskExecutionHooks";
-export const PROJECT_TASK_EXECUTION_HOOKS_FILENAME = ".claw-workflow.json";
 
 export type TaskRetryReason = "idle_timeout" | "hard_timeout" | "orphan_recovery";
 export type TaskHookStage = "before_run" | "after_run_success" | "after_run_failure";
@@ -72,14 +70,6 @@ const EMPTY_TASK_EXECUTION_HOOK_STAGE_PRESENCE: TaskExecutionHookStagePresence =
   after_run_failure: false,
 };
 
-function safeJsonParse(raw: string): unknown {
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
-}
-
 function asObject(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
@@ -92,7 +82,11 @@ function readSettingsJson(db: DbLike, key: string): unknown {
       | undefined;
     if (!row) return null;
     if (typeof row.value !== "string") return row.value ?? null;
-    return safeJsonParse(row.value);
+    try {
+      return JSON.parse(row.value);
+    } catch {
+      return null;
+    }
   } catch {
     return null;
   }
@@ -181,33 +175,18 @@ export function readTaskExecutionHooks(db: DbLike): TaskExecutionHooks {
 }
 
 export function readProjectTaskExecutionHooks(worktreePath: string): ProjectTaskExecutionHooksConfig | null {
-  const configPath = path.join(worktreePath, PROJECT_TASK_EXECUTION_HOOKS_FILENAME);
-  if (!fs.existsSync(configPath)) return null;
-
-  let rawText = "";
-  try {
-    rawText = fs.readFileSync(configPath, "utf8");
-  } catch {
+  const config = readProjectWorkflowConfig(worktreePath);
+  if (!config) return null;
+  if (!config.raw) {
     return {
       hooks: DEFAULT_TASK_EXECUTION_HOOKS,
       stagePresence: { ...EMPTY_TASK_EXECUTION_HOOK_STAGE_PRESENCE },
-      warnings: [".claw-workflow.json parse failed, falling back to global"],
+      warnings: [...config.warnings],
       valid: false,
     };
   }
 
-  const parsed = safeJsonParse(rawText);
-  if (!parsed) {
-    return {
-      hooks: DEFAULT_TASK_EXECUTION_HOOKS,
-      stagePresence: { ...EMPTY_TASK_EXECUTION_HOOK_STAGE_PRESENCE },
-      warnings: [".claw-workflow.json parse failed, falling back to global"],
-      valid: false,
-    };
-  }
-
-  const root = asObject(parsed);
-  const taskExecutionHooksValue = root?.taskExecutionHooks;
+  const taskExecutionHooksValue = config.raw.taskExecutionHooks;
   const rawHooks = asObject(taskExecutionHooksValue);
   if (!rawHooks) {
     return {

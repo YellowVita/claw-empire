@@ -105,6 +105,7 @@ export const WORKFLOW_PACK_KEYS = [
   "roleplay",
 ] as const;
 export type WorkflowPackKey = (typeof WORKFLOW_PACK_KEYS)[number];
+export type TaskWorkflowPackSource = "explicit" | "file_default" | "project_default" | "fallback_default";
 
 export interface Task {
   id: string;
@@ -121,6 +122,7 @@ export interface Task {
   priority: number;
   task_type: TaskType;
   workflow_pack_key?: WorkflowPackKey;
+  workflow_pack_source?: TaskWorkflowPackSource | null;
   workflow_meta_json?: string | null;
   output_format?: string | null;
   project_path: string | null;
@@ -143,6 +145,8 @@ export interface Project {
   project_path: string;
   core_goal: string;
   default_pack_key?: WorkflowPackKey;
+  detected_workflow_pack_key?: WorkflowPackKey | null;
+  workflow_pack_source?: "file_default" | "project_default" | null;
   assignment_mode: AssignmentMode;
   assigned_agent_ids?: string[];
   last_used_at: number | null;

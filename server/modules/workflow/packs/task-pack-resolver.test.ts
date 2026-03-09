@@ -1,10 +1,27 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   resolveProjectDefaultPackKey,
   resolveTaskPackKeyById,
+  resolveTaskWorkflowPackSelection,
   resolveWorkflowPackKeyForTask,
 } from "./task-pack-resolver.ts";
+
+const tempDirs: string[] = [];
+
+function createTempDir(prefix: string): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
+}
+
+function writeWorkflowConfig(projectPath: string, raw: string | Record<string, unknown>): void {
+  const content = typeof raw === "string" ? raw : JSON.stringify(raw, null, 2);
+  fs.writeFileSync(path.join(projectPath, ".claw-workflow.json"), content, "utf8");
+}
 
 function setupDb(): DatabaseSync {
   const db = new DatabaseSync(":memory:");
@@ -20,6 +37,14 @@ function setupDb(): DatabaseSync {
   `);
   return db;
 }
+
+afterEach(() => {
+  while (tempDirs.length > 0) {
+    const dir = tempDirs.pop();
+    if (!dir) continue;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 describe("task-pack-resolver", () => {
   it("explicit pack key가 있으면 최우선으로 사용한다", () => {
@@ -93,6 +118,48 @@ describe("task-pack-resolver", () => {
       expect(resolveProjectDefaultPackKey(db, "project-2")).toBeNull();
       expect(resolveTaskPackKeyById(db, "task-1")).toBe("report");
       expect(resolveTaskPackKeyById(db, "missing")).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+
+  it("file default pack이 project default보다 우선한다", () => {
+    const db = setupDb();
+    const projectPath = createTempDir("claw-pack-file-default-");
+    writeWorkflowConfig(projectPath, { defaultWorkflowPackKey: "report" });
+    try {
+      db.prepare("INSERT INTO projects (id, default_pack_key) VALUES (?, ?)").run("project-1", "novel");
+      const resolved = resolveTaskWorkflowPackSelection({
+        db,
+        projectId: "project-1",
+        projectPath,
+      });
+      expect(resolved).toEqual({
+        packKey: "report",
+        source: "file_default",
+        warnings: [],
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("invalid file default는 warning 후 project default로 fallback 한다", () => {
+    const db = setupDb();
+    const projectPath = createTempDir("claw-pack-file-invalid-");
+    writeWorkflowConfig(projectPath, { defaultWorkflowPackKey: "invalid-pack" });
+    try {
+      db.prepare("INSERT INTO projects (id, default_pack_key) VALUES (?, ?)").run("project-1", "novel");
+      const resolved = resolveTaskWorkflowPackSelection({
+        db,
+        projectId: "project-1",
+        projectPath,
+      });
+      expect(resolved.packKey).toBe("novel");
+      expect(resolved.source).toBe("project_default");
+      expect(resolved.warnings).toEqual([
+        ".claw-workflow.json invalid defaultWorkflowPackKey, falling back to project default",
+      ]);
     } finally {
       db.close();
     }

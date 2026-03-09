@@ -1,5 +1,8 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { registerTaskCrudRoutes } from "./crud.ts";
 
 type RouteHandler = (req: any, res: any) => any;
@@ -26,6 +29,19 @@ function createFakeResponse(): FakeResponse {
   };
 }
 
+const tempDirs: string[] = [];
+
+function createTempDir(prefix: string): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
+}
+
+function writeWorkflowConfig(projectPath: string, raw: Record<string, unknown> | string): void {
+  const content = typeof raw === "string" ? raw : JSON.stringify(raw, null, 2);
+  fs.writeFileSync(path.join(projectPath, ".claw-workflow.json"), content, "utf8");
+}
+
 function createTaskCrudHarness(): { db: DatabaseSync; routes: Map<string, RouteHandler> } {
   const db = new DatabaseSync(":memory:");
   db.exec(`
@@ -36,10 +52,11 @@ function createTaskCrudHarness(): { db: DatabaseSync; routes: Map<string, RouteH
       department_id TEXT,
       assigned_agent_id TEXT,
       project_id TEXT,
-      status TEXT NOT NULL,
+        status TEXT NOT NULL,
       priority INTEGER NOT NULL,
       task_type TEXT NOT NULL,
       workflow_pack_key TEXT NOT NULL DEFAULT 'development',
+      workflow_pack_source TEXT,
       workflow_meta_json TEXT,
       output_format TEXT,
       project_path TEXT,
@@ -71,6 +88,7 @@ function createTaskCrudHarness(): { db: DatabaseSync; routes: Map<string, RouteH
       project_path TEXT,
       default_pack_key TEXT NOT NULL DEFAULT 'development',
       last_used_at INTEGER,
+      created_at INTEGER,
       updated_at INTEGER
     );
     CREATE TABLE subtasks (
@@ -137,6 +155,14 @@ function createTaskCrudHarness(): { db: DatabaseSync; routes: Map<string, RouteH
 
   return { db, routes };
 }
+
+afterEach(() => {
+  while (tempDirs.length > 0) {
+    const dir = tempDirs.pop();
+    if (!dir) continue;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 describe("task CRUD workflow pack filter", () => {
   it("GET /api/tasks는 workflow_pack_key 필터를 적용한다", () => {
@@ -266,8 +292,89 @@ describe("task CRUD workflow pack filter", () => {
       expect(res.statusCode).toBe(200);
       const payload = res.payload as { task: { workflow_pack_key: string; project_id: string; project_path: string } };
       expect(payload.task.workflow_pack_key).toBe("novel");
+      expect((payload.task as any).workflow_pack_source).toBe("project_default");
       expect(payload.task.project_id).toBe("project-novel");
       expect(payload.task.project_path).toBe("/tmp/novel-project");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("POST /api/tasks는 project_path의 file default pack을 우선 적용한다", () => {
+    const { db, routes } = createTaskCrudHarness();
+    const projectPath = createTempDir("claw-task-pack-project-");
+    writeWorkflowConfig(projectPath, { defaultWorkflowPackKey: "report" });
+    try {
+      const handler = routes.get("POST /api/tasks") as RouteHandler | undefined;
+      expect(handler).toBeTypeOf("function");
+
+      const res = createFakeResponse();
+      handler?.(
+        {
+          body: {
+            title: "File-default pack task",
+            project_path: projectPath,
+          },
+        },
+        res,
+      );
+
+      const payload = res.payload as { task: { workflow_pack_key: string; workflow_pack_source: string } };
+      expect(res.statusCode).toBe(200);
+      expect(payload.task.workflow_pack_key).toBe("report");
+      expect(payload.task.workflow_pack_source).toBe("file_default");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("PATCH /api/tasks/:id는 project_path 변경 시 file default pack과 source를 다시 저장한다", () => {
+    const { db, routes } = createTaskCrudHarness();
+    const projectPath = createTempDir("claw-task-pack-patch-");
+    writeWorkflowConfig(projectPath, { defaultWorkflowPackKey: "report" });
+    try {
+      db.prepare(
+        `
+          INSERT INTO tasks (
+            id, title, description, department_id, assigned_agent_id, project_id,
+            status, priority, task_type, workflow_pack_key, workflow_pack_source, workflow_meta_json, output_format,
+            project_path, base_branch, result, started_at, completed_at, source_task_id, hidden, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+      ).run(
+        "task-1",
+        "Task One",
+        null,
+        null,
+        null,
+        null,
+        "inbox",
+        1,
+        "general",
+        "development",
+        "fallback_default",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        0,
+        1,
+        1,
+      );
+
+      const handler = routes.get("PATCH /api/tasks/:id") as RouteHandler | undefined;
+      expect(handler).toBeTypeOf("function");
+      const res = createFakeResponse();
+      handler?.({ params: { id: "task-1" }, body: { project_path: projectPath } }, res);
+
+      expect(res.statusCode).toBe(200);
+      const payload = res.payload as { task: { workflow_pack_key: string; workflow_pack_source: string } };
+      expect(payload.task.workflow_pack_key).toBe("report");
+      expect(payload.task.workflow_pack_source).toBe("file_default");
     } finally {
       db.close();
     }

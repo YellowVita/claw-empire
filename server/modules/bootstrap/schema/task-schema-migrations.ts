@@ -112,6 +112,13 @@ export function applyTaskSchemaMigrations(db: DbLike): void {
     /* already exists */
   }
   try {
+    db.exec(
+      "ALTER TABLE tasks ADD COLUMN workflow_pack_source TEXT CHECK(workflow_pack_source IN ('explicit','file_default','project_default','fallback_default'))",
+    );
+  } catch {
+    /* already exists */
+  }
+  try {
     db.exec("ALTER TABLE tasks ADD COLUMN workflow_meta_json TEXT");
   } catch {
     /* already exists */
@@ -622,6 +629,8 @@ function migrateLegacyTasksStatusSchema(db: DbLike): void {
           task_type TEXT DEFAULT 'general'
             CHECK(task_type IN ('general','development','design','analysis','presentation','documentation')),
           workflow_pack_key TEXT NOT NULL DEFAULT 'development',
+          workflow_pack_source TEXT
+            CHECK(workflow_pack_source IN ('explicit','file_default','project_default','fallback_default')),
           orchestration_version INTEGER NOT NULL DEFAULT 1,
           orchestration_stage TEXT
             CHECK(orchestration_stage IN ('owner_prep','foreign_collab','owner_integrate','finalize','review')),
@@ -641,6 +650,7 @@ function migrateLegacyTasksStatusSchema(db: DbLike): void {
       const hasSourceTaskId = cols.some((c) => c.name === "source_task_id");
       const hasProjectId = cols.some((c) => c.name === "project_id");
       const hasWorkflowPackKey = cols.some((c) => c.name === "workflow_pack_key");
+      const hasWorkflowPackSource = cols.some((c) => c.name === "workflow_pack_source");
       const hasOrchestrationVersion = cols.some((c) => c.name === "orchestration_version");
       const hasOrchestrationStage = cols.some((c) => c.name === "orchestration_stage");
       const hasWorkflowMeta = cols.some((c) => c.name === "workflow_meta_json");
@@ -648,6 +658,7 @@ function migrateLegacyTasksStatusSchema(db: DbLike): void {
       const sourceTaskIdExpr = hasSourceTaskId ? "source_task_id" : "NULL AS source_task_id";
       const projectIdExpr = hasProjectId ? "project_id" : "NULL AS project_id";
       const workflowPackExpr = hasWorkflowPackKey ? "workflow_pack_key" : "'development' AS workflow_pack_key";
+      const workflowPackSourceExpr = hasWorkflowPackSource ? "workflow_pack_source" : "NULL AS workflow_pack_source";
       const orchestrationVersionExpr = hasOrchestrationVersion ? "orchestration_version" : "1 AS orchestration_version";
       const orchestrationStageExpr = hasOrchestrationStage ? "orchestration_stage" : "NULL AS orchestration_stage";
       const workflowMetaExpr = hasWorkflowMeta ? "workflow_meta_json" : "NULL AS workflow_meta_json";
@@ -655,7 +666,7 @@ function migrateLegacyTasksStatusSchema(db: DbLike): void {
       db.exec(`
         INSERT INTO ${newTable} (
           id, title, description, department_id, assigned_agent_id,
-          project_id, status, priority, task_type, workflow_pack_key, orchestration_version, orchestration_stage,
+          project_id, status, priority, task_type, workflow_pack_key, workflow_pack_source, orchestration_version, orchestration_stage,
           workflow_meta_json, output_format, project_path, result,
           started_at, completed_at, created_at, updated_at, source_task_id
         )
@@ -667,7 +678,7 @@ function migrateLegacyTasksStatusSchema(db: DbLike): void {
               THEN status
             ELSE 'inbox'
           END,
-          priority, task_type, ${workflowPackExpr}, ${orchestrationVersionExpr}, ${orchestrationStageExpr},
+          priority, task_type, ${workflowPackExpr}, ${workflowPackSourceExpr}, ${orchestrationVersionExpr}, ${orchestrationStageExpr},
           ${workflowMetaExpr}, ${outputFormatExpr}, project_path, result,
           started_at, completed_at, created_at, updated_at, ${sourceTaskIdExpr}
         FROM tasks;

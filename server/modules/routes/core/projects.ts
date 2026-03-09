@@ -6,6 +6,7 @@ import path from "node:path";
 import { getAssignedAgentIdsByProjectIds } from "../shared/project-assignments.ts";
 import { createProjectRouteHelpers } from "./projects/helpers.ts";
 import { DEFAULT_WORKFLOW_PACK_KEY, isWorkflowPackKey } from "../../workflow/packs/definitions.ts";
+import { readProjectWorkflowDefaultPackKey } from "../../workflow/packs/project-config.ts";
 
 type FirstQueryValue = (value: unknown) => string | undefined;
 type NormalizeTextField = (value: unknown) => string | null;
@@ -42,6 +43,41 @@ export function registerProjectRoutes({
     pickNativeDirectoryPath,
     validateProjectAgentIds,
   } = createProjectRouteHelpers({ db, normalizeTextField });
+
+  function detectProjectWorkflowPack(
+    projectPath: unknown,
+    projectDefaultPackKey: unknown,
+  ): {
+    detected_workflow_pack_key: string | null;
+    workflow_pack_source: "file_default" | "project_default" | null;
+  } {
+    const normalizedProjectPath = normalizeTextField(projectPath);
+    if (normalizedProjectPath) {
+      const fileDefault = readProjectWorkflowDefaultPackKey(normalizedProjectPath);
+      for (const warning of fileDefault.warnings) {
+        console.warn(`[workflow-pack/project-detail] ${warning}`);
+      }
+      if (fileDefault.packKey) {
+        return {
+          detected_workflow_pack_key: fileDefault.packKey,
+          workflow_pack_source: "file_default",
+        };
+      }
+    }
+
+    const projectDefault = normalizeTextField(projectDefaultPackKey);
+    if (projectDefault && isWorkflowPackKey(projectDefault)) {
+      return {
+        detected_workflow_pack_key: projectDefault,
+        workflow_pack_source: "project_default",
+      };
+    }
+
+    return {
+      detected_workflow_pack_key: null,
+      workflow_pack_source: null,
+    };
+  }
 
   app.get("/api/projects", (req, res) => {
     const page = Math.max(Number(firstQueryValue(req.query.page)) || 1, 1);
@@ -494,9 +530,13 @@ export function registerProjectRoutes({
       )
       .all(id);
     const assignedAgentIds = assignedAgents.map((agent: any) => agent.id);
+    const workflowPackDetection = detectProjectWorkflowPack(
+      (project as Record<string, unknown>).project_path,
+      (project as Record<string, unknown>).default_pack_key,
+    );
 
     res.json({
-      project: { ...project, assigned_agent_ids: assignedAgentIds },
+      project: { ...project, assigned_agent_ids: assignedAgentIds, ...workflowPackDetection },
       assigned_agents: assignedAgents,
       tasks,
       reports,

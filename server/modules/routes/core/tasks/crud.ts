@@ -6,7 +6,7 @@ import type { SQLInputValue } from "node:sqlite";
 import type { RuntimeContext } from "../../../../types/runtime-context.ts";
 import type { MeetingMinuteEntryRow, MeetingMinutesRow } from "../../shared/types.ts";
 import { isWorkflowPackKey } from "../../../workflow/packs/definitions.ts";
-import { resolveWorkflowPackKeyForTask } from "../../../workflow/packs/task-pack-resolver.ts";
+import { resolveTaskWorkflowPackSelection } from "../../../workflow/packs/task-pack-resolver.ts";
 import {
   buildTaskQualityPayload,
   seedTaskQualityItemsFromWorkflowMeta,
@@ -100,6 +100,12 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
     if (nextStatus === "inbox") return "task_status_inbox_reset";
     if (nextStatus === "done") return "task_status_done_override";
     return null;
+  }
+
+  function logWorkflowPackSelectionWarnings(warnings: string[], context: string): void {
+    for (const warning of warnings) {
+      console.warn(`[workflow-pack/${context}] ${warning}`);
+    }
   }
 
   function stopActiveTaskProcess(taskId: string): void {
@@ -292,36 +298,53 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
     const requestedProjectId = normalizeTextField((body as any).project_id);
     let resolvedProjectId: string | null = null;
     let resolvedProjectPath = normalizeProjectPathInput((body as any).project_path);
+    let resolvedProjectDefaultPackKey: string | null = null;
     if (requestedProjectId) {
-      const project = db.prepare("SELECT id, project_path FROM projects WHERE id = ?").get(requestedProjectId) as
+      const project = db
+        .prepare("SELECT id, project_path, default_pack_key FROM projects WHERE id = ?")
+        .get(requestedProjectId) as
         | {
             id: string;
             project_path: string;
+            default_pack_key: string | null;
           }
         | undefined;
       if (!project) return res.status(400).json({ error: "project_not_found" });
       resolvedProjectId = project.id;
       if (!resolvedProjectPath) resolvedProjectPath = normalizeTextField(project.project_path);
+      resolvedProjectDefaultPackKey = normalizeTextField(project.default_pack_key);
     } else if (resolvedProjectPath) {
       const projectByPath = db
         .prepare(
-          "SELECT id, project_path FROM projects WHERE project_path = ? ORDER BY COALESCE(updated_at, created_at) DESC LIMIT 1",
+          "SELECT id, project_path, default_pack_key FROM projects WHERE project_path = ? ORDER BY COALESCE(updated_at, created_at) DESC LIMIT 1",
         )
-        .get(resolvedProjectPath) as { id: string; project_path: string } | undefined;
+        .get(resolvedProjectPath) as
+        | { id: string; project_path: string; default_pack_key: string | null }
+        | undefined;
       if (projectByPath) {
         resolvedProjectId = projectByPath.id;
         resolvedProjectPath = normalizeTextField(projectByPath.project_path) ?? resolvedProjectPath;
+        resolvedProjectDefaultPackKey = normalizeTextField(projectByPath.default_pack_key);
       }
     }
+
+    const workflowPackSelection = resolveTaskWorkflowPackSelection({
+      db: db as any,
+      explicitPackKey: (body as any).workflow_pack_key,
+      projectId: resolvedProjectId,
+      projectPath: resolvedProjectPath,
+      fallbackPackKey: isWorkflowPackKey(resolvedProjectDefaultPackKey) ? resolvedProjectDefaultPackKey : undefined,
+    });
+    logWorkflowPackSelectionWarnings(workflowPackSelection.warnings, "task-create");
 
     db.prepare(
       `
     INSERT INTO tasks (
       id, title, description, department_id, assigned_agent_id, project_id,
-      status, priority, task_type, workflow_pack_key, workflow_meta_json, output_format,
+      status, priority, task_type, workflow_pack_key, workflow_pack_source, workflow_meta_json, output_format,
       project_path, base_branch, created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
     ).run(
       id,
@@ -333,11 +356,8 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
       (body as any).status ?? "inbox",
       (body as any).priority ?? 0,
       (body as any).task_type ?? "general",
-      resolveWorkflowPackKeyForTask({
-        db: db as any,
-        explicitPackKey: (body as any).workflow_pack_key,
-        projectId: resolvedProjectId,
-      }),
+      workflowPackSelection.packKey,
+      workflowPackSelection.source,
       typeof (body as any).workflow_meta_json === "string"
         ? (body as any).workflow_meta_json
         : (body as any).workflow_meta_json
@@ -542,17 +562,21 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
     const existing = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as
       | {
           status: string;
+          project_id: string | null;
+          project_path: string | null;
+          workflow_pack_key: string | null;
+          workflow_pack_source: string | null;
         }
       | undefined;
     if (!existing) return res.status(404).json({ error: "not_found" });
 
     const body = { ...(req.body ?? {}) } as Record<string, unknown>;
+    const explicitWorkflowPackKey = "workflow_pack_key" in body ? normalizeTextField(body.workflow_pack_key) : null;
     if ("workflow_pack_key" in body) {
-      const workflowPackKey = normalizeTextField(body.workflow_pack_key);
-      if (!workflowPackKey || !isWorkflowPackKey(workflowPackKey)) {
+      if (!explicitWorkflowPackKey || !isWorkflowPackKey(explicitWorkflowPackKey)) {
         return res.status(400).json({ error: "invalid_workflow_pack_key" });
       }
-      body.workflow_pack_key = workflowPackKey;
+      body.workflow_pack_key = explicitWorkflowPackKey;
     }
     if ("workflow_meta_json" in body) {
       const rawWorkflowMeta = body.workflow_meta_json;
@@ -605,8 +629,13 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
     const updateTs = nowMs();
     const params: unknown[] = [updateTs];
     let touchedProjectId: string | null = null;
+    let nextProjectId = existing.project_id ?? null;
+    let nextProjectPath = normalizeProjectPathInput(existing.project_path) ?? normalizeTextField(existing.project_path);
+    const shouldResolveWorkflowPack =
+      "workflow_pack_key" in body || "project_id" in body || "project_path" in body;
 
     for (const field of allowedFields) {
+      if (field === "workflow_pack_key" && shouldResolveWorkflowPack) continue;
       if (field in body) {
         updates.push(`${field} = ?`);
         params.push(body[field]);
@@ -618,8 +647,11 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
       if (!requestedProjectId) {
         updates.push("project_id = ?");
         params.push(null);
+        nextProjectId = null;
       } else {
-        const project = db.prepare("SELECT id, project_path FROM projects WHERE id = ?").get(requestedProjectId) as
+        const project = db
+          .prepare("SELECT id, project_path FROM projects WHERE id = ?")
+          .get(requestedProjectId) as
           | {
               id: string;
               project_path: string;
@@ -629,11 +661,36 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
         updates.push("project_id = ?");
         params.push(project.id);
         touchedProjectId = project.id;
+        nextProjectId = project.id;
         if (!("project_path" in (body as any))) {
           updates.push("project_path = ?");
           params.push(project.project_path);
+          nextProjectPath = normalizeTextField(project.project_path);
         }
       }
+    }
+    if ("project_path" in (body as any)) {
+      nextProjectPath = normalizeProjectPathInput((body as any).project_path);
+    }
+
+    if (shouldResolveWorkflowPack) {
+      const selection =
+        explicitWorkflowPackKey && isWorkflowPackKey(explicitWorkflowPackKey)
+          ? {
+              packKey: explicitWorkflowPackKey,
+              source: "explicit" as const,
+              warnings: [] as string[],
+            }
+          : resolveTaskWorkflowPackSelection({
+              db: db as any,
+              projectId: nextProjectId,
+              projectPath: nextProjectPath,
+            });
+      logWorkflowPackSelectionWarnings(selection.warnings, "task-patch");
+      updates.push("workflow_pack_key = ?");
+      params.push(selection.packKey);
+      updates.push("workflow_pack_source = ?");
+      params.push(selection.source);
     }
 
     if ((body as any).status === "done" && !("completed_at" in (body as any))) {
