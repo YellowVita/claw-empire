@@ -32,6 +32,7 @@ export function registerProjectRoutes({
 }: RegisterProjectRoutesOptions): void {
   const {
     PROJECT_PATH_ALLOWED_ROOTS,
+    isRelativeProjectPathInput,
     normalizeProjectPathInput,
     pathInsideRoot,
     isPathInsideAllowedRoots,
@@ -177,7 +178,10 @@ export function registerProjectRoutes({
   app.get("/api/projects/path-check", (req, res) => {
     const raw = firstQueryValue(req.query.path);
     const normalized = normalizeProjectPathInput(raw);
-    if (!normalized) return res.status(400).json({ error: "project_path_required" });
+    if (!normalized) {
+      const error = isRelativeProjectPathInput(raw) ? "relative_project_path_not_allowed" : "project_path_required";
+      return res.status(400).json({ error });
+    }
     if (!isPathInsideAllowedRoots(normalized)) {
       return res.status(403).json({
         error: "project_path_outside_allowed_roots",
@@ -211,7 +215,12 @@ export function registerProjectRoutes({
       if (!picked.path) return res.status(400).json({ error: "native_picker_unavailable" });
 
       const normalized = normalizeProjectPathInput(picked.path);
-      if (!normalized) return res.status(400).json({ error: "project_path_required" });
+      if (!normalized) {
+        const error = isRelativeProjectPathInput(picked.path)
+          ? "relative_project_path_not_allowed"
+          : "project_path_required";
+        return res.status(400).json({ error });
+      }
       if (!isPathInsideAllowedRoots(normalized)) {
         return res.status(403).json({
           error: "project_path_outside_allowed_roots",
@@ -281,7 +290,12 @@ export function registerProjectRoutes({
     const coreGoal = normalizeTextField(body.core_goal);
     const createPathIfMissing = body.create_path_if_missing !== false;
     if (!name) return res.status(400).json({ error: "name_required" });
-    if (!projectPath) return res.status(400).json({ error: "project_path_required" });
+    if (!projectPath) {
+      const error = isRelativeProjectPathInput(body.project_path)
+        ? "relative_project_path_not_allowed"
+        : "project_path_required";
+      return res.status(400).json({ error });
+    }
     if (!coreGoal) return res.status(400).json({ error: "core_goal_required" });
     if (!isPathInsideAllowedRoots(projectPath)) {
       return res.status(403).json({
@@ -378,7 +392,12 @@ export function registerProjectRoutes({
     }
     if ("project_path" in body) {
       const value = normalizeProjectPathInput(body.project_path);
-      if (!value) return res.status(400).json({ error: "project_path_required" });
+      if (!value) {
+        const error = isRelativeProjectPathInput(body.project_path)
+          ? "relative_project_path_not_allowed"
+          : "project_path_required";
+        return res.status(400).json({ error });
+      }
       if (!isPathInsideAllowedRoots(value)) {
         return res.status(403).json({
           error: "project_path_outside_allowed_roots",

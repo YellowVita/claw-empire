@@ -12,6 +12,17 @@ interface CreateProjectRouteHelpersOptions {
 }
 
 export function createProjectRouteHelpers({ db, normalizeTextField }: CreateProjectRouteHelpersOptions) {
+  function isRelativeProjectPathInput(raw: unknown): boolean {
+    const value = normalizeTextField(raw);
+    if (!value) return false;
+
+    let candidate = value;
+    if (candidate === "~" || candidate.startsWith("~/")) return false;
+    if (candidate === "/Projects" || candidate.startsWith("/Projects/")) return false;
+    if (candidate === "/projects" || candidate.startsWith("/projects/")) return false;
+    return !path.isAbsolute(candidate);
+  }
+
   function normalizeProjectPathInput(raw: unknown): string | null {
     const value = normalizeTextField(raw);
     if (!value) return null;
@@ -29,8 +40,8 @@ export function createProjectRouteHelpers({ db, normalizeTextField }: CreateProj
       candidate = suffix ? path.join(os.homedir(), "projects", suffix) : path.join(os.homedir(), "projects");
     }
 
-    const absolute = path.isAbsolute(candidate) ? candidate : path.resolve(process.cwd(), candidate);
-    return path.normalize(absolute);
+    if (!path.isAbsolute(candidate)) return null;
+    return path.normalize(candidate);
   }
 
   const PROJECT_PATH_SCOPE_CASE_INSENSITIVE = process.platform === "win32" || process.platform === "darwin";
@@ -96,14 +107,14 @@ export function createProjectRouteHelpers({ db, normalizeTextField }: CreateProj
     }
 
     const homeDir = os.homedir();
-    for (const candidate of [path.join(homeDir, "Projects"), path.join(homeDir, "projects"), homeDir, process.cwd()]) {
+    for (const candidate of [path.join(homeDir, "Projects"), path.join(homeDir, "projects"), homeDir]) {
       try {
         if (fs.statSync(candidate).isDirectory()) return candidate;
       } catch {
         // continue
       }
     }
-    return process.cwd();
+    return homeDir;
   }
 
   function findConflictingProjectByPath(
@@ -294,12 +305,12 @@ export function createProjectRouteHelpers({ db, normalizeTextField }: CreateProj
     if (preferred) {
       if (!isPathInsideAllowedRoots(preferred)) {
         const fallback = pickDefaultBrowseRoot();
-        return fallback || process.cwd();
+        return fallback || os.homedir();
       }
       const nearest = findNearestExistingDirectory(preferred);
       if (nearest) return nearest;
     }
-    return pickDefaultBrowseRoot() || process.cwd();
+    return pickDefaultBrowseRoot() || os.homedir();
   }
 
   function execFileText(
@@ -567,6 +578,7 @@ export function createProjectRouteHelpers({ db, normalizeTextField }: CreateProj
 
   return {
     PROJECT_PATH_ALLOWED_ROOTS,
+    isRelativeProjectPathInput,
     normalizeProjectPathInput,
     pathInsideRoot,
     isPathInsideAllowedRoots,

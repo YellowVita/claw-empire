@@ -347,7 +347,23 @@ export function createReviewFinalizeTools(deps: CreateReviewFinalizeToolsDeps) {
       const wtInfo = taskWorktrees.get(taskId) as
         | { worktreePath?: string; projectPath?: string; branchName?: string }
         | undefined;
-      const outputRoot = currentTask.project_path || wtInfo?.projectPath || process.cwd();
+      const outputRoot = currentTask.project_path || wtInfo?.projectPath || null;
+      if (!outputRoot && !wtInfo?.worktreePath) {
+        appendTaskLog(taskId, "system", "Review hold: missing project path for video artifact verification");
+        notifyCeo(
+          pickL(
+            l(
+              [`'${taskTitle}' 는 프로젝트 경로가 없어 영상 산출물 검증 및 승인/머지를 진행할 수 없습니다.`],
+              [`'${taskTitle}' cannot proceed with video artifact verification or approval because the project path is missing.`],
+              [`'${taskTitle}' はプロジェクトパス不足のため、動画成果物検証と承認/マージを続行できません。`],
+              [`'${taskTitle}' 因缺少项目路径，无法继续视频产物验证与审批/合并。`],
+            ),
+            lang,
+          ),
+          taskId,
+        );
+        return;
+      }
       const videoArtifactSpec = resolveVideoArtifactSpecForTask(db as any, {
         project_id: currentTask.project_id,
         project_path: currentTask.project_path,
@@ -508,8 +524,24 @@ export function createReviewFinalizeTools(deps: CreateReviewFinalizeToolsDeps) {
         // best effort
       }
 
+      if (!logsDir) {
+        appendTaskLog(taskId, "system", "Review hold: remotion verification blocked because logsDir is unavailable");
+        notifyCeo(
+          pickL(
+            l(
+              [`'${taskTitle}' 는 렌더 로그 경로가 없어 Remotion 증빙을 확인할 수 없어 승인/머지를 보류했습니다.`],
+              [`'${taskTitle}' approval/merge is on hold because Remotion evidence cannot be verified without a log path.`],
+              [`'${taskTitle}' はログパス不足のため Remotion 証跡を確認できず、承認/マージを保留しました。`],
+              [`'${taskTitle}' 因缺少日志路径而无法验证 Remotion 证据，审批/合并已暂停。`],
+            ),
+            lang,
+          ),
+          taskId,
+        );
+        return;
+      }
       const remotionGate = evaluateRemotionOnlyGateFromLogFiles({
-        logsDir: String(logsDir ?? process.cwd()),
+        logsDir: String(logsDir),
         taskIds: [...remotionEvidenceTaskIds],
       });
       if (!remotionGate.passed) {

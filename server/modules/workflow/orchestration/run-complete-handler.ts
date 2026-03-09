@@ -232,8 +232,10 @@ export function createRunCompleteHandler(deps: CreateRunCompleteHandlerDeps) {
       });
       const candidateRelativePaths = resolveVideoArtifactRelativeCandidates(videoArtifactSpec);
       const wtInfo = taskWorktrees.get(taskId) as { worktreePath?: string; projectPath?: string } | undefined;
-      const outputRoot = task.project_path || wtInfo?.projectPath || process.cwd();
-      const projectCandidates = candidateRelativePaths.map((relative) => path.join(outputRoot, relative));
+      const outputRoot = task.project_path || wtInfo?.projectPath || null;
+      const projectCandidates = outputRoot
+        ? candidateRelativePaths.map((relative) => path.join(outputRoot, relative))
+        : [];
 
       let videoArtifactReady = false;
       if (wtInfo?.worktreePath) {
@@ -260,24 +262,29 @@ export function createRunCompleteHandler(deps: CreateRunCompleteHandlerDeps) {
         }
 
         if (sourceVideo) {
-          try {
-            const destVideo = path.join(outputRoot, videoArtifactSpec.relativePath);
-            fs.mkdirSync(path.dirname(destVideo), { recursive: true });
-            fs.copyFileSync(sourceVideo, destVideo);
-            const size = fs.statSync(destVideo).size;
-            if (size > 0) {
-              videoArtifactReady = true;
-              appendTaskLog(
-                taskId,
-                "system",
-                `Video artifact synchronized: ${destVideo} (${size} bytes, source=${sourceVideo})`,
-              );
-            } else {
-              appendTaskLog(taskId, "system", `Video artifact sync failed: rendered file is empty (${destVideo})`);
+          if (!outputRoot) {
+            videoArtifactReady = true;
+            appendTaskLog(taskId, "system", `Video artifact sync skipped: missing project path (source=${sourceVideo})`);
+          } else {
+            try {
+              const destVideo = path.join(outputRoot, videoArtifactSpec.relativePath);
+              fs.mkdirSync(path.dirname(destVideo), { recursive: true });
+              fs.copyFileSync(sourceVideo, destVideo);
+              const size = fs.statSync(destVideo).size;
+              if (size > 0) {
+                videoArtifactReady = true;
+                appendTaskLog(
+                  taskId,
+                  "system",
+                  `Video artifact synchronized: ${destVideo} (${size} bytes, source=${sourceVideo})`,
+                );
+              } else {
+                appendTaskLog(taskId, "system", `Video artifact sync failed: rendered file is empty (${destVideo})`);
+              }
+            } catch (err: unknown) {
+              const msg = err instanceof Error ? err.message : String(err);
+              appendTaskLog(taskId, "system", `Video artifact sync failed: ${msg}`);
             }
-          } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : String(err);
-            appendTaskLog(taskId, "system", `Video artifact sync failed: ${msg}`);
           }
         } else {
           appendTaskLog(
@@ -310,7 +317,7 @@ export function createRunCompleteHandler(deps: CreateRunCompleteHandlerDeps) {
       }
 
       // Final fallback: discover any .mp4 in project root's video_output/ or out/ dirs
-      if (!videoArtifactReady) {
+      if (!videoArtifactReady && outputRoot) {
         const discovered = discoverVideoArtifact(outputRoot);
         if (discovered) {
           videoArtifactReady = true;
@@ -476,18 +483,21 @@ export function createRunCompleteHandler(deps: CreateRunCompleteHandlerDeps) {
         agentRow = undefined;
       }
       const hookStage = finalExitCode === 0 ? "after_run_success" : "after_run_failure";
-      if (wtInfo?.worktreePath) {
+      const hookProjectPath = task.project_path || wtInfo?.projectPath || null;
+      if (wtInfo?.worktreePath && hookProjectPath) {
         await runTaskExecutionHooks({
           db: db as any,
           stage: hookStage,
           taskId,
           taskTitle: task.title,
-          projectPath: task.project_path || wtInfo.projectPath || process.cwd(),
+          projectPath: hookProjectPath,
           worktreePath: wtInfo.worktreePath,
           agentId: task.assigned_agent_id,
           provider: agentRow?.cli_provider || "claude",
           appendTaskLog,
         });
+      } else if (wtInfo?.worktreePath) {
+        appendTaskLog(taskId, "system", `Task execution hooks skipped: missing project path for ${hookStage}`);
       }
     }
 

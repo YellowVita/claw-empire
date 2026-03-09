@@ -152,14 +152,13 @@ export function initializeCollabCoordination(ctx: RuntimeContext): any {
    * 1) task.project_id -> projects.project_path
    * 2) task.project_path
    * 3) detect from description/title
-   * 4) process.cwd()
    */
   function resolveProjectPath(task: {
     project_id?: string | null;
     project_path?: string | null;
     description?: string | null;
     title?: string;
-  }): string {
+  }): string | null {
     const projectId = String(task.project_id ?? "").trim();
     if (projectId) {
       const row = db
@@ -186,7 +185,7 @@ export function initializeCollabCoordination(ctx: RuntimeContext): any {
     }
 
     const detected = detectProjectPath(task.description || "") || detectProjectPath(task.title || "");
-    return detected || process.cwd();
+    return detected || null;
   }
 
   function getLatestKnownProjectPath(): string | null {
@@ -213,7 +212,7 @@ export function initializeCollabCoordination(ctx: RuntimeContext): any {
 
   function getDefaultProjectRoot(): string {
     const homeDir = os.homedir();
-    const candidates = [path.join(homeDir, "Projects"), path.join(homeDir, "projects"), process.cwd()];
+    const candidates = [path.join(homeDir, "Projects"), path.join(homeDir, "projects"), homeDir];
     for (const candidate of candidates) {
       try {
         if (fs.statSync(candidate).isDirectory()) return candidate;
@@ -221,7 +220,7 @@ export function initializeCollabCoordination(ctx: RuntimeContext): any {
         // Ignore inaccessible or non-existent directories.
       }
     }
-    return process.cwd();
+    return homeDir;
   }
 
   function resolveDirectiveProjectPath(

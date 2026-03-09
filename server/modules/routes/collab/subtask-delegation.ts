@@ -60,7 +60,7 @@ interface SubtaskDelegationDeps {
     project_path?: string | null;
     description?: string | null;
     title?: string | null;
-  }) => string;
+  }) => string | null;
   createWorktree: (projectPath: string, taskId: string, agentName: string, baseBranch?: string) => string | null;
   logsDir: string;
   ensureTaskExecutionSession: (
@@ -299,6 +299,10 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
       description: parentTask.description,
       title: parentTask.title,
     });
+    if (!projectPath) {
+      appendTaskLog(taskId, "system", "Owner integration resume blocked: missing project path");
+      return;
+    }
     const ownerIntegrationBlock = [
       buildOwnerIntegrationInstruction(parentTask.title),
       buildSiblingWorktreeReferenceBlock(taskId, projectPath),

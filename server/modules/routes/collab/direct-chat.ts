@@ -1,6 +1,12 @@
 export type { AgentRow } from "./direct-chat-types.ts";
 
 export {
+  classifyDirectChatIntent,
+  requiresProjectContextForDirectChat,
+  type DirectChatIntentClass,
+} from "./direct-chat-execution-policy.ts";
+
+export {
   detectProjectKindChoice,
   isAffirmativeReply,
   isAgentEscalationPrompt,

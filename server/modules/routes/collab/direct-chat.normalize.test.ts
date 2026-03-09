@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  classifyDirectChatIntent,
   detectProjectKindChoice,
   isAffirmativeReply,
   isNoPathReply,
@@ -142,6 +143,18 @@ describe("task intent upgrade", () => {
     expect(isProjectProgressInquiry("プロジェクト進捗どこまで？")).toBe(true);
     expect(isProjectProgressInquiry("当前项目任务进度怎么样？")).toBe(true);
     expect(isProjectProgressInquiry("프로젝트 디자인 검토 보고서 작성해줘")).toBe(false);
+  });
+
+  it("직접 대화 분류는 일반 질문과 에이전트 소개를 허용한다", () => {
+    expect(classifyDirectChatIntent("이거 어떻게 돌아가는 구조야?")).toBe("general_qna");
+    expect(classifyDirectChatIntent("How does this work?")).toBe("general_qna");
+    expect(classifyDirectChatIntent("너는 무슨 역할이야?")).toBe("agent_meta");
+  });
+
+  it("직접 대화 분류는 명시 스코프가 붙은 구조/분석 질문만 project_action으로 승격한다", () => {
+    expect(classifyDirectChatIntent("이 저장소 구조 어떻게 돼?")).toBe("project_action");
+    expect(classifyDirectChatIntent("현재 프로젝트 구조 어떻게 돌아가?")).toBe("project_action");
+    expect(classifyDirectChatIntent("이 코드 검토해줘")).toBe("project_action");
   });
 
   it("구조화된 선택지/목록 안내는 원문 보존 대상으로 인식한다", () => {

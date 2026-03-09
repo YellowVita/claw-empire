@@ -51,7 +51,7 @@ function normalizeProjectPathForPolicy(value: string): string {
 
 function parseAllowedProjectRootsFromEnv(): string[] {
   const raw = (process.env.PROJECT_PATH_ALLOWED_ROOTS || "").trim();
-  const defaults = [path.join(os.homedir(), "Projects"), path.join(os.homedir(), "projects"), process.cwd()];
+  const defaults = [path.join(os.homedir(), "Projects"), path.join(os.homedir(), "projects")];
   const candidates = raw
     ? raw
         .split(/[\n,;]+/)

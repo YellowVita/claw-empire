@@ -431,4 +431,66 @@ describe("run complete handler - video preprod review transition", () => {
       db.close();
     }
   });
+
+  it("[VIDEO_FINAL_RENDER]는 project path가 없어도 repo cwd 대신 sync/hooks를 건너뛴다", async () => {
+    const db = createDb();
+    const logsDir = fs.mkdtempSync(path.join(os.tmpdir(), "climpire-run-complete-no-project-"));
+    const worktreeDir = fs.mkdtempSync(path.join(os.tmpdir(), "climpire-wt-no-project-"));
+    try {
+      const taskId = "task-final-render-no-project-path";
+      db.prepare(
+        `
+          INSERT INTO tasks (
+            id, title, description, status, workflow_pack_key, source_task_id, assigned_agent_id, department_id, project_id, project_path, updated_at
+          )
+          VALUES (?, ?, ?, 'in_progress', 'video_preprod', 'parent-task', ?, 'dev', 'project-1', NULL, 1)
+        `,
+      ).run(taskId, "[VIDEO_FINAL_RENDER] 최종 영상 렌더링", "최종 렌더링", "video-preprod-seed-2");
+      db.prepare(
+        `
+          INSERT INTO agents (id, name, name_ko, status, current_task_id, department_id, stats_tasks_done, stats_xp)
+          VALUES ('video-preprod-seed-2', 'Liam', '리암', 'working', ?, 'dev', 0, 0)
+        `,
+      ).run(taskId);
+      fs.writeFileSync(
+        path.join(logsDir, `${taskId}.log`),
+        "pnpm exec remotion render src/index.ts Intro video_output/final.mp4 --log=verbose",
+        "utf8",
+      );
+      fs.mkdirSync(path.join(worktreeDir, "video_output"), { recursive: true });
+      fs.writeFileSync(path.join(worktreeDir, "video_output", "final.mp4"), "rendered-video", "utf8");
+
+      const deps = createDeps(db, logsDir);
+      deps.taskWorktrees.set(taskId, { worktreePath: worktreeDir, branchName: "climpire/test" });
+      deps.activeProcesses.set(taskId, { pid: 106 });
+      const { handleTaskRunComplete } = createRunCompleteHandler(deps);
+
+      await handleTaskRunComplete(taskId, 0);
+
+      const updated = db.prepare("SELECT status FROM tasks WHERE id = ?").get(taskId) as { status: string };
+      expect(updated.status).toBe("review");
+      expect(
+        deps.appendTaskLog.mock.calls.some((call: any[]) =>
+          String(call[2] ?? "").includes("Video artifact sync skipped: missing project path"),
+        ),
+      ).toBe(true);
+      expect(
+        deps.appendTaskLog.mock.calls.some((call: any[]) =>
+          String(call[2] ?? "").includes("Task execution hooks skipped: missing project path"),
+        ),
+      ).toBe(true);
+    } finally {
+      try {
+        fs.rmSync(logsDir, { recursive: true, force: true });
+      } catch {
+        // best effort cleanup
+      }
+      try {
+        fs.rmSync(worktreeDir, { recursive: true, force: true });
+      } catch {
+        // best effort cleanup
+      }
+      db.close();
+    }
+  });
 });

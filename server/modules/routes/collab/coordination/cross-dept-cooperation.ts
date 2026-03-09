@@ -514,7 +514,24 @@ export function createCrossDeptCooperationTools(deps: CrossDeptCooperationDeps) 
             }
           | undefined;
         if (crossTaskData) {
+          const taskLang = resolveLang(crossTaskData.description ?? crossTaskData.title);
           const projPath = resolveProjectPath(crossTaskData);
+          if (!projPath) {
+            appendTaskLog(crossTaskId, "system", "Cross-dept execution blocked: missing project path");
+            notifyCeo(
+              pickL(
+                l(
+                  [`'${crossTaskData.title}' 협업 실행이 프로젝트 경로 누락으로 보류되었습니다.`],
+                  [`Collaboration run for '${crossTaskData.title}' is on hold because the project path is missing.`],
+                  [`'${crossTaskData.title}' の協業実行はプロジェクトパス不足のため保留されました。`],
+                  [`'${crossTaskData.title}' 的协作执行因缺少项目路径而暂停。`],
+                ),
+                taskLang,
+              ),
+              crossTaskId,
+            );
+            return;
+          }
           const logFilePath = path.join(logsDir, `${crossTaskId}.log`);
           const roleLabels: Record<string, string> = {
             team_leader: "Team Leader",
@@ -533,7 +550,6 @@ export function createCrossDeptCooperationTools(deps: CrossDeptCooperationDeps) 
             workflowMetaJson: crossTaskData.workflow_meta_json,
           });
           const crossConversationCtx = getRecentConversationContext(execAgent.id);
-          const taskLang = resolveLang(crossTaskData.description ?? crossTaskData.title);
           const availableSkillsPromptBlock = buildAvailableSkillsPromptBlock(execProvider);
           const spawnPrompt = buildTaskExecutionPrompt(
             [

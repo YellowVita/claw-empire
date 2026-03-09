@@ -204,6 +204,43 @@ afterEach(() => {
 });
 
 describe("project workflow pack detection", () => {
+  it("GET /api/projects/path-check rejects relative project paths", () => {
+    const { db, routes } = createHarness();
+    try {
+      const handler = routes.get("GET /api/projects/path-check");
+      const res = createFakeResponse();
+      handler?.({ query: { path: "relative/project" } }, res);
+
+      expect(res.statusCode).toBe(400);
+      expect(res.payload).toEqual({ error: "relative_project_path_not_allowed" });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("POST /api/projects rejects relative project paths", () => {
+    const { db, routes } = createHarness();
+    try {
+      const handler = routes.get("POST /api/projects");
+      const res = createFakeResponse();
+      handler?.(
+        {
+          body: {
+            name: "Relative Path Project",
+            project_path: "relative/project",
+            core_goal: "Goal",
+          },
+        },
+        res,
+      );
+
+      expect(res.statusCode).toBe(400);
+      expect(res.payload).toEqual({ error: "relative_project_path_not_allowed" });
+    } finally {
+      db.close();
+    }
+  });
+
   it("GET /api/projects/:id는 file default pack을 best-effort로 반환한다", () => {
     const { db, routes } = createHarness();
     const projectPath = createTempDir("claw-project-pack-detail-");

@@ -58,7 +58,7 @@ interface BatchDeps {
     project_path?: string | null;
     description?: string | null;
     title?: string | null;
-  }) => string;
+  }) => string | null;
   createWorktree: (projectPath: string, taskId: string, agentName: string, baseBranch?: string) => string | null;
   logsDir: string;
   ensureTaskExecutionSession: (
@@ -486,6 +486,10 @@ export function createSubtaskDelegationBatch(deps: BatchDeps) {
             description: parentTask.description,
             title: parentTask.title,
           });
+          if (!projPath) {
+            failDelegatedLaunch(new Error("missing_project_path"), "missing_project_path");
+            return;
+          }
           const worktreePath = createWorktree(projPath, delegatedTaskId, execAgent.name);
           if (!worktreePath) {
             failDelegatedLaunch(
