@@ -278,6 +278,18 @@ export interface WorkflowPackConfig {
   updated_at?: number;
 }
 
+export interface WorkflowPackExportDocument {
+  version: 1;
+  exported_at: number;
+  packs: WorkflowPackConfig[];
+}
+
+export interface WorkflowPackImportResult {
+  ok: boolean;
+  imported: number;
+  packs: WorkflowPackKey[];
+}
+
 export interface WorkflowRoutePreviewResult {
   packKey: WorkflowPackKey;
   confidence: number;
@@ -288,6 +300,15 @@ export interface WorkflowRoutePreviewResult {
 
 export async function getWorkflowPacks(): Promise<{ packs: WorkflowPackConfig[]; source?: string }> {
   return request<{ packs: WorkflowPackConfig[]; source?: string }>("/api/workflow-packs");
+}
+
+export async function exportWorkflowPacks(key?: WorkflowPackKey): Promise<WorkflowPackExportDocument> {
+  const qs = key ? `?key=${encodeURIComponent(key)}` : "";
+  return request<WorkflowPackExportDocument>(`/api/workflow-packs/export${qs}`);
+}
+
+export async function importWorkflowPacks(document: WorkflowPackExportDocument): Promise<WorkflowPackImportResult> {
+  return post("/api/workflow-packs/import", document) as Promise<WorkflowPackImportResult>;
 }
 
 export async function updateWorkflowPack(

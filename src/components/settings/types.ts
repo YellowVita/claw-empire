@@ -1,5 +1,12 @@
 import type { Dispatch, SetStateAction } from "react";
-import type { ApiProvider, ApiProviderType, DeviceCodeStart, OAuthConnectProvider, OAuthStatus } from "../../api";
+import type {
+  ApiProvider,
+  ApiProviderType,
+  DeviceCodeStart,
+  OAuthConnectProvider,
+  OAuthStatus,
+  WorkflowPackConfig,
+} from "../../api";
 import type { UiLanguage } from "../../i18n";
 import type {
   Agent,
@@ -15,7 +22,7 @@ export type Locale = UiLanguage;
 export type TFunction = (messages: Record<Locale, string>) => string;
 
 export type LocalSettings = Omit<CompanySettings, "language"> & { language: Locale };
-export type SettingsTab = "general" | "cli" | "oauth" | "api" | "gateway";
+export type SettingsTab = "general" | "cli" | "oauth" | "api" | "workflow_packs" | "gateway";
 
 export type SetLocalSettings = Dispatch<SetStateAction<LocalSettings>>;
 
@@ -126,6 +133,20 @@ export interface ChannelSettingsTabProps {
   form: LocalSettings;
   setForm: SetLocalSettings;
   persistSettings: (next: LocalSettings) => void;
+}
+
+export interface WorkflowPacksTabProps {
+  t: TFunction;
+  packs: WorkflowPackConfig[];
+  loading: boolean;
+  importError: string | null;
+  importSuccess: string | null;
+  exportingKey: string | null;
+  importing: boolean;
+  onRefresh: () => Promise<void>;
+  onExportAll: () => Promise<void>;
+  onExportOne: (key: WorkflowPackConfig["key"]) => Promise<void>;
+  onImportFile: (file: File) => Promise<void>;
 }
 
 export type ChannelRuntimeSession = {

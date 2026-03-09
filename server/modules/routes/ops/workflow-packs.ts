@@ -7,6 +7,11 @@ import {
   isWorkflowPackKey,
   type WorkflowPackKey,
 } from "../../workflow/packs/definitions.ts";
+import {
+  buildWorkflowPackExportDocument,
+  importWorkflowPackDocument,
+  validateWorkflowPackImportDocument,
+} from "../../workflow/packs/document.ts";
 
 type WorkflowPackRow = {
   key: string;
@@ -156,6 +161,40 @@ export function registerWorkflowPackRoutes(
       updated_at: row.updated_at,
     }));
     return res.json({ packs });
+  });
+
+  app.get("/api/workflow-packs/export", (req, res) => {
+    const packKey = normalizeTextField(req.query.key);
+    if (packKey && !isWorkflowPackKey(packKey)) {
+      return res.status(400).json({ error: "invalid_pack_key" });
+    }
+
+    const document = buildWorkflowPackExportDocument(db as any, nowMs(), packKey ?? undefined);
+    if (packKey && document.packs.length <= 0) {
+      return res.status(404).json({ error: "pack_not_found" });
+    }
+    return res.json(document);
+  });
+
+  app.post("/api/workflow-packs/import", (req, res) => {
+    const validation = validateWorkflowPackImportDocument(req.body);
+    if (!validation.ok) {
+      return res.status(400).json({
+        error: validation.error,
+        field: validation.field ?? null,
+        key: validation.key ?? null,
+      });
+    }
+
+    try {
+      importWorkflowPackDocument(db as any, validation.packs, nowMs());
+    } catch (error) {
+      console.error("[workflow-packs/import]", error);
+      return res.status(500).json({ error: "workflow_pack_import_failed" });
+    }
+
+    const packs = validation.packs.map((pack) => pack.key);
+    return res.json({ ok: true, imported: packs.length, packs });
   });
 
   app.put("/api/workflow-packs/:key", (req, res) => {

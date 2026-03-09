@@ -10,6 +10,7 @@ import GatewaySettingsTab from "./settings/GatewaySettingsTab";
 import GeneralSettingsTab from "./settings/GeneralSettingsTab";
 import OAuthSettingsTab from "./settings/OAuthSettingsTab";
 import SettingsTabNav from "./settings/SettingsTabNav";
+import WorkflowPacksTab from "./settings/WorkflowPacksTab";
 import type { AccountDraftMap, AccountDraftPatch, LocalSettings, SettingsTab } from "./settings/types";
 import { useApiProvidersState } from "./settings/useApiProvidersState";
 
@@ -44,6 +45,12 @@ export default function SettingsPanel({
 
   const [models, setModels] = useState<Record<string, string[]> | null>(null);
   const [modelsLoading, setModelsLoading] = useState(false);
+  const [workflowPacks, setWorkflowPacks] = useState<api.WorkflowPackConfig[]>([]);
+  const [workflowPacksLoading, setWorkflowPacksLoading] = useState(false);
+  const [workflowPackImportError, setWorkflowPackImportError] = useState<string | null>(null);
+  const [workflowPackImportSuccess, setWorkflowPackImportSuccess] = useState<string | null>(null);
+  const [workflowPackExportingKey, setWorkflowPackExportingKey] = useState<string | null>(null);
+  const [workflowPackImporting, setWorkflowPackImporting] = useState(false);
 
   const [cliModels, setCliModels] = useState<Record<string, CliModelInfo[]> | null>(null);
   const [cliModelsLoading, setCliModelsLoading] = useState(false);
@@ -154,6 +161,22 @@ export default function SettingsPanel({
       .finally(() => setModelsLoading(false));
   }, [tab, oauthStatus, models]);
 
+  const loadWorkflowPacks = useCallback(async () => {
+    setWorkflowPacksLoading(true);
+    try {
+      const next = await api.getWorkflowPacks();
+      setWorkflowPacks(next.packs ?? []);
+    } finally {
+      setWorkflowPacksLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (tab === "workflow_packs" && workflowPacks.length <= 0 && !workflowPacksLoading) {
+      void loadWorkflowPacks().catch(console.error);
+    }
+  }, [tab, workflowPacks.length, workflowPacksLoading, loadWorkflowPacks]);
+
   useEffect(() => {
     if (oauthResult) {
       const timer = setTimeout(() => onOauthResultClear?.(), 8000);
@@ -175,6 +198,81 @@ export default function SettingsPanel({
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   }
+
+  const downloadWorkflowPackDocument = useCallback((filename: string, packDocument: api.WorkflowPackExportDocument) => {
+    const blob = new Blob([JSON.stringify(packDocument, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = window.document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }, []);
+
+  const handleExportAllWorkflowPacks = useCallback(async () => {
+    setWorkflowPackExportingKey("__all__");
+    setWorkflowPackImportError(null);
+    try {
+      const document = await api.exportWorkflowPacks();
+      downloadWorkflowPackDocument("workflow-packs.v1.json", document);
+    } catch (error) {
+      setWorkflowPackImportError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setWorkflowPackExportingKey(null);
+    }
+  }, [downloadWorkflowPackDocument]);
+
+  const handleExportOneWorkflowPack = useCallback(
+    async (key: api.WorkflowPackConfig["key"]) => {
+      setWorkflowPackExportingKey(key);
+      setWorkflowPackImportError(null);
+      try {
+        const document = await api.exportWorkflowPacks(key);
+        downloadWorkflowPackDocument(`workflow-pack.${key}.v1.json`, document);
+      } catch (error) {
+        setWorkflowPackImportError(error instanceof Error ? error.message : String(error));
+      } finally {
+        setWorkflowPackExportingKey(null);
+      }
+    },
+    [downloadWorkflowPackDocument],
+  );
+
+  const handleImportWorkflowPacks = useCallback(
+    async (file: File) => {
+      setWorkflowPackImportError(null);
+      setWorkflowPackImportSuccess(null);
+      setWorkflowPackImporting(true);
+      try {
+        const raw = await file.text();
+        const document = JSON.parse(raw) as api.WorkflowPackExportDocument;
+        const result = await api.importWorkflowPacks(document);
+        await loadWorkflowPacks();
+        setWorkflowPackImportSuccess(
+          t({
+            ko: `${result.imported}개 workflow pack을 가져왔습니다.`,
+            en: `Imported ${result.imported} workflow packs.`,
+            ja: `${result.imported} 件の Workflow Pack をインポートしました。`,
+            zh: `已导入 ${result.imported} 个 Workflow Pack。`,
+          }),
+        );
+      } catch (error) {
+        setWorkflowPackImportError(
+          error instanceof Error
+            ? error.message
+            : t({
+                ko: "Workflow pack import에 실패했습니다.",
+                en: "Workflow pack import failed.",
+                ja: "Workflow Pack のインポートに失敗しました。",
+                zh: "Workflow Pack 导入失败。",
+              }),
+        );
+      } finally {
+        setWorkflowPackImporting(false);
+      }
+    },
+    [loadWorkflowPacks, t],
+  );
 
   function handleConnect(provider: OAuthConnectProvider) {
     const redirectTo = window.location.origin + window.location.pathname;
@@ -451,6 +549,22 @@ export default function SettingsPanel({
       )}
 
       {tab === "api" && <ApiSettingsTab t={t} localeTag={localeTag} apiState={apiState} />}
+
+      {tab === "workflow_packs" && (
+        <WorkflowPacksTab
+          t={t}
+          packs={workflowPacks}
+          loading={workflowPacksLoading}
+          importError={workflowPackImportError}
+          importSuccess={workflowPackImportSuccess}
+          exportingKey={workflowPackExportingKey}
+          importing={workflowPackImporting}
+          onRefresh={loadWorkflowPacks}
+          onExportAll={handleExportAllWorkflowPacks}
+          onExportOne={handleExportOneWorkflowPack}
+          onImportFile={handleImportWorkflowPacks}
+        />
+      )}
 
       {tab === "gateway" && (
         <GatewaySettingsTab t={t} form={form} setForm={setForm} persistSettings={persistSettings} />

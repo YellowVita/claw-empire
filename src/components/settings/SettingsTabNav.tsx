@@ -11,6 +11,11 @@ const TAB_ITEMS: Array<{ key: SettingsTab; icon: string; label: (t: TFunction) =
   { key: "cli", icon: "🔧", label: (t) => t({ ko: "CLI 도구", en: "CLI Tools", ja: "CLI ツール", zh: "CLI 工具" }) },
   { key: "oauth", icon: "🔑", label: (t) => t({ ko: "OAuth 인증", en: "OAuth", ja: "OAuth 認証", zh: "OAuth 认证" }) },
   { key: "api", icon: "🔌", label: (t) => t({ ko: "API 연동", en: "API", ja: "API 連携", zh: "API 集成" }) },
+  {
+    key: "workflow_packs",
+    icon: "🗂️",
+    label: (t) => t({ ko: "Workflow Packs", en: "Workflow Packs", ja: "Workflow Packs", zh: "Workflow Packs" }),
+  },
   { key: "gateway", icon: "📡", label: (t) => t({ ko: "채널 메시지", en: "Channel", ja: "チャネル", zh: "频道" }) },
 ];
 
