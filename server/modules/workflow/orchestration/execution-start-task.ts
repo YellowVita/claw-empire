@@ -3,6 +3,7 @@ import type { RuntimeContext } from "../../../types/runtime-context.ts";
 import { getDepartmentPromptForPack } from "../packs/department-scope.ts";
 import { ensureVideoPreprodRemotionBestPracticesSkill } from "../core/video-skill-bootstrap.ts";
 import { buildWorkflowPackExecutionGuidance } from "../packs/execution-guidance.ts";
+import { buildRuntimeWorkflowPackPromptSections } from "../packs/runtime-effective-pack.ts";
 import { resolveVideoArtifactSpecForTask } from "../packs/video-artifact.ts";
 import {
   buildInterruptPromptBlock,
@@ -108,6 +109,7 @@ export function createExecutionStartTaskTools(deps: CreateExecutionStartTaskTool
           department_id: string | null;
           base_branch: string | null;
           workflow_pack_key: string | null;
+          workflow_meta_json: string | null;
         }
       | undefined;
     if (!taskData) return;
@@ -131,6 +133,12 @@ export function createExecutionStartTaskTools(deps: CreateExecutionStartTaskTool
         : null;
     const workflowPackGuidance = buildWorkflowPackExecutionGuidance(taskData.workflow_pack_key, taskLang, {
       videoArtifactRelativePath: videoArtifactSpec?.relativePath,
+    });
+    const workflowPackPromptSections = buildRuntimeWorkflowPackPromptSections({
+      db: db as any,
+      workflowPackKey: taskData.workflow_pack_key,
+      workflowMetaJson: taskData.workflow_meta_json,
+      workflowPackGuidance,
     });
     notifyTaskStatus(taskId, taskData.title, "in_progress", taskLang);
 
@@ -276,7 +284,7 @@ export function createExecutionStartTaskTools(deps: CreateExecutionStartTaskTool
         recentChanges ? `[Recent Changes]\n${recentChanges}` : "",
         `[Task] ${taskData.title}`,
         taskData.description ? `\n${taskData.description}` : "",
-        workflowPackGuidance ? `\n[Workflow Pack Execution Rules]\n${workflowPackGuidance}` : "",
+        ...workflowPackPromptSections,
         continuationCtx,
         conversationCtx,
         `\n---`,

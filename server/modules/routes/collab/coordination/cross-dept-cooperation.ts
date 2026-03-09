@@ -2,6 +2,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { Lang } from "../../../../types/lang.ts";
 import { getDepartmentPromptForPack } from "../../../workflow/packs/department-scope.ts";
+import { buildRuntimeWorkflowPackPromptBlock } from "../../../workflow/packs/runtime-effective-pack.ts";
 import { resolveWorkflowPackKeyForTask } from "../../../workflow/packs/task-pack-resolver.ts";
 import { resolveConstrainedAgentScopeForTask } from "../../core/tasks/execution-run-auto-assign.ts";
 import type { AgentRow } from "./types.ts";
@@ -509,6 +510,7 @@ export function createCrossDeptCooperationTools(deps: CrossDeptCooperationDeps) 
               description: string | null;
               project_path: string | null;
               workflow_pack_key: string | null;
+              workflow_meta_json: string | null;
             }
           | undefined;
         if (crossTaskData) {
@@ -525,6 +527,11 @@ export function createCrossDeptCooperationTools(deps: CrossDeptCooperationDeps) 
           const deptPromptRaw = getDepartmentPromptForPack(db as any, crossTaskData.workflow_pack_key, crossDeptId);
           const deptPrompt = typeof deptPromptRaw === "string" ? deptPromptRaw.trim() : "";
           const deptPromptBlock = deptPrompt ? `[Department Shared Prompt]\n${deptPrompt}` : "";
+          const workflowPackPromptBlock = buildRuntimeWorkflowPackPromptBlock({
+            db: db as any,
+            workflowPackKey: crossTaskData.workflow_pack_key,
+            workflowMetaJson: crossTaskData.workflow_meta_json,
+          });
           const crossConversationCtx = getRecentConversationContext(execAgent.id);
           const taskLang = resolveLang(crossTaskData.description ?? crossTaskData.title);
           const availableSkillsPromptBlock = buildAvailableSkillsPromptBlock(execProvider);
@@ -539,6 +546,7 @@ export function createCrossDeptCooperationTools(deps: CrossDeptCooperationDeps) 
               execAgent.personality ? `Personality: ${execAgent.personality}` : "",
               deptConstraint,
               deptPromptBlock,
+              workflowPackPromptBlock,
               pickL(
                 l(
                   ["위 작업을 충분히 완수하세요. 필요 시 위 대화 맥락을 참고하세요."],

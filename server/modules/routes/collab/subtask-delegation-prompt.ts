@@ -1,5 +1,6 @@
 import type { Lang } from "../../../types/lang.ts";
 import { getDepartmentPromptForPack } from "../../workflow/packs/department-scope.ts";
+import { buildRuntimeWorkflowPackPromptBlock } from "../../workflow/packs/runtime-effective-pack.ts";
 import type { AgentRow } from "./direct-chat.ts";
 import type { L10n } from "./language-policy.ts";
 import type { SubtaskRow } from "./subtask-summary.ts";
@@ -75,8 +76,10 @@ export function createSubtaskDelegationPromptBuilder(deps: PromptDeps) {
     };
 
     const parentDept = db
-      .prepare("SELECT department_id, workflow_pack_key FROM tasks WHERE id = ?")
-      .get(parentTask.id) as { department_id: string | null; workflow_pack_key: string | null } | undefined;
+      .prepare("SELECT department_id, workflow_pack_key, workflow_meta_json FROM tasks WHERE id = ?")
+      .get(parentTask.id) as
+      | { department_id: string | null; workflow_pack_key: string | null; workflow_meta_json: string | null }
+      | undefined;
 
     const subtaskLines = allSubtasks
       .map((st) => {
@@ -181,6 +184,11 @@ export function createSubtaskDelegationPromptBuilder(deps: PromptDeps) {
     );
     const deptPrompt = typeof deptPromptRaw === "string" ? deptPromptRaw.trim() : "";
     const deptPromptBlock = deptPrompt ? `[Department Shared Prompt]\n${deptPrompt}` : "";
+    const workflowPackPromptBlock = buildRuntimeWorkflowPackPromptBlock({
+      db: db as any,
+      workflowPackKey: parentDept?.workflow_pack_key ?? null,
+      workflowMetaJson: parentDept?.workflow_meta_json ?? null,
+    });
     const videoRuntimeRuleBlock =
       parentDept?.workflow_pack_key === "video_preprod"
         ? pickL(
@@ -286,6 +294,7 @@ export function createSubtaskDelegationPromptBuilder(deps: PromptDeps) {
         execAgent.personality ? `Personality: ${execAgent.personality}` : "",
         deptConstraint,
         deptPromptBlock,
+        workflowPackPromptBlock,
         videoRuntimeRuleBlock,
         ``,
         finalInstruction,

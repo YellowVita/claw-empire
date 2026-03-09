@@ -4,6 +4,7 @@ import type { RuntimeContext } from "../../../../types/runtime-context.ts";
 import type { AgentRow } from "../../shared/types.ts";
 import { resolveConstrainedAgentScopeForTask, selectAutoAssignableAgentForTask } from "./execution-run-auto-assign.ts";
 import { buildWorkflowPackExecutionGuidance } from "../../../workflow/packs/execution-guidance.ts";
+import { buildRuntimeWorkflowPackPromptSections } from "../../../workflow/packs/runtime-effective-pack.ts";
 import { resolveVideoArtifactSpecForTask } from "../../../workflow/packs/video-artifact.ts";
 import { ensureVideoPreprodRemotionBestPracticesSkill } from "../../../workflow/core/video-skill-bootstrap.ts";
 import {
@@ -95,6 +96,7 @@ export function registerTaskRunRoute(deps: TaskRunRouteDeps): void {
           department_id: string | null;
           project_id: string | null;
           workflow_pack_key: string | null;
+          workflow_meta_json: string | null;
           project_path: string | null;
           status: string;
         }
@@ -454,6 +456,12 @@ Whenever you complete a subtask, report it in this format:
     const workflowPackGuidance = buildWorkflowPackExecutionGuidance(task.workflow_pack_key, taskLang, {
       videoArtifactRelativePath: videoArtifactSpec?.relativePath,
     });
+    const workflowPackPromptSections = buildRuntimeWorkflowPackPromptSections({
+      db: db as any,
+      workflowPackKey: task.workflow_pack_key,
+      workflowMetaJson: task.workflow_meta_json,
+      workflowPackGuidance,
+    });
 
     const prompt = buildTaskExecutionPrompt(
       [
@@ -467,7 +475,7 @@ Whenever you complete a subtask, report it in this format:
         recentChanges ? `[Recent Changes]\n${recentChanges}` : "",
         `[Task] ${task.title}`,
         task.description ? `\n${task.description}` : "",
-        workflowPackGuidance ? `\n[Workflow Pack Execution Rules]\n${workflowPackGuidance}` : "",
+        ...workflowPackPromptSections,
         continuationCtx,
         conversationCtx,
         `\n---`,

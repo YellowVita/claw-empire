@@ -2,6 +2,7 @@ import path from "node:path";
 import { notifyTaskStatus } from "../../../../gateway/client.ts";
 import type { RuntimeContext } from "../../../../types/runtime-context.ts";
 import { buildWorkflowPackExecutionGuidance } from "../../../workflow/packs/execution-guidance.ts";
+import { buildRuntimeWorkflowPackPromptSections } from "../../../workflow/packs/runtime-effective-pack.ts";
 import { resolveVideoArtifactSpecForTask } from "../../../workflow/packs/video-artifact.ts";
 import { ensureVideoPreprodRemotionBestPracticesSkill } from "../../../workflow/core/video-skill-bootstrap.ts";
 
@@ -139,6 +140,7 @@ export function registerAgentSpawnRoute(ctx: RuntimeContext): void {
           title: string;
           description: string | null;
           workflow_pack_key: string | null;
+          workflow_meta_json: string | null;
           project_id: string | null;
           department_id: string | null;
           project_path: string | null;
@@ -197,6 +199,12 @@ export function registerAgentSpawnRoute(ctx: RuntimeContext): void {
     const workflowPackGuidance = buildWorkflowPackExecutionGuidance(task.workflow_pack_key, taskLang, {
       videoArtifactRelativePath: videoArtifactSpec?.relativePath,
     });
+    const workflowPackPromptSections = buildRuntimeWorkflowPackPromptSections({
+      db: db as any,
+      workflowPackKey: task.workflow_pack_key,
+      workflowMetaJson: task.workflow_meta_json,
+      workflowPackGuidance,
+    });
 
     const prompt = buildTaskExecutionPrompt(
       [
@@ -205,7 +213,7 @@ export function registerAgentSpawnRoute(ctx: RuntimeContext): void {
         "This session is scoped to this task only.",
         `[Task] ${task.title}`,
         task.description ? `\n${task.description}` : "",
-        workflowPackGuidance ? `\n[Workflow Pack Execution Rules]\n${workflowPackGuidance}` : "",
+        ...workflowPackPromptSections,
         `NOTE: You are working in an isolated Git worktree branch (climpire/${taskId.slice(0, 8)}). Commit your changes normally.`,
         `Agent: ${agent.name} (${roleLabel}, ${agent.department_name || "Unassigned"})`,
         agent.personality ? `Personality: ${agent.personality}` : "",
