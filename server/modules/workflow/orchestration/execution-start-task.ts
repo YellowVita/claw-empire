@@ -5,6 +5,7 @@ import { ensureVideoPreprodRemotionBestPracticesSkill } from "../core/video-skil
 import { buildWorkflowPackExecutionGuidance } from "../packs/execution-guidance.ts";
 import { buildRuntimeWorkflowPackPromptSections } from "../packs/runtime-effective-pack.ts";
 import { resolveVideoArtifactSpecForTask } from "../packs/video-artifact.ts";
+import { getTaskShortId } from "../core/worktree/lifecycle.ts";
 import {
   buildInterruptPromptBlock,
   consumeInterruptPrompts,
@@ -21,7 +22,6 @@ type CreateExecutionStartTaskToolsDeps = {
   ensureTaskExecutionSession: RuntimeContext["ensureTaskExecutionSession"];
   resolveLang: RuntimeContext["resolveLang"];
   notifyTaskStatus: (...args: any[]) => any;
-  resolveProjectPath: RuntimeContext["resolveProjectPath"];
   createWorktree: RuntimeContext["createWorktree"];
   cleanupWorktree: RuntimeContext["cleanupWorktree"];
   getDeptRoleConstraint: RuntimeContext["getDeptRoleConstraint"];
@@ -54,7 +54,6 @@ export function createExecutionStartTaskTools(deps: CreateExecutionStartTaskTool
     ensureTaskExecutionSession,
     resolveLang,
     notifyTaskStatus,
-    resolveProjectPath,
     createWorktree,
     cleanupWorktree,
     getDeptRoleConstraint,
@@ -113,6 +112,7 @@ export function createExecutionStartTaskTools(deps: CreateExecutionStartTaskTool
         }
       | undefined;
     if (!taskData) return;
+    const taskShortId = getTaskShortId(taskId);
     ensureVideoPreprodRemotionBestPracticesSkill({
       db: db as any,
       nowMs,
@@ -122,6 +122,35 @@ export function createExecutionStartTaskTools(deps: CreateExecutionStartTaskTool
       appendTaskLog,
     });
     const taskLang = resolveLang(taskData.description ?? taskData.title);
+    const projectPath = taskData.project_path?.trim() || null;
+    if (!projectPath) {
+      const rollbackAt = nowMs();
+      appendTaskLog(taskId, "error", "Execution blocked: missing project path");
+      db.prepare("UPDATE tasks SET status = 'pending', started_at = NULL, updated_at = ? WHERE id = ?").run(
+        rollbackAt,
+        taskId,
+      );
+      deleteTaskRetryQueueRow(db as any, taskId);
+      db.prepare(
+        "UPDATE agents SET status = 'idle', current_task_id = CASE WHEN current_task_id = ? THEN NULL ELSE current_task_id END WHERE id = ?",
+      ).run(taskId, execAgent.id);
+      broadcast("task_update", db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId));
+      broadcast("agent_status", db.prepare("SELECT * FROM agents WHERE id = ?").get(execAgent.id));
+      notifyTaskStatus(taskId, taskData.title, "pending", taskLang);
+      notifyCeo(
+        pickL(
+          l(
+            ["[PROJECT PATH REQUIRED] 현재 프로젝트 경로가 없어 실행을 시작하지 않았습니다. 기존 프로젝트를 선택하거나 절대 경로를 지정해야 합니다."],
+            ["[PROJECT PATH REQUIRED] Execution was not started because there is no current project path. Select an existing project or provide an absolute path."],
+            ["[PROJECT PATH REQUIRED] 現在のプロジェクトパスがないため実行を開始しませんでした。既存プロジェクトを選択するか、絶対パスを指定してください。"],
+            ["[PROJECT PATH REQUIRED] 由于当前没有项目路径，执行未启动。请选择现有项目，或提供绝对路径。"],
+          ),
+          taskLang,
+        ),
+        taskId,
+      );
+      return;
+    }
     const videoArtifactSpec =
       taskData.workflow_pack_key === "video_preprod"
         ? resolveVideoArtifactSpecForTask(db as any, {
@@ -142,7 +171,7 @@ export function createExecutionStartTaskTools(deps: CreateExecutionStartTaskTool
     });
     notifyTaskStatus(taskId, taskData.title, "in_progress", taskLang);
 
-    const projPath = resolveProjectPath(taskData);
+    const projPath = projectPath;
     const worktreePath = createWorktree(projPath, taskId, execAgent.name, taskData.base_branch ?? undefined);
     if (!worktreePath) {
       const rollbackAt = nowMs();
@@ -185,7 +214,7 @@ export function createExecutionStartTaskTools(deps: CreateExecutionStartTaskTool
       return;
     }
     const agentCwd = worktreePath;
-    appendTaskLog(taskId, "system", `Git worktree created: ${worktreePath} (branch: climpire/${taskId.slice(0, 8)})`);
+    appendTaskLog(taskId, "system", `Git worktree created: ${worktreePath} (branch: climpire/${taskShortId})`);
     const beforeRunResult = await runTaskExecutionHooks({
       db: db as any,
       stage: "before_run",
@@ -292,7 +321,7 @@ export function createExecutionStartTaskTools(deps: CreateExecutionStartTaskTool
         execAgent.personality ? `Personality: ${execAgent.personality}` : "",
         deptConstraint,
         deptPromptBlock,
-        `NOTE: You are working in an isolated Git worktree branch (climpire/${taskId.slice(0, 8)}). Commit your changes normally.`,
+        `NOTE: You are working in an isolated Git worktree branch (climpire/${taskShortId}). Commit your changes normally.`,
         interruptPromptBlock,
         continuationInstruction,
         runInstruction,
@@ -365,10 +394,10 @@ export function createExecutionStartTaskTools(deps: CreateExecutionStartTaskTool
 
     const worktreeNote = pickL(
       l(
-        [` (격리 브랜치: climpire/${taskId.slice(0, 8)})`],
-        [` (isolated branch: climpire/${taskId.slice(0, 8)})`],
-        [` (分離ブランチ: climpire/${taskId.slice(0, 8)})`],
-        [`（隔离分支: climpire/${taskId.slice(0, 8)}）`],
+        [` (격리 브랜치: climpire/${taskShortId})`],
+        [` (isolated branch: climpire/${taskShortId})`],
+        [` (分離ブランチ: climpire/${taskShortId})`],
+        [`（隔离分支: climpire/${taskShortId}）`],
       ),
       taskLang,
     );

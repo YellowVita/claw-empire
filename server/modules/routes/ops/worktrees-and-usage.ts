@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import type { RuntimeContext } from "../../../types/runtime-context.ts";
 import type { CliUsageEntry } from "../shared/types.ts";
+import { getTaskShortId } from "../../workflow/core/worktree/lifecycle.ts";
 
 function readGitLines(cwd: string, args: string[], timeout = 8000): string[] {
   const output = execFileSync("git", args, { cwd, stdio: "pipe", timeout }).toString().trim();
@@ -331,13 +332,14 @@ export function registerWorktreeAndUsageRoutes(ctx: RuntimeContext): {
     releaseLinkedAgents(id);
     appendTaskLog(id, "system", "Task discarded and reset to inbox");
     const lang = resolveLang();
+    const taskShortId = getTaskShortId(id);
     notifyCeo(
       pickL(
         l(
-          [`작업 브랜치가 폐기되고 태스크가 inbox로 되돌아갔습니다: climpire/${id.slice(0, 8)}`],
-          [`Task branch discarded and reset to inbox: climpire/${id.slice(0, 8)}`],
-          [`タスクブランチを破棄し、タスクを inbox に戻しました: climpire/${id.slice(0, 8)}`],
-          [`任务分支已丢弃，任务已重置为 inbox: climpire/${id.slice(0, 8)}`],
+          [`작업 브랜치가 폐기되고 태스크가 inbox로 되돌아갔습니다: climpire/${taskShortId}`],
+          [`Task branch discarded and reset to inbox: climpire/${taskShortId}`],
+          [`タスクブランチを破棄し、タスクを inbox に戻しました: climpire/${taskShortId}`],
+          [`任务分支已丢弃，任务已重置为 inbox: climpire/${taskShortId}`],
         ),
         lang,
       ),

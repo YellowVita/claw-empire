@@ -3,7 +3,11 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
-import { createWorktreeLifecycleTools } from "./lifecycle.ts";
+import {
+  createWorktreeLifecycleTools,
+  getTaskShortId,
+  guardManagedWorktreePath,
+} from "./lifecycle.ts";
 
 function runGit(cwd: string, args: string[]): string {
   return execFileSync("git", args, { cwd, stdio: "pipe", timeout: 15000 }).toString().trim();
@@ -113,15 +117,11 @@ describe("worktree lifecycle path guard hardening", () => {
     const repo = initRepo("climpire-wt-escape-");
     tempDirs.push(repo);
 
-    const taskId = "../evil1-0000-0000-0000-000000000000";
-    const taskWorktrees = new Map();
-    const tools = createWorktreeLifecycleTools({
-      appendTaskLog: () => {},
-      taskWorktrees,
+    const escapedPath = path.join(repo, "..", "escaped-worktree");
+    expect(guardManagedWorktreePath(repo, escapedPath)).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining("target_not_direct_child"),
     });
-
-    expect(tools.createWorktree(repo, taskId, "Tester")).toBeNull();
-    expect(taskWorktrees.has(taskId)).toBe(false);
   });
 
   it("blocks cleanup when the tracked worktree path is outside the managed root", () => {
@@ -208,6 +208,40 @@ describe("worktree lifecycle path guard hardening", () => {
     const propagatedPath = path.join(String(worktreePath), ".claude", "skills");
     expect(fs.existsSync(propagatedPath)).toBe(true);
     expect(fs.lstatSync(propagatedPath).isSymbolicLink()).toBe(true);
+
+    tools.cleanupWorktree(repo, taskId);
+  });
+
+  it("sanitizes non-alphanumeric task ids into a valid 8-character short id", () => {
+    const taskId = "verify-dirty-0000-0000-0000-000000000000";
+    const shortId = getTaskShortId(taskId);
+
+    expect(shortId).toHaveLength(8);
+    expect(shortId).toMatch(/^[A-Za-z0-9]{8}$/);
+    expect(shortId).toBe("verifydi");
+  });
+
+  it("pads short sanitized ids with stable hash material", () => {
+    const shortId = getTaskShortId("a-1");
+
+    expect(shortId).toHaveLength(8);
+    expect(shortId).toMatch(/^a1[a-f0-9]{6}$/);
+  });
+
+  it("creates a worktree even when the task id contains separators", () => {
+    const repo = initRepo("climpire-wt-sanitized-");
+    tempDirs.push(repo);
+
+    const taskId = "verify-dirty-0000-0000-0000-000000000000";
+    const taskWorktrees = new Map();
+    const tools = createWorktreeLifecycleTools({
+      appendTaskLog: () => {},
+      taskWorktrees,
+    });
+
+    const worktreePath = tools.createWorktree(repo, taskId, "Tester");
+    expect(worktreePath).toBeTruthy();
+    expect(taskWorktrees.get(taskId)?.branchName).toBe(`climpire/${getTaskShortId(taskId)}`);
 
     tools.cleanupWorktree(repo, taskId);
   });

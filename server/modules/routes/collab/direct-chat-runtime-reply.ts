@@ -12,6 +12,10 @@ import { isMessengerChannel } from "../../../messenger/channels.ts";
 import type { Lang } from "../../../types/lang.ts";
 import type { DelegationOptions } from "./project-resolution.ts";
 import { normalizeAgentReply, shouldPreserveStructuredFallback } from "./direct-chat-intent-utils.ts";
+import {
+  requiresProjectContextForDirectChat,
+  resolveNeutralOneShotCwd,
+} from "./direct-chat-execution-policy.ts";
 import type { AgentRow, DirectChatDeps } from "./direct-chat-types.ts";
 
 type DirectReplyRuntimeDeps = Pick<
@@ -21,8 +25,8 @@ type DirectReplyRuntimeDeps = Pick<
   | "nowMs"
   | "broadcast"
   | "sendAgentMessage"
-  | "resolveProjectPath"
   | "detectProjectPath"
+  | "normalizeTextField"
   | "buildDirectReplyPrompt"
   | "chooseSafeReply"
   | "runAgentOneShot"
@@ -70,6 +74,19 @@ function localeInstructionForDirect(lang: Lang): string {
   if (lang === "ja") return "Respond in Japanese.";
   if (lang === "zh") return "Respond in Chinese.";
   return "Respond in Korean.";
+}
+
+function directChatProjectPathRequiredMessage(lang: Lang): string {
+  if (lang === "en") {
+    return "I can't continue with execution or project-based answers without a current project path. Select an existing project or send the absolute path.";
+  }
+  if (lang === "ja") {
+    return "現在のプロジェクトパスがないため、実行やプロジェクト前提の回答は続行できません。既存プロジェクトを選択するか、絶対パスを送ってください。";
+  }
+  if (lang === "zh") {
+    return "当前没有项目路径，因此无法继续执行或提供基于项目的回答。请选择现有项目，或直接发送绝对路径。";
+  }
+  return "현재 프로젝트 경로가 없어 실행 또는 프로젝트 기반 답변을 진행할 수 없습니다. 기존 프로젝트를 선택하거나 절대 경로를 알려주세요.";
 }
 
 export function createDirectReplyRuntime(deps: DirectReplyRuntimeDeps) {
@@ -156,7 +173,7 @@ export function createDirectReplyRuntime(deps: DirectReplyRuntimeDeps) {
 
       try {
         const run = await deps.runAgentOneShot(agent, prompt, {
-          projectPath: process.cwd(),
+          projectPath: resolveNeutralOneShotCwd(deps.logsDir),
           rawOutput: true,
           noTools: true,
         });
@@ -190,7 +207,7 @@ export function createDirectReplyRuntime(deps: DirectReplyRuntimeDeps) {
 
     try {
       const run = await deps.runAgentOneShot(agent, prompt, {
-        projectPath: process.cwd(),
+        projectPath: resolveNeutralOneShotCwd(deps.logsDir),
         rawOutput: true,
         noTools: true,
       });
@@ -274,9 +291,29 @@ export function createDirectReplyRuntime(deps: DirectReplyRuntimeDeps) {
                 | undefined)
             : undefined;
           const detectedPath = deps.detectProjectPath(ceoMessage);
-          const projectPath = detectedPath || (activeTask ? deps.resolveProjectPath(activeTask) : process.cwd());
-
           const built = deps.buildDirectReplyPrompt(agent, ceoMessage, messageType);
+          const activeTaskProjectPath = deps.normalizeTextField(activeTask?.project_path);
+          const projectPath = detectedPath || activeTaskProjectPath;
+          const requiresProjectContext = requiresProjectContextForDirectChat(ceoMessage, messageType);
+
+          if (!projectPath && requiresProjectContext) {
+            const reply = directChatProjectPathRequiredMessage(built.lang);
+            deps.sendAgentMessage(agent, reply);
+            await relayReplyToMessenger(options, agent, reply);
+            return;
+          }
+
+          if (!projectPath) {
+            const run = await deps.runAgentOneShot(agent, built.prompt, {
+              projectPath: resolveNeutralOneShotCwd(deps.logsDir),
+              rawOutput: true,
+              noTools: true,
+            });
+            const reply = normalizeAgentReply(deps.chooseSafeReply(run, built.lang, "direct", agent));
+            deps.sendAgentMessage(agent, reply);
+            await relayReplyToMessenger(options, agent, reply);
+            return;
+          }
 
           console.log(
             `[scheduleAgentReply] agent=${agent.name}, cli_provider=${agent.cli_provider}, api_provider_id=${agent.api_provider_id}, api_model=${agent.api_model}`,

@@ -3,7 +3,13 @@ import { cleanup, render, screen } from "@testing-library/react";
 
 async function loadAppMainLayoutWithPendingOfficeView() {
   vi.resetModules();
-  vi.doMock("../components/OfficeView", () => new Promise(() => {}) as Promise<unknown>);
+  const pendingOfficeView = new Promise<never>(() => {});
+  vi.doMock("../components/OfficeView", () => ({
+    __esModule: true,
+    default() {
+      throw pendingOfficeView;
+    },
+  }));
   return (await import("./AppMainLayout")).default;
 }
 

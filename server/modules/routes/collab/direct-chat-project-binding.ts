@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import type { Lang } from "../../../types/lang.ts";
 import type { DelegationOptions } from "./project-resolution.ts";
 import { detectProjectKindChoice } from "./direct-chat-intent-utils.ts";
+import { resolveNeutralOneShotCwd } from "./direct-chat-execution-policy.ts";
 import type { AgentRow, DirectChatDeps, ExistingProjectCandidate } from "./direct-chat-types.ts";
 
 export const RECENT_EXISTING_PROJECT_LIMIT = 10;
@@ -156,7 +157,7 @@ export async function inferProjectKindWithModel(
 
   try {
     const run = await deps.runAgentOneShot(agent, prompt, {
-      projectPath: process.cwd(),
+      projectPath: resolveNeutralOneShotCwd(),
       rawOutput: true,
       noTools: true,
     });

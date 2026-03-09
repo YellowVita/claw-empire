@@ -7,6 +7,7 @@ import { buildWorkflowPackExecutionGuidance } from "../../../workflow/packs/exec
 import { buildRuntimeWorkflowPackPromptSections } from "../../../workflow/packs/runtime-effective-pack.ts";
 import { resolveVideoArtifactSpecForTask } from "../../../workflow/packs/video-artifact.ts";
 import { ensureVideoPreprodRemotionBestPracticesSkill } from "../../../workflow/core/video-skill-bootstrap.ts";
+import { getTaskShortId } from "../../../workflow/core/worktree/lifecycle.ts";
 import {
   buildInterruptPromptBlock,
   consumeInterruptPrompts,
@@ -22,7 +23,6 @@ export type TaskRunRouteDeps = Pick<
   | "nowMs"
   | "resolveLang"
   | "ensureTaskExecutionSession"
-  | "resolveProjectPath"
   | "logsDir"
   | "createWorktree"
   | "generateProjectContext"
@@ -58,7 +58,6 @@ export function registerTaskRunRoute(deps: TaskRunRouteDeps): void {
     nowMs,
     resolveLang,
     ensureTaskExecutionSession,
-    resolveProjectPath,
     logsDir,
     createWorktree,
     generateProjectContext,
@@ -271,6 +270,7 @@ export function registerTaskRunRoute(deps: TaskRunRouteDeps): void {
         | undefined;
     }
     if (!agent) return res.status(400).json({ error: "agent_not_found" });
+    const taskShortId = getTaskShortId(id);
 
     const agentBusy = activeProcesses.has(
       (
@@ -297,11 +297,28 @@ export function registerTaskRunRoute(deps: TaskRunRouteDeps): void {
       taskId: id,
       appendTaskLog,
     });
+
+    const taskProjectPath = normalizeTextField(task.project_path);
+    const requestProjectPath = normalizeTextField(req.body?.project_path);
+    const projectPath = taskProjectPath || requestProjectPath;
+    if (!projectPath) {
+      return res.status(400).json({
+        error: "missing_project_path",
+        message: pickL(
+          l(
+            ["현재 프로젝트 경로가 없어 실행을 시작할 수 없습니다. 기존 프로젝트를 선택하거나 절대 경로를 지정하세요."],
+            ["Task execution requires a project path. Select an existing project or provide an absolute path."],
+            ["実行にはプロジェクトパスが必要です。既存プロジェクトを選択するか、絶対パスを指定してください。"],
+            ["执行需要项目路径。请选择现有项目，或提供绝对路径。"],
+          ),
+          taskLang,
+        ),
+      });
+    }
+
     const executionSession = ensureTaskExecutionSession(id, agentId, provider);
     const pendingInterruptPrompts = loadPendingInterruptPrompts(db as any, id, executionSession.sessionId);
     const interruptPromptBlock = buildInterruptPromptBlock(pendingInterruptPrompts);
-
-    const projectPath = resolveProjectPath(task) || (req.body?.project_path as string | undefined) || process.cwd();
     const logPath = path.join(logsDir, `${id}.log`);
 
     const worktreePath = createWorktree(projectPath, id, agent.name);
@@ -318,7 +335,7 @@ export function registerTaskRunRoute(deps: TaskRunRouteDeps): void {
     }
     const agentCwd = worktreePath;
 
-    appendTaskLog(id, "system", `Git worktree created: ${worktreePath} (branch: climpire/${id.slice(0, 8)})`);
+    appendTaskLog(id, "system", `Git worktree created: ${worktreePath} (branch: climpire/${taskShortId})`);
 
     const projectContext = generateProjectContext(projectPath);
     const recentChanges = getRecentChanges(projectPath, id);
@@ -483,7 +500,7 @@ Whenever you complete a subtask, report it in this format:
         agent.personality ? `Personality: ${agent.personality}` : "",
         deptConstraint,
         departmentPromptBlock,
-        `NOTE: You are working in an isolated Git worktree branch (climpire/${id.slice(0, 8)}). Commit your changes normally.`,
+        `NOTE: You are working in an isolated Git worktree branch (climpire/${taskShortId}). Commit your changes normally.`,
         interruptPromptBlock,
         subtaskInstruction,
         subModelHint,
@@ -529,10 +546,10 @@ Whenever you complete a subtask, report it in this format:
       const assigneeName = getAgentDisplayName(agent as unknown as AgentRow, taskLang);
       const worktreeNote = pickL(
         l(
-          [` (격리 브랜치: climpire/${id.slice(0, 8)})`],
-          [` (isolated branch: climpire/${id.slice(0, 8)})`],
-          [` (分離ブランチ: climpire/${id.slice(0, 8)})`],
-          [`（隔离分支: climpire/${id.slice(0, 8)}）`],
+          [` (격리 브랜치: climpire/${taskShortId})`],
+          [` (isolated branch: climpire/${taskShortId})`],
+          [` (分離ブランチ: climpire/${taskShortId})`],
+          [`（隔离分支: climpire/${taskShortId}）`],
         ),
         taskLang,
       );
@@ -586,10 +603,10 @@ Whenever you complete a subtask, report it in this format:
       const assigneeName = getAgentDisplayName(agent as unknown as AgentRow, taskLang);
       const worktreeNote = pickL(
         l(
-          [` (격리 브랜치: climpire/${id.slice(0, 8)})`],
-          [` (isolated branch: climpire/${id.slice(0, 8)})`],
-          [` (分離ブランチ: climpire/${id.slice(0, 8)})`],
-          [`（隔离分支: climpire/${id.slice(0, 8)}）`],
+          [` (격리 브랜치: climpire/${taskShortId})`],
+          [` (isolated branch: climpire/${taskShortId})`],
+          [` (分離ブランチ: climpire/${taskShortId})`],
+          [`（隔离分支: climpire/${taskShortId}）`],
         ),
         taskLang,
       );
@@ -636,10 +653,10 @@ Whenever you complete a subtask, report it in this format:
     const assigneeName = getAgentDisplayName(agent as unknown as AgentRow, taskLang);
     const worktreeNote = pickL(
       l(
-        [` (격리 브랜치: climpire/${id.slice(0, 8)})`],
-        [` (isolated branch: climpire/${id.slice(0, 8)})`],
-        [` (分離ブランチ: climpire/${id.slice(0, 8)})`],
-        [`（隔离分支: climpire/${id.slice(0, 8)}）`],
+        [` (격리 브랜치: climpire/${taskShortId})`],
+        [` (isolated branch: climpire/${taskShortId})`],
+        [` (分離ブランチ: climpire/${taskShortId})`],
+        [`（隔离分支: climpire/${taskShortId}）`],
       ),
       taskLang,
     );

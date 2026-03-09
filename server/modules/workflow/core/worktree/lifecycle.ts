@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 
 export type WorktreeInfo = {
@@ -57,7 +58,10 @@ function detectSymlinkOrJunction(targetPath: string): boolean {
 }
 
 export function getTaskShortId(taskId: string): string {
-  return taskId.slice(0, 8);
+  const sanitized = taskId.replace(/[^A-Za-z0-9]/g, "");
+  if (sanitized.length >= 8) return sanitized.slice(0, 8);
+  const hashSuffix = createHash("sha256").update(taskId).digest("hex");
+  return `${sanitized}${hashSuffix}`.slice(0, 8);
 }
 
 export function buildManagedWorktreeRoot(projectPath: string): string {
