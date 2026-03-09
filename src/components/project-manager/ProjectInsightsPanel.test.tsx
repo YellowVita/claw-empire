@@ -1,5 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import type { WorkflowPackEffectivePreview } from "../../api";
 import type { Project } from "../../types";
 import ProjectInsightsPanel from "./ProjectInsightsPanel";
 import type { I18nTextMap } from "./types";
@@ -10,6 +11,23 @@ function t(messages: I18nTextMap): string {
 
 describe("ProjectInsightsPanel", () => {
   it("프로젝트 pack detection 정보를 표시한다", () => {
+    const preview: WorkflowPackEffectivePreview = {
+      pack: {
+        key: "report",
+        name: "Report",
+        enabled: true,
+        input_schema: {},
+        prompt_preset: {},
+        qa_rules: {},
+        output_template: {},
+        routing_keywords: [],
+        cost_profile: {},
+      },
+      override_applied: true,
+      override_fields: ["prompt_preset", "routing_keywords"],
+      source: "file_override",
+      warnings: [],
+    };
     const project: Project = {
       id: "project-1",
       name: "Project One",
@@ -18,6 +36,9 @@ describe("ProjectInsightsPanel", () => {
       default_pack_key: "development",
       detected_workflow_pack_key: "report",
       workflow_pack_source: "file_default",
+      workflow_pack_override_applied: true,
+      workflow_pack_override_fields: ["prompt_preset", "routing_keywords"],
+      workflow_pack_preview_key: "report",
       assignment_mode: "auto",
       assigned_agent_ids: [],
       last_used_at: null,
@@ -37,6 +58,7 @@ describe("ProjectInsightsPanel", () => {
         sortedDecisionEvents={[]}
         getDecisionEventLabel={() => ""}
         handleOpenTaskDetail={vi.fn(async () => {})}
+        handlePreviewWorkflowPack={vi.fn(async () => preview)}
       />,
     );
 
@@ -49,5 +71,9 @@ describe("ProjectInsightsPanel", () => {
     expect(
       screen.getByText((_, element) => element?.tagName === "P" && element.textContent?.includes("Current Source: file_default") === true),
     ).toBeInTheDocument();
+    expect(
+      screen.getByText((_, element) => element?.tagName === "P" && element.textContent?.includes("Override Fields: prompt_preset, routing_keywords") === true),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Effective Pack Preview")).toBeInTheDocument();
   });
 });

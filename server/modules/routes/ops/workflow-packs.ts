@@ -7,6 +7,7 @@ import {
   isWorkflowPackKey,
   type WorkflowPackKey,
 } from "../../workflow/packs/definitions.ts";
+import { buildEffectiveWorkflowPack } from "../../workflow/packs/effective-pack.ts";
 import { resolveTaskWorkflowPackSelection } from "../../workflow/packs/task-pack-resolver.ts";
 import {
   buildWorkflowPackExportDocument,
@@ -175,6 +176,31 @@ export function registerWorkflowPackRoutes(
       return res.status(404).json({ error: "pack_not_found" });
     }
     return res.json(document);
+  });
+
+  app.get("/api/workflow-packs/:key/effective", (req, res) => {
+    const packKey = String(req.params.key || "").trim();
+    if (!isWorkflowPackKey(packKey)) {
+      return res.status(400).json({ error: "invalid_pack_key" });
+    }
+
+    const projectPath = normalizeTextField(req.query.projectPath);
+    const effective = buildEffectiveWorkflowPack({
+      db: db as any,
+      packKey,
+      projectPath,
+    });
+    if (!effective.pack) {
+      return res.status(404).json({ error: "pack_not_found", warnings: effective.warnings });
+    }
+
+    return res.json({
+      pack: effective.pack,
+      override_applied: effective.override_applied,
+      override_fields: effective.override_fields,
+      source: effective.source,
+      warnings: effective.warnings,
+    });
   });
 
   app.post("/api/workflow-packs/import", (req, res) => {

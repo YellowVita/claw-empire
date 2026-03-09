@@ -57,6 +57,19 @@ function createHarness() {
       updated_at INTEGER DEFAULT 0,
       github_repo TEXT
     );
+    CREATE TABLE workflow_packs (
+      key TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      input_schema_json TEXT NOT NULL,
+      prompt_preset_json TEXT NOT NULL,
+      qa_rules_json TEXT NOT NULL,
+      output_template_json TEXT NOT NULL,
+      routing_keywords_json TEXT NOT NULL,
+      cost_profile_json TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
     CREATE TABLE project_agents (
       project_id TEXT NOT NULL,
       agent_id TEXT NOT NULL,
@@ -102,6 +115,46 @@ function createHarness() {
       created_at INTEGER DEFAULT 0
     );
   `);
+  db.prepare(
+    `
+      INSERT INTO workflow_packs (
+        key, name, enabled, input_schema_json, prompt_preset_json, qa_rules_json,
+        output_template_json, routing_keywords_json, cost_profile_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+  ).run(
+    "report",
+    "Report",
+    1,
+    "{}",
+    '{"mode":"reporting"}',
+    '{"failOnMissingSections":true}',
+    '{"sections":["summary"]}',
+    '["report"]',
+    '{"maxRounds":2}',
+    1,
+    1,
+  );
+  db.prepare(
+    `
+      INSERT INTO workflow_packs (
+        key, name, enabled, input_schema_json, prompt_preset_json, qa_rules_json,
+        output_template_json, routing_keywords_json, cost_profile_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+  ).run(
+    "novel",
+    "Novel",
+    1,
+    "{}",
+    '{"mode":"narrative"}',
+    '{"requireOutline":true}',
+    '{"sections":["hook"]}',
+    '["novel"]',
+    '{"maxRounds":1}',
+    1,
+    1,
+  );
 
   const routes = new Map<string, RouteHandler>();
   const app = {
@@ -154,7 +207,14 @@ describe("project workflow pack detection", () => {
   it("GET /api/projects/:id는 file default pack을 best-effort로 반환한다", () => {
     const { db, routes } = createHarness();
     const projectPath = createTempDir("claw-project-pack-detail-");
-    writeWorkflowConfig(projectPath, { defaultWorkflowPackKey: "report" });
+    writeWorkflowConfig(projectPath, {
+      defaultWorkflowPackKey: "report",
+      packOverrides: {
+        report: {
+          prompt_preset: { mode: "project-report" },
+        },
+      },
+    });
     try {
       db.prepare(
         "INSERT INTO projects (id, name, project_path, core_goal, default_pack_key, assignment_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -167,6 +227,9 @@ describe("project workflow pack detection", () => {
       expect(res.statusCode).toBe(200);
       expect((res.payload as any).project.detected_workflow_pack_key).toBe("report");
       expect((res.payload as any).project.workflow_pack_source).toBe("file_default");
+      expect((res.payload as any).project.workflow_pack_override_applied).toBe(true);
+      expect((res.payload as any).project.workflow_pack_override_fields).toEqual(["prompt_preset"]);
+      expect((res.payload as any).project.workflow_pack_preview_key).toBe("report");
     } finally {
       db.close();
     }
@@ -188,6 +251,9 @@ describe("project workflow pack detection", () => {
       expect(res.statusCode).toBe(200);
       expect((res.payload as any).project.detected_workflow_pack_key).toBe("novel");
       expect((res.payload as any).project.workflow_pack_source).toBe("project_default");
+      expect((res.payload as any).project.workflow_pack_override_applied).toBe(false);
+      expect((res.payload as any).project.workflow_pack_override_fields).toEqual([]);
+      expect((res.payload as any).project.workflow_pack_preview_key).toBe("novel");
     } finally {
       db.close();
     }

@@ -1,5 +1,6 @@
-import type { ProjectDecisionEventItem, ProjectReportHistoryItem, ProjectTaskHistoryItem } from "../../api";
-import type { Project } from "../../types";
+import { useEffect, useState } from "react";
+import type { ProjectDecisionEventItem, ProjectReportHistoryItem, ProjectTaskHistoryItem, WorkflowPackEffectivePreview } from "../../api";
+import type { Project, WorkflowPackKey } from "../../types";
 import type { GroupedProjectTaskCard, ProjectI18nTranslate } from "./types";
 import { fmtTime } from "./utils";
 
@@ -13,6 +14,7 @@ interface ProjectInsightsPanelProps {
   sortedDecisionEvents: ProjectDecisionEventItem[];
   getDecisionEventLabel: (eventType: ProjectDecisionEventItem["event_type"]) => string;
   handleOpenTaskDetail: (taskId: string) => Promise<void>;
+  handlePreviewWorkflowPack: (packKey: WorkflowPackKey, projectPath: string) => Promise<WorkflowPackEffectivePreview>;
 }
 
 export default function ProjectInsightsPanel({
@@ -25,7 +27,18 @@ export default function ProjectInsightsPanel({
   sortedDecisionEvents,
   getDecisionEventLabel,
   handleOpenTaskDetail,
+  handlePreviewWorkflowPack,
 }: ProjectInsightsPanelProps) {
+  const [effectivePackPreview, setEffectivePackPreview] = useState<WorkflowPackEffectivePreview | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setEffectivePackPreview(null);
+    setPreviewLoading(false);
+    setPreviewError(null);
+  }, [selectedProject?.id]);
+
   return (
     <div className="min-w-0 space-y-4">
       <div className="min-w-0 rounded-xl border border-slate-700 bg-slate-800/40 p-4">
@@ -94,6 +107,87 @@ export default function ProjectInsightsPanel({
               </span>{" "}
               {selectedProject.workflow_pack_source || "-"}
             </p>
+            <div className="space-y-2 pt-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-slate-500">
+                  {t({ ko: "Override", en: "Override", ja: "Override", zh: "Override" })}:
+                </span>
+                {selectedProject.workflow_pack_override_applied ? (
+                  <span className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-300">
+                    {t({ ko: "파일 적용됨", en: "File override active", ja: "ファイル適用中", zh: "文件覆盖生效" })}
+                  </span>
+                ) : (
+                  <span className="rounded-full border border-slate-600 px-2 py-0.5 text-[11px] text-slate-400">
+                    {t({ ko: "DB만 사용", en: "DB only", ja: "DBのみ", zh: "仅使用 DB" })}
+                  </span>
+                )}
+              </div>
+              <p className="text-slate-200">
+                <span className="text-slate-500">
+                  {t({ ko: "Override 필드", en: "Override Fields", ja: "Override対象", zh: "覆盖字段" })}:
+                </span>{" "}
+                {selectedProject.workflow_pack_override_fields && selectedProject.workflow_pack_override_fields.length > 0
+                  ? selectedProject.workflow_pack_override_fields.join(", ")
+                  : "-"}
+              </p>
+              {selectedProject.workflow_pack_preview_key && selectedProject.project_path && (
+                <div className="space-y-2">
+                  <button
+                    type="button"
+                    disabled={previewLoading}
+                    onClick={async () => {
+                      setPreviewLoading(true);
+                      setPreviewError(null);
+                      try {
+                        const preview = await handlePreviewWorkflowPack(
+                          selectedProject.workflow_pack_preview_key as WorkflowPackKey,
+                          selectedProject.project_path,
+                        );
+                        setEffectivePackPreview(preview);
+                      } catch (error) {
+                        const message = error instanceof Error ? error.message : "Failed to load preview";
+                        setPreviewError(message);
+                      } finally {
+                        setPreviewLoading(false);
+                      }
+                    }}
+                    className="rounded-md border border-blue-500/40 px-2.5 py-1 text-[11px] font-medium text-blue-200 transition hover:bg-blue-500/10 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {previewLoading
+                      ? t({ ko: "Preview 불러오는 중...", en: "Loading Preview...", ja: "Preview 読み込み中...", zh: "正在加载预览..." })
+                      : t({ ko: "Effective Pack Preview", en: "Effective Pack Preview", ja: "Effective Pack Preview", zh: "Effective Pack Preview" })}
+                  </button>
+                  {previewError && <p className="text-[11px] text-rose-300">{previewError}</p>}
+                  {effectivePackPreview && (
+                    <div className="space-y-2 rounded-lg border border-slate-700 bg-slate-900/70 p-3">
+                      <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-300">
+                        <span>{effectivePackPreview.pack.key}</span>
+                        <span className="rounded-full border border-slate-600 px-2 py-0.5 text-[10px] text-slate-400">
+                          {effectivePackPreview.source}
+                        </span>
+                        {effectivePackPreview.override_applied && (
+                          <span className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-300">
+                            {t({ ko: "override 적용", en: "override applied", ja: "override 適用", zh: "已应用 override" })}
+                          </span>
+                        )}
+                      </div>
+                      {effectivePackPreview.warnings.length > 0 && (
+                        <div className="space-y-1">
+                          {effectivePackPreview.warnings.map((warning) => (
+                            <p key={warning} className="text-[11px] text-amber-300">
+                              {warning}
+                            </p>
+                          ))}
+                        </div>
+                      )}
+                      <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded-md bg-slate-950/70 p-3 text-[11px] leading-relaxed text-slate-200">
+                        {JSON.stringify(effectivePackPreview.pack, null, 2)}
+                      </pre>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>

@@ -410,4 +410,51 @@ describe("workflow pack import/export routes", () => {
       harness.db.close();
     }
   });
+
+  it("effective preview는 file override가 있으면 merged pack과 warning 정보를 반환한다", () => {
+    const harness = createHarness();
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "claw-effective-pack-"));
+    try {
+      fs.writeFileSync(
+        path.join(projectDir, ".claw-workflow.json"),
+        JSON.stringify(
+          {
+            packOverrides: {
+              development: {
+                prompt_preset: { mode: "project-engineering" },
+                routing_keywords: ["project-only"],
+                enabled: false,
+              },
+            },
+          },
+          null,
+          2,
+        ),
+        "utf8",
+      );
+
+      const handler = harness.getRoutes.get("/api/workflow-packs/:key/effective");
+      const res = createFakeResponse();
+      handler?.({ params: { key: "development" }, query: { projectPath: projectDir } }, res);
+
+      expect(res.statusCode).toBe(200);
+      expect(res.payload).toMatchObject({
+        override_applied: true,
+        override_fields: ["prompt_preset", "routing_keywords"],
+        source: "file_override",
+        pack: {
+          key: "development",
+          prompt_preset: { mode: "project-engineering" },
+          routing_keywords: ["project-only"],
+          qa_rules: { requireTestEvidence: true },
+        },
+      });
+      expect((res.payload as any).warnings).toEqual([
+        ".claw-workflow.json unsupported packOverrides.development.enabled, ignoring",
+      ]);
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+      harness.db.close();
+    }
+  });
 });

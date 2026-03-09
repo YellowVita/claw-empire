@@ -6,7 +6,8 @@ import type { SQLInputValue } from "node:sqlite";
 import type { RuntimeContext } from "../../../../types/runtime-context.ts";
 import type { MeetingMinuteEntryRow, MeetingMinutesRow } from "../../shared/types.ts";
 import { isWorkflowPackKey } from "../../../workflow/packs/definitions.ts";
-import { resolveTaskWorkflowPackSelection } from "../../../workflow/packs/task-pack-resolver.ts";
+import { buildEffectiveWorkflowPack } from "../../../workflow/packs/effective-pack.ts";
+import { resolveProjectPathById, resolveTaskWorkflowPackSelection } from "../../../workflow/packs/task-pack-resolver.ts";
 import {
   buildTaskQualityPayload,
   seedTaskQualityItemsFromWorkflowMeta,
@@ -106,6 +107,61 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
     for (const warning of warnings) {
       console.warn(`[workflow-pack/${context}] ${warning}`);
     }
+  }
+
+  function parseWorkflowMetaObject(raw: unknown, context: string): Record<string, unknown> {
+    if (!raw) return {};
+    if (typeof raw === "string") {
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          return { ...(parsed as Record<string, unknown>) };
+        }
+        console.warn(`[workflow-pack/${context}] workflow_meta_json is not an object; using empty object for snapshot merge`);
+        return {};
+      } catch {
+        console.warn(`[workflow-pack/${context}] workflow_meta_json parse failed; using empty object for snapshot merge`);
+        return {};
+      }
+    }
+    if (typeof raw === "object" && !Array.isArray(raw)) {
+      return { ...(raw as Record<string, unknown>) };
+    }
+    console.warn(`[workflow-pack/${context}] workflow_meta_json is not an object; using empty object for snapshot merge`);
+    return {};
+  }
+
+  function buildWorkflowMetaJsonWithPackSnapshot(params: {
+    rawWorkflowMeta: unknown;
+    packKey: string;
+    projectId?: string | null;
+    projectPath?: string | null;
+    context: string;
+  }): string {
+    const normalizedProjectPath =
+      normalizeProjectPathInput(params.projectPath) ??
+      normalizeTextField(params.projectPath) ??
+      resolveProjectPathById(db as any, params.projectId);
+    const effectivePack = isWorkflowPackKey(params.packKey)
+      ? buildEffectiveWorkflowPack({
+          db: db as any,
+          packKey: params.packKey,
+          projectPath: normalizedProjectPath,
+        })
+      : {
+          pack: null,
+          override_applied: false,
+          override_fields: [],
+          source: "db" as const,
+          warnings: [`workflow pack '${params.packKey}' is invalid`],
+        };
+
+    logWorkflowPackSelectionWarnings(effectivePack.warnings, params.context);
+    const nextMeta = parseWorkflowMetaObject(params.rawWorkflowMeta, params.context);
+    nextMeta.pack_override_source = effectivePack.override_applied ? "file" : null;
+    nextMeta.pack_override_fields = effectivePack.override_fields;
+    nextMeta.effective_pack_snapshot = effectivePack.pack;
+    return JSON.stringify(nextMeta);
   }
 
   function stopActiveTaskProcess(taskId: string): void {
@@ -337,6 +393,14 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
     });
     logWorkflowPackSelectionWarnings(workflowPackSelection.warnings, "task-create");
 
+    const workflowMetaJson = buildWorkflowMetaJsonWithPackSnapshot({
+      rawWorkflowMeta: (body as any).workflow_meta_json,
+      packKey: workflowPackSelection.packKey,
+      projectId: resolvedProjectId,
+      projectPath: resolvedProjectPath,
+      context: "task-create",
+    });
+
     db.prepare(
       `
     INSERT INTO tasks (
@@ -358,11 +422,7 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
       (body as any).task_type ?? "general",
       workflowPackSelection.packKey,
       workflowPackSelection.source,
-      typeof (body as any).workflow_meta_json === "string"
-        ? (body as any).workflow_meta_json
-        : (body as any).workflow_meta_json
-          ? JSON.stringify((body as any).workflow_meta_json)
-          : null,
+      workflowMetaJson,
       typeof (body as any).output_format === "string" ? (body as any).output_format : null,
       resolvedProjectPath,
       (body as any).base_branch ?? null,
@@ -372,11 +432,7 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
     seedTaskQualityItemsFromWorkflowMeta(
       db as any,
       id,
-      typeof (body as any).workflow_meta_json === "string"
-        ? (body as any).workflow_meta_json
-        : (body as any).workflow_meta_json
-          ? JSON.stringify((body as any).workflow_meta_json)
-          : null,
+      workflowMetaJson,
       t,
     );
     recordTaskCreationAudit({
@@ -566,6 +622,7 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
           project_path: string | null;
           workflow_pack_key: string | null;
           workflow_pack_source: string | null;
+          workflow_meta_json: string | null;
         }
       | undefined;
     if (!existing) return res.status(404).json({ error: "not_found" });
@@ -632,10 +689,11 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
     let nextProjectId = existing.project_id ?? null;
     let nextProjectPath = normalizeProjectPathInput(existing.project_path) ?? normalizeTextField(existing.project_path);
     const shouldResolveWorkflowPack =
-      "workflow_pack_key" in body || "project_id" in body || "project_path" in body;
+      "workflow_pack_key" in body || "project_id" in body || "project_path" in body || "workflow_meta_json" in body;
 
     for (const field of allowedFields) {
       if (field === "workflow_pack_key" && shouldResolveWorkflowPack) continue;
+      if (field === "workflow_meta_json" && shouldResolveWorkflowPack) continue;
       if (field in body) {
         updates.push(`${field} = ?`);
         params.push(body[field]);
@@ -691,6 +749,16 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
       params.push(selection.packKey);
       updates.push("workflow_pack_source = ?");
       params.push(selection.source);
+      updates.push("workflow_meta_json = ?");
+      params.push(
+        buildWorkflowMetaJsonWithPackSnapshot({
+          rawWorkflowMeta: "workflow_meta_json" in body ? body.workflow_meta_json : existing.workflow_meta_json,
+          packKey: selection.packKey,
+          projectId: nextProjectId,
+          projectPath: nextProjectPath,
+          context: "task-patch",
+        }),
+      );
     }
 
     if ((body as any).status === "done" && !("completed_at" in (body as any))) {

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Agent, AssignmentMode, Department, Project } from "../types";
 import {
   deleteProject,
+  getEffectiveWorkflowPackPreview,
   getProjectDetail,
   getProjects,
   getTaskReportDetail,
@@ -441,6 +442,7 @@ export default function ProjectManagerModal({ agents, departments = [], onClose 
                   sortedDecisionEvents={sortedDecisionEvents}
                   getDecisionEventLabel={getDecisionEventLabel}
                   handleOpenTaskDetail={handleOpenTaskDetail}
+                  handlePreviewWorkflowPack={getEffectiveWorkflowPackPreview}
                 />
               </div>
             </>

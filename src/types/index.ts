@@ -147,6 +147,9 @@ export interface Project {
   default_pack_key?: WorkflowPackKey;
   detected_workflow_pack_key?: WorkflowPackKey | null;
   workflow_pack_source?: "file_default" | "project_default" | null;
+  workflow_pack_override_applied?: boolean;
+  workflow_pack_override_fields?: string[];
+  workflow_pack_preview_key?: WorkflowPackKey | null;
   assignment_mode: AssignmentMode;
   assigned_agent_ids?: string[];
   last_used_at: number | null;

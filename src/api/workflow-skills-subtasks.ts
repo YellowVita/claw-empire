@@ -298,6 +298,14 @@ export interface WorkflowRoutePreviewResult {
   requiresConfirmation: boolean;
 }
 
+export interface WorkflowPackEffectivePreview {
+  pack: WorkflowPackConfig;
+  override_applied: boolean;
+  override_fields: string[];
+  source: "db" | "file_override";
+  warnings: string[];
+}
+
 export async function getWorkflowPacks(): Promise<{ packs: WorkflowPackConfig[]; source?: string }> {
   return request<{ packs: WorkflowPackConfig[]; source?: string }>("/api/workflow-packs");
 }
@@ -320,6 +328,14 @@ export async function updateWorkflowPack(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
   });
+}
+
+export async function getEffectiveWorkflowPackPreview(
+  key: WorkflowPackKey,
+  projectPath?: string | null,
+): Promise<WorkflowPackEffectivePreview> {
+  const qs = projectPath ? `?projectPath=${encodeURIComponent(projectPath)}` : "";
+  return request<WorkflowPackEffectivePreview>(`/api/workflow-packs/${encodeURIComponent(key)}/effective${qs}`);
 }
 
 export async function previewWorkflowRoute(input: {

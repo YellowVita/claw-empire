@@ -6,6 +6,7 @@ import path from "node:path";
 import { getAssignedAgentIdsByProjectIds } from "../shared/project-assignments.ts";
 import { createProjectRouteHelpers } from "./projects/helpers.ts";
 import { DEFAULT_WORKFLOW_PACK_KEY, isWorkflowPackKey } from "../../workflow/packs/definitions.ts";
+import { buildEffectiveWorkflowPack } from "../../workflow/packs/effective-pack.ts";
 import { readProjectWorkflowDefaultPackKey } from "../../workflow/packs/project-config.ts";
 
 type FirstQueryValue = (value: unknown) => string | undefined;
@@ -50,6 +51,9 @@ export function registerProjectRoutes({
   ): {
     detected_workflow_pack_key: string | null;
     workflow_pack_source: "file_default" | "project_default" | null;
+    workflow_pack_override_applied: boolean;
+    workflow_pack_override_fields: string[];
+    workflow_pack_preview_key: string | null;
   } {
     const normalizedProjectPath = normalizeTextField(projectPath);
     if (normalizedProjectPath) {
@@ -61,21 +65,52 @@ export function registerProjectRoutes({
         return {
           detected_workflow_pack_key: fileDefault.packKey,
           workflow_pack_source: "file_default",
+          ...(() => {
+            const effective = buildEffectiveWorkflowPack({
+              db,
+              packKey: fileDefault.packKey,
+              projectPath: normalizedProjectPath,
+            });
+            return {
+              workflow_pack_override_applied: effective.override_applied,
+              workflow_pack_override_fields: effective.override_fields,
+              workflow_pack_preview_key: fileDefault.packKey,
+            };
+          })(),
         };
       }
     }
 
     const projectDefault = normalizeTextField(projectDefaultPackKey);
     if (projectDefault && isWorkflowPackKey(projectDefault)) {
+      const effective = normalizedProjectPath
+        ? buildEffectiveWorkflowPack({
+            db,
+            packKey: projectDefault,
+            projectPath: normalizedProjectPath,
+          })
+        : {
+            pack: null,
+            override_applied: false,
+            override_fields: [],
+            source: "db" as const,
+            warnings: [],
+          };
       return {
         detected_workflow_pack_key: projectDefault,
         workflow_pack_source: "project_default",
+        workflow_pack_override_applied: effective.override_applied,
+        workflow_pack_override_fields: effective.override_fields,
+        workflow_pack_preview_key: projectDefault,
       };
     }
 
     return {
       detected_workflow_pack_key: null,
       workflow_pack_source: null,
+      workflow_pack_override_applied: false,
+      workflow_pack_override_fields: [],
+      workflow_pack_preview_key: null,
     };
   }
 

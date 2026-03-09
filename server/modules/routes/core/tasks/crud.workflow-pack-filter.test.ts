@@ -91,6 +91,19 @@ function createTaskCrudHarness(): { db: DatabaseSync; routes: Map<string, RouteH
       created_at INTEGER,
       updated_at INTEGER
     );
+    CREATE TABLE workflow_packs (
+      key TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      input_schema_json TEXT NOT NULL,
+      prompt_preset_json TEXT NOT NULL,
+      qa_rules_json TEXT NOT NULL,
+      output_template_json TEXT NOT NULL,
+      routing_keywords_json TEXT NOT NULL,
+      cost_profile_json TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
     CREATE TABLE subtasks (
       id TEXT PRIMARY KEY,
       task_id TEXT NOT NULL,
@@ -98,6 +111,66 @@ function createTaskCrudHarness(): { db: DatabaseSync; routes: Map<string, RouteH
       delegated_task_id TEXT
     );
   `);
+  db.prepare(
+    `
+      INSERT INTO workflow_packs (
+        key, name, enabled, input_schema_json, prompt_preset_json, qa_rules_json,
+        output_template_json, routing_keywords_json, cost_profile_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+  ).run(
+    "development",
+    "Development",
+    1,
+    "{}",
+    '{"mode":"engineering"}',
+    '{"requireTestEvidence":true}',
+    '{"sections":["summary"]}',
+    '["fix","bug"]',
+    '{"maxRounds":3}',
+    1,
+    1,
+  );
+  db.prepare(
+    `
+      INSERT INTO workflow_packs (
+        key, name, enabled, input_schema_json, prompt_preset_json, qa_rules_json,
+        output_template_json, routing_keywords_json, cost_profile_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+  ).run(
+    "report",
+    "Report",
+    1,
+    "{}",
+    '{"mode":"reporting"}',
+    '{"failOnMissingSections":true}',
+    '{"sections":["summary","body"]}',
+    '["report"]',
+    '{"maxRounds":2}',
+    1,
+    1,
+  );
+  db.prepare(
+    `
+      INSERT INTO workflow_packs (
+        key, name, enabled, input_schema_json, prompt_preset_json, qa_rules_json,
+        output_template_json, routing_keywords_json, cost_profile_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+  ).run(
+    "novel",
+    "Novel",
+    1,
+    "{}",
+    '{"mode":"narrative"}',
+    '{"requireOutline":true}',
+    '{"sections":["hook"]}',
+    '["novel"]',
+    '{"maxRounds":1}',
+    1,
+    1,
+  );
 
   const routes = new Map<string, RouteHandler>();
   const app = {
@@ -290,11 +363,20 @@ describe("task CRUD workflow pack filter", () => {
       );
 
       expect(res.statusCode).toBe(200);
-      const payload = res.payload as { task: { workflow_pack_key: string; project_id: string; project_path: string } };
+      const payload = res.payload as {
+        task: { workflow_pack_key: string; project_id: string; project_path: string; workflow_meta_json: string | null };
+      };
       expect(payload.task.workflow_pack_key).toBe("novel");
       expect((payload.task as any).workflow_pack_source).toBe("project_default");
       expect(payload.task.project_id).toBe("project-novel");
       expect(payload.task.project_path).toBe("/tmp/novel-project");
+      const meta = JSON.parse(payload.task.workflow_meta_json ?? "{}");
+      expect(meta.pack_override_source).toBeNull();
+      expect(meta.pack_override_fields).toEqual([]);
+      expect(meta.effective_pack_snapshot).toMatchObject({
+        key: "novel",
+        prompt_preset: { mode: "narrative" },
+      });
     } finally {
       db.close();
     }
@@ -303,7 +385,15 @@ describe("task CRUD workflow pack filter", () => {
   it("POST /api/tasks는 project_path의 file default pack을 우선 적용한다", () => {
     const { db, routes } = createTaskCrudHarness();
     const projectPath = createTempDir("claw-task-pack-project-");
-    writeWorkflowConfig(projectPath, { defaultWorkflowPackKey: "report" });
+    writeWorkflowConfig(projectPath, {
+      defaultWorkflowPackKey: "report",
+      packOverrides: {
+        report: {
+          prompt_preset: { mode: "project-report" },
+          routing_keywords: ["project-only"],
+        },
+      },
+    });
     try {
       const handler = routes.get("POST /api/tasks") as RouteHandler | undefined;
       expect(handler).toBeTypeOf("function");
@@ -319,10 +409,21 @@ describe("task CRUD workflow pack filter", () => {
         res,
       );
 
-      const payload = res.payload as { task: { workflow_pack_key: string; workflow_pack_source: string } };
+      const payload = res.payload as {
+        task: { workflow_pack_key: string; workflow_pack_source: string; workflow_meta_json: string | null };
+      };
       expect(res.statusCode).toBe(200);
       expect(payload.task.workflow_pack_key).toBe("report");
       expect(payload.task.workflow_pack_source).toBe("file_default");
+      const meta = JSON.parse(payload.task.workflow_meta_json ?? "{}");
+      expect(meta.pack_override_source).toBe("file");
+      expect(meta.pack_override_fields).toEqual(["prompt_preset", "routing_keywords"]);
+      expect(meta.effective_pack_snapshot).toMatchObject({
+        key: "report",
+        prompt_preset: { mode: "project-report" },
+        routing_keywords: ["project-only"],
+        qa_rules: { failOnMissingSections: true },
+      });
     } finally {
       db.close();
     }
@@ -331,7 +432,14 @@ describe("task CRUD workflow pack filter", () => {
   it("PATCH /api/tasks/:id는 project_path 변경 시 file default pack과 source를 다시 저장한다", () => {
     const { db, routes } = createTaskCrudHarness();
     const projectPath = createTempDir("claw-task-pack-patch-");
-    writeWorkflowConfig(projectPath, { defaultWorkflowPackKey: "report" });
+    writeWorkflowConfig(projectPath, {
+      defaultWorkflowPackKey: "report",
+      packOverrides: {
+        report: {
+          qa_rules: { requireApproval: true },
+        },
+      },
+    });
     try {
       db.prepare(
         `
@@ -353,7 +461,7 @@ describe("task CRUD workflow pack filter", () => {
         "general",
         "development",
         "fallback_default",
-        null,
+        "{\"custom\":\"keep\"}",
         null,
         null,
         null,
@@ -372,9 +480,19 @@ describe("task CRUD workflow pack filter", () => {
       handler?.({ params: { id: "task-1" }, body: { project_path: projectPath } }, res);
 
       expect(res.statusCode).toBe(200);
-      const payload = res.payload as { task: { workflow_pack_key: string; workflow_pack_source: string } };
+      const payload = res.payload as {
+        task: { workflow_pack_key: string; workflow_pack_source: string; workflow_meta_json: string | null };
+      };
       expect(payload.task.workflow_pack_key).toBe("report");
       expect(payload.task.workflow_pack_source).toBe("file_default");
+      const meta = JSON.parse(payload.task.workflow_meta_json ?? "{}");
+      expect(meta.custom).toBe("keep");
+      expect(meta.pack_override_source).toBe("file");
+      expect(meta.pack_override_fields).toEqual(["qa_rules"]);
+      expect(meta.effective_pack_snapshot).toMatchObject({
+        key: "report",
+        qa_rules: { requireApproval: true },
+      });
     } finally {
       db.close();
     }
