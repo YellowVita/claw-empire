@@ -1,48 +1,31 @@
-import { useState, useRef, useMemo, useCallback } from "react";
-import type { DecisionInboxItem } from "./components/chat/decision-inbox";
-import { useWebSocket } from "./hooks/useWebSocket";
-import type {
-  Department,
-  Agent,
-  Task,
-  Message,
-  CompanyStats,
-  CompanySettings,
-  CliStatusMap,
-  SubTask,
-  MeetingPresence,
-  SubAgent,
-  CrossDeptDelivery,
-  CeoOfficeCall,
-  OfficePackProfile,
-  RoomTheme,
-  WorkflowPackKey,
-} from "./types";
-import type { TaskReportDetail } from "./api";
+import { useState, useRef, useMemo, useCallback, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import * as api from "./api";
-import { detectBrowserLanguage, normalizeLanguage } from "./i18n";
 import { useTheme } from "./ThemeContext";
-import { ROOM_THEMES_STORAGE_KEY, UPDATE_BANNER_DISMISS_STORAGE_KEY } from "./app/constants";
-import {
-  detectRuntimeOs,
-  isForceUpdateBannerEnabled,
-  mergeSettingsWithDefaults,
-  readStoredRoomThemes,
-} from "./app/utils";
-import type { OAuthCallbackResult, RuntimeOs, RoomThemeMap, TaskPanelTab, View } from "./app/types";
-import { useRealtimeSync } from "./app/useRealtimeSync";
-import { useAppLabels } from "./app/useAppLabels";
 import AppLoadingScreen from "./app/AppLoadingScreen";
 import AppMainLayout from "./app/AppMainLayout";
 import AppOverlays from "./app/AppOverlays";
-import { useAppActions } from "./app/useAppActions";
+import { ROOM_THEMES_STORAGE_KEY, UPDATE_BANNER_DISMISS_STORAGE_KEY } from "./app/constants";
+import {
+  AppStateProviders,
+  useAgentRuntime,
+  useAuxiliaryOverlayState,
+  useChatOverlayState,
+  useChatRuntime,
+  useDecisionInboxState,
+  useSelectionOverlayState,
+  useTaskRuntime,
+} from "./app/state-contexts";
 import { useActiveMeetingTaskId } from "./app/useActiveMeetingTaskId";
-import { useUpdateStatusPolling } from "./app/useUpdateStatusPolling";
-import { useAppViewEffects } from "./app/useAppViewEffects";
+import { useAppActions } from "./app/useAppActions";
 import { useAppBootstrapData } from "./app/useAppBootstrapData";
-import { useLiveSyncScheduler } from "./app/useLiveSyncScheduler";
+import { useAppLabels } from "./app/useAppLabels";
 import { useAppLayoutSections } from "./app/useAppLayoutSections";
-import { resolvePackAgentViews, resolvePackDepartmentsForDisplay } from "./app/office-pack-display";
+import { useAppViewEffects } from "./app/useAppViewEffects";
+import { useLiveSyncScheduler } from "./app/useLiveSyncScheduler";
+import { useRealtimeSync } from "./app/useRealtimeSync";
+import { useUpdateStatusPolling } from "./app/useUpdateStatusPolling";
+import { detectRuntimeOs, isForceUpdateBannerEnabled, mergeSettingsWithDefaults, readStoredRoomThemes } from "./app/utils";
+import type { OAuthCallbackResult, RuntimeOs, RoomThemeMap, View } from "./app/types";
 import {
   buildOfficePackPresentation,
   buildOfficePackStarterAgents,
@@ -50,8 +33,48 @@ import {
   normalizeOfficeWorkflowPack,
   resolveOfficePackSeedProvider,
 } from "./app/office-workflow-pack";
+import { resolvePackAgentViews, resolvePackDepartmentsForDisplay } from "./app/office-pack-display";
+import { detectBrowserLanguage, normalizeLanguage } from "./i18n";
+import type {
+  Agent,
+  CompanySettings,
+  Department,
+  OfficePackProfile,
+  RoomTheme,
+  WorkflowPackKey,
+} from "./types";
+import { useWebSocket } from "./hooks/useWebSocket";
 
 export type { OAuthCallbackResult } from "./app/types";
+
+type AppShellProps = {
+  theme: "light" | "dark";
+  toggleTheme: () => void;
+  initialRoomThemes: ReturnType<typeof readStoredRoomThemes>;
+  hasLocalRoomThemesRef: MutableRefObject<boolean>;
+  view: View;
+  setView: Dispatch<SetStateAction<View>>;
+  settings: CompanySettings;
+  setSettings: Dispatch<SetStateAction<CompanySettings>>;
+  loading: boolean;
+  setLoading: Dispatch<SetStateAction<boolean>>;
+  oauthResult: OAuthCallbackResult | null;
+  setOauthResult: Dispatch<SetStateAction<OAuthCallbackResult | null>>;
+  customRoomThemes: RoomThemeMap;
+  setCustomRoomThemes: Dispatch<SetStateAction<RoomThemeMap>>;
+  mobileNavOpen: boolean;
+  setMobileNavOpen: Dispatch<SetStateAction<boolean>>;
+  mobileHeaderMenuOpen: boolean;
+  setMobileHeaderMenuOpen: Dispatch<SetStateAction<boolean>>;
+  officePackBootstrappingLabel: string | null;
+  setOfficePackBootstrappingLabel: Dispatch<SetStateAction<string | null>>;
+  runtimeOs: RuntimeOs;
+  forceUpdateBanner: boolean;
+  updateStatus: api.UpdateStatus | null;
+  setUpdateStatus: Dispatch<SetStateAction<api.UpdateStatus | null>>;
+  dismissedUpdateVersion: string;
+  setDismissedUpdateVersion: Dispatch<SetStateAction<string>>;
+};
 
 export default function App() {
   const { theme, toggleTheme } = useTheme();
@@ -59,37 +82,11 @@ export default function App() {
   const hasLocalRoomThemesRef = useRef<boolean>(initialRoomThemes.hasStored);
 
   const [view, setView] = useState<View>("office");
-  const [departments, setDepartments] = useState<Department[]>([]);
-  const [agents, setAgents] = useState<Agent[]>([]);
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [stats, setStats] = useState<CompanyStats | null>(null);
   const [settings, setSettings] = useState<CompanySettings>(() =>
     mergeSettingsWithDefaults({ language: detectBrowserLanguage() }),
   );
-  const [cliStatus, setCliStatus] = useState<CliStatusMap | null>(null);
-  const [subAgents, setSubAgents] = useState<SubAgent[]>([]);
-  const [subtasks, setSubtasks] = useState<SubTask[]>([]);
-
-  const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
-  const [chatAgent, setChatAgent] = useState<Agent | null>(null);
-  const [showChat, setShowChat] = useState(false);
-  const [taskPanel, setTaskPanel] = useState<{ taskId: string; tab: TaskPanelTab } | null>(null);
   const [loading, setLoading] = useState(true);
-  const [unreadAgentIds, setUnreadAgentIds] = useState<Set<string>>(new Set());
-  const [crossDeptDeliveries, setCrossDeptDeliveries] = useState<CrossDeptDelivery[]>([]);
-  const [ceoOfficeCalls, setCeoOfficeCalls] = useState<CeoOfficeCall[]>([]);
-  const [meetingPresence, setMeetingPresence] = useState<MeetingPresence[]>([]);
   const [oauthResult, setOauthResult] = useState<OAuthCallbackResult | null>(null);
-  const [taskReport, setTaskReport] = useState<TaskReportDetail | null>(null);
-  const [showReportHistory, setShowReportHistory] = useState(false);
-  const [showAgentStatus, setShowAgentStatus] = useState(false);
-  const [showRoomManager, setShowRoomManager] = useState(false);
-  const [showDecisionInbox, setShowDecisionInbox] = useState(false);
-  const [decisionInboxLoading, setDecisionInboxLoading] = useState(false);
-  const [decisionInboxItems, setDecisionInboxItems] = useState<DecisionInboxItem[]>([]);
-  const [decisionReplyBusyKey, setDecisionReplyBusyKey] = useState<string | null>(null);
-  const [activeRoomThemeTargetId, setActiveRoomThemeTargetId] = useState<string | null>(null);
   const [customRoomThemes, setCustomRoomThemes] = useState<RoomThemeMap>(() => initialRoomThemes.themes);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [mobileHeaderMenuOpen, setMobileHeaderMenuOpen] = useState(false);
@@ -101,21 +98,114 @@ export default function App() {
     if (typeof window === "undefined") return "";
     return window.localStorage.getItem(UPDATE_BANNER_DISMISS_STORAGE_KEY) ?? "";
   });
-  const [streamingMessage, setStreamingMessage] = useState<{
-    message_id: string;
-    agent_id: string;
-    agent_name: string;
-    agent_avatar: string;
-    content: string;
-  } | null>(null);
+
+  return (
+    <AppStateProviders>
+      <AppShell
+        theme={theme}
+        toggleTheme={toggleTheme}
+        initialRoomThemes={initialRoomThemes}
+        hasLocalRoomThemesRef={hasLocalRoomThemesRef}
+        view={view}
+        setView={setView}
+        settings={settings}
+        setSettings={setSettings}
+        loading={loading}
+        setLoading={setLoading}
+        oauthResult={oauthResult}
+        setOauthResult={setOauthResult}
+        customRoomThemes={customRoomThemes}
+        setCustomRoomThemes={setCustomRoomThemes}
+        mobileNavOpen={mobileNavOpen}
+        setMobileNavOpen={setMobileNavOpen}
+        mobileHeaderMenuOpen={mobileHeaderMenuOpen}
+        setMobileHeaderMenuOpen={setMobileHeaderMenuOpen}
+        officePackBootstrappingLabel={officePackBootstrappingLabel}
+        setOfficePackBootstrappingLabel={setOfficePackBootstrappingLabel}
+        runtimeOs={runtimeOs}
+        forceUpdateBanner={forceUpdateBanner}
+        updateStatus={updateStatus}
+        setUpdateStatus={setUpdateStatus}
+        dismissedUpdateVersion={dismissedUpdateVersion}
+        setDismissedUpdateVersion={setDismissedUpdateVersion}
+      />
+    </AppStateProviders>
+  );
+}
+
+function AppShell({
+  theme,
+  toggleTheme,
+  initialRoomThemes,
+  hasLocalRoomThemesRef,
+  view,
+  setView,
+  settings,
+  setSettings,
+  loading,
+  setLoading,
+  oauthResult,
+  setOauthResult,
+  customRoomThemes,
+  setCustomRoomThemes,
+  mobileNavOpen,
+  setMobileNavOpen,
+  mobileHeaderMenuOpen,
+  setMobileHeaderMenuOpen,
+  officePackBootstrappingLabel,
+  setOfficePackBootstrappingLabel,
+  runtimeOs,
+  forceUpdateBanner,
+  updateStatus,
+  setUpdateStatus,
+  dismissedUpdateVersion,
+  setDismissedUpdateVersion,
+}: AppShellProps) {
+  const {
+    departments,
+    setDepartments,
+    agents,
+    setAgents,
+    subAgents,
+    setSubAgents,
+    meetingPresence,
+    setMeetingPresence,
+    crossDeptDeliveries,
+    setCrossDeptDeliveries,
+    ceoOfficeCalls,
+    setCeoOfficeCalls,
+    streamingMessage,
+    setStreamingMessage,
+  } = useAgentRuntime();
+  const { tasks, setTasks, subtasks, setSubtasks, stats, setStats, cliStatus, setCliStatus } = useTaskRuntime();
+  const { messages, setMessages, unreadAgentIds, setUnreadAgentIds } = useChatRuntime();
+  const { showChat, setShowChat, chatAgent, setChatAgent } = useChatOverlayState();
+  const { selectedAgent, setSelectedAgent, taskPanel, setTaskPanel } = useSelectionOverlayState();
+  const {
+    showDecisionInbox,
+    setShowDecisionInbox,
+    decisionInboxLoading,
+    setDecisionInboxLoading,
+    decisionInboxItems,
+    setDecisionInboxItems,
+    setDecisionReplyBusyKey,
+  } = useDecisionInboxState();
+  const {
+    setTaskReport,
+    setShowReportHistory,
+    setShowAgentStatus,
+    setShowRoomManager,
+    activeRoomThemeTargetId,
+    setActiveRoomThemeTargetId,
+  } = useAuxiliaryOverlayState();
 
   const viewRef = useRef<View>("office");
   viewRef.current = view;
   const agentsRef = useRef<Agent[]>(agents);
   agentsRef.current = agents;
-  const tasksRef = useRef<Task[]>(tasks);
+  const tasksRef = useRef(tasks);
   tasksRef.current = tasks;
-  const subAgentsRef = useRef<SubAgent[]>(subAgents);
+  const subAgentsRef = useRef(subAgents);
   subAgentsRef.current = subAgents;
   const codexThreadToSubAgentIdRef = useRef<Map<string, string>>(new Map());
   const codexThreadBindingTsRef = useRef<Map<string, number>>(new Map());
@@ -351,7 +441,6 @@ export default function App() {
   });
 
   const activeMeetingTaskId = useActiveMeetingTaskId(meetingPresence);
-
   const labels = useAppLabels({
     view,
     settings,
@@ -397,6 +486,7 @@ export default function App() {
     },
     [actions, overlayAgents],
   );
+
   const layoutSections = useAppLayoutSections({
     shellProps: {
       mobileNavOpen,
@@ -432,7 +522,8 @@ export default function App() {
       ceoOfficeCalls,
       customRoomThemes,
       activeRoomThemeTargetId,
-      onCrossDeptDeliveryProcessed: (id) => setCrossDeptDeliveries((prev) => prev.filter((delivery) => delivery.id !== id)),
+      onCrossDeptDeliveryProcessed: (id) =>
+        setCrossDeptDeliveries((prev) => prev.filter((delivery) => delivery.id !== id)),
       onCeoOfficeCallProcessed: (id) => setCeoOfficeCalls((prev) => prev.filter((call) => call.id !== id)),
       onOpenActiveMeetingMinutes: (taskId) => setTaskPanel({ taskId, tab: "minutes" }),
       onSelectAgent: setSelectedAgent,
@@ -486,45 +577,25 @@ export default function App() {
       settingsProps={layoutSections.settingsProps}
     >
       <AppOverlays
-        showChat={showChat}
-        chatAgent={chatAgent}
-        messages={messages}
-        agents={overlayAgents}
-        streamingMessage={streamingMessage}
+        activeOfficeWorkflowPack={settings.officeWorkflowPack ?? "development"}
+        uiLanguage={labels.uiLanguage}
+        overlayAgents={overlayAgents}
+        overlayDepartments={overlayDepartments}
+        roomManagerDepartments={labels.roomManagerDepartments}
+        customRoomThemes={customRoomThemes}
         onSendMessage={actions.handleSendMessage}
         onSendAnnouncement={actions.handleSendAnnouncement}
         onSendDirective={actions.handleSendDirective}
         onClearMessages={actions.handleClearMessages}
-        onCloseChat={() => setShowChat(false)}
-        showDecisionInbox={showDecisionInbox}
-        decisionInboxLoading={decisionInboxLoading}
-        decisionInboxItems={decisionInboxItems}
-        decisionReplyBusyKey={decisionReplyBusyKey}
-        uiLanguage={labels.uiLanguage}
-        onCloseDecisionInbox={() => setShowDecisionInbox(false)}
         onRefreshDecisionInbox={() => {
           void actions.loadDecisionInbox();
         }}
         onReplyDecisionOption={actions.handleReplyDecisionOption}
+        onOpenAgentChat={actions.handleOpenChat}
         onOpenDecisionChat={actions.handleOpenDecisionChat}
-        selectedAgent={selectedAgent}
-        activeOfficeWorkflowPack={settings.officeWorkflowPack ?? "development"}
-        departments={overlayDepartments}
-        tasks={tasks}
-        subAgents={subAgents}
-        subtasks={subtasks}
-        onCloseSelectedAgent={() => setSelectedAgent(null)}
-        onChatFromAgentDetail={(agent) => {
-          setSelectedAgent(null);
-          actions.handleOpenChat(agent);
-        }}
         onAssignTaskFromAgentDetail={() => {
           setSelectedAgent(null);
           setView("tasks");
-        }}
-        onOpenTerminalFromAgentDetail={(taskId) => {
-          setSelectedAgent(null);
-          setTaskPanel({ taskId, tab: "terminal" });
         }}
         onAgentUpdated={() => {
           api
@@ -553,18 +624,6 @@ export default function App() {
             })
             .catch(console.error);
         }}
-        taskPanel={taskPanel}
-        onCloseTaskPanel={() => setTaskPanel(null)}
-        taskReport={taskReport}
-        onCloseTaskReport={() => setTaskReport(null)}
-        showReportHistory={showReportHistory}
-        onCloseReportHistory={() => setShowReportHistory(false)}
-        showAgentStatus={showAgentStatus}
-        onCloseAgentStatus={() => setShowAgentStatus(false)}
-        showRoomManager={showRoomManager}
-        roomManagerDepartments={labels.roomManagerDepartments}
-        customRoomThemes={customRoomThemes}
-        onActiveRoomThemeTargetIdChange={setActiveRoomThemeTargetId}
         onRoomThemeChange={(themes) => {
           setCustomRoomThemes(themes as RoomThemeMap);
           hasLocalRoomThemesRef.current = true;
@@ -576,10 +635,6 @@ export default function App() {
           api.saveRoomThemes(themes as Record<string, RoomTheme>).catch((error) => {
             console.error("Save room themes failed:", error);
           });
-        }}
-        onCloseRoomManager={() => {
-          setShowRoomManager(false);
-          setActiveRoomThemeTargetId(null);
         }}
       />
     </AppMainLayout>
