@@ -179,6 +179,37 @@ CREATE TABLE IF NOT EXISTS task_quality_items (
   completed_at INTEGER
 );
 
+CREATE TABLE IF NOT EXISTS task_quality_runs (
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  quality_item_id TEXT REFERENCES task_quality_items(id) ON DELETE SET NULL,
+  run_type TEXT NOT NULL CHECK(run_type IN ('command','artifact_check','system')),
+  name TEXT NOT NULL,
+  command TEXT,
+  status TEXT NOT NULL CHECK(status IN ('passed','failed','skipped')),
+  exit_code INTEGER,
+  summary TEXT,
+  output_excerpt TEXT,
+  metadata_json TEXT,
+  started_at INTEGER,
+  completed_at INTEGER,
+  created_at INTEGER DEFAULT (unixepoch()*1000)
+);
+
+CREATE TABLE IF NOT EXISTS task_artifacts (
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  quality_item_id TEXT REFERENCES task_quality_items(id) ON DELETE SET NULL,
+  kind TEXT NOT NULL CHECK(kind IN ('report_archive','video','file','document','other')),
+  title TEXT NOT NULL,
+  path TEXT,
+  mime TEXT,
+  size_bytes INTEGER,
+  source TEXT NOT NULL CHECK(source IN ('auto','report_archive','video_gate','system')),
+  metadata_json TEXT,
+  created_at INTEGER DEFAULT (unixepoch()*1000)
+);
+
 CREATE TABLE IF NOT EXISTS task_execution_events (
   id TEXT PRIMARY KEY,
   task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -397,6 +428,8 @@ CREATE INDEX IF NOT EXISTS idx_task_retry_queue_next_run ON task_retry_queue(nex
 CREATE INDEX IF NOT EXISTS idx_task_execution_events_task_created ON task_execution_events(task_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_task_execution_events_task_category_created ON task_execution_events(task_id, category, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_task_quality_items_task ON task_quality_items(task_id, sort_order ASC, created_at ASC);
+CREATE INDEX IF NOT EXISTS idx_task_quality_runs_task_created ON task_quality_runs(task_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_task_artifacts_task_created ON task_artifacts(task_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_task_interrupt_injections_task
   ON task_interrupt_injections(task_id, session_id, consumed_at, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_receiver ON messages(receiver_type, receiver_id, created_at DESC);

@@ -25,6 +25,65 @@ const baseReport = {
   ],
   subtasks: [],
   meeting_minutes: [],
+  quality: {
+    items: [
+      {
+        id: "quality-1",
+        task_id: "task-1",
+        kind: "validation",
+        label: "Video verified",
+        details: null,
+        required: 1,
+        status: "passed",
+        evidence_markdown: null,
+        source: "system",
+        sort_order: 0,
+        created_at: 1000,
+        updated_at: 1000,
+        completed_at: 1700,
+      },
+    ],
+    summary: {
+      required_total: 1,
+      passed: 1,
+      failed: 0,
+      pending: 0,
+      blocked_review: false,
+    },
+    runs: [
+      {
+        id: "quality-run-1",
+        task_id: "task-1",
+        quality_item_id: null,
+        run_type: "artifact_check",
+        name: "video gate",
+        command: null,
+        status: "passed",
+        exit_code: 0,
+        summary: "Video artifact verified",
+        output_excerpt: null,
+        metadata: { path: "/tmp/project/video_output/final.mp4" },
+        started_at: 1600,
+        completed_at: 1700,
+        created_at: 1700,
+      },
+    ],
+    artifacts: [
+      {
+        id: "artifact-1",
+        task_id: "task-1",
+        quality_item_id: null,
+        kind: "video",
+        title: "final.mp4",
+        path: "/tmp/project/video_output/final.mp4",
+        mime: "video/mp4",
+        size_bytes: 1024,
+        source: "video_gate",
+        metadata: { verified: true },
+        created_at: 1700,
+      },
+    ],
+  },
   planning_summary: {
     title: "Planning Lead Consolidated Summary",
     content: "Summary body",
@@ -112,5 +171,25 @@ describe("TaskReportPopup", () => {
     expect(screen.getByText("Execution Observability")).toBeInTheDocument();
     expect(screen.getByText("hard_timeout")).toBeInTheDocument();
     expect(screen.getByText("Automatic retry scheduled")).toBeInTheDocument();
+  });
+
+  it("shows quality evidence when quality runs and artifacts exist", () => {
+    render(
+      <I18nProvider language="en">
+        <TaskReportPopup
+          report={baseReport as any}
+          agents={[{ id: "agent-1", name: "Ari", name_ko: "아리", avatar_emoji: "A" } as any]}
+          departments={[{ id: "planning", name: "Planning", name_ko: "기획팀", color: "#00aa88", icon: "P" } as any]}
+          uiLanguage="en"
+          onClose={() => {}}
+        />
+      </I18nProvider>,
+    );
+
+    expect(screen.getByText("Quality Evidence")).toBeInTheDocument();
+    expect(screen.getByText("Recent Quality Runs")).toBeInTheDocument();
+    expect(screen.getByText("Video artifact verified")).toBeInTheDocument();
+    expect(screen.getByText("Captured Artifacts")).toBeInTheDocument();
+    expect(screen.getByText("final.mp4")).toBeInTheDocument();
   });
 });

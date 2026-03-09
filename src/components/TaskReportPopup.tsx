@@ -66,6 +66,7 @@ export default function TaskReportPopup({ report, agents, departments, uiLanguag
   const projectPath = currentReport.project?.project_path || currentReport.task.project_path;
   const planningSummary = currentReport.planning_summary;
   const execution = currentReport.execution;
+  const quality = currentReport.quality;
   const branchVerificationLogs = useMemo(
     () =>
       (currentReport.logs ?? []).filter(
@@ -330,6 +331,108 @@ export default function TaskReportPopup({ report, agents, departments, uiLanguag
                 <p className="mt-1 text-[11px] text-slate-300">{event.message}</p>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+      {quality && (quality.items.length > 0 || quality.runs.length > 0 || quality.artifacts.length > 0) && (
+        <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/10 p-3">
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <p className="text-xs font-semibold text-cyan-200">
+              {t({
+                ko: "검수 근거",
+                en: "Quality Evidence",
+                ja: "品質エビデンス",
+                zh: "质量证据",
+              })}
+            </p>
+            <span className="text-[11px] text-cyan-300/80">
+              {quality.summary.blocked_review
+                ? t({ ko: "리뷰 차단", en: "Review Blocked", ja: "レビュー保留", zh: "审核阻止" })
+                : t({ ko: "리뷰 가능", en: "Review Ready", ja: "レビュー可能", zh: "可进入审核" })}
+            </span>
+          </div>
+          <div className="mb-3 grid grid-cols-2 gap-2 md:grid-cols-4">
+            <div className="rounded-md border border-cyan-500/20 bg-slate-950/30 px-3 py-2">
+              <p className="text-[11px] text-slate-400">{t({ ko: "필수 항목", en: "Required", ja: "必須", zh: "必填项" })}</p>
+              <p className="text-sm font-semibold text-slate-100">{quality.summary.required_total}</p>
+            </div>
+            <div className="rounded-md border border-cyan-500/20 bg-slate-950/30 px-3 py-2">
+              <p className="text-[11px] text-slate-400">{t({ ko: "통과", en: "Passed", ja: "成功", zh: "通过" })}</p>
+              <p className="text-sm font-semibold text-slate-100">{quality.summary.passed}</p>
+            </div>
+            <div className="rounded-md border border-cyan-500/20 bg-slate-950/30 px-3 py-2">
+              <p className="text-[11px] text-slate-400">{t({ ko: "실패", en: "Failed", ja: "失敗", zh: "失败" })}</p>
+              <p className="text-sm font-semibold text-slate-100">{quality.summary.failed}</p>
+            </div>
+            <div className="rounded-md border border-cyan-500/20 bg-slate-950/30 px-3 py-2">
+              <p className="text-[11px] text-slate-400">{t({ ko: "대기", en: "Pending", ja: "保留", zh: "待处理" })}</p>
+              <p className="text-sm font-semibold text-slate-100">{quality.summary.pending}</p>
+            </div>
+          </div>
+          <div className="space-y-3">
+            <div>
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                {t({ ko: "최근 검증 실행", en: "Recent Quality Runs", ja: "直近の検証実行", zh: "最近质检运行" })}
+              </p>
+              {quality.runs.length > 0 ? (
+                <div className="space-y-1.5">
+                  {quality.runs.map((run) => (
+                    <div key={run.id} className="rounded-md border border-slate-700/50 bg-slate-950/40 px-3 py-2">
+                      <div className="flex items-center justify-between gap-2 text-[11px]">
+                        <div className="min-w-0">
+                          <span className="mr-2 rounded bg-slate-800 px-1.5 py-0.5 text-slate-300">{run.run_type}</span>
+                          <span className="truncate text-slate-100">{run.name}</span>
+                        </div>
+                        <span className="shrink-0 text-slate-500">{fmtTime(run.created_at)}</span>
+                      </div>
+                      <p className="mt-1 text-[11px] text-slate-300">{run.summary || run.status}</p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-slate-500">
+                  {t({
+                    ko: "기록된 quality run이 없습니다",
+                    en: "No quality runs",
+                    ja: "記録された品質実行はありません",
+                    zh: "暂无质量运行记录",
+                  })}
+                </p>
+              )}
+            </div>
+            <div>
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                {t({ ko: "자동 수집 산출물", en: "Captured Artifacts", ja: "収集済み成果物", zh: "已采集产物" })}
+              </p>
+              {quality.artifacts.length > 0 ? (
+                <div className="space-y-1.5">
+                  {quality.artifacts.map((artifact) => (
+                    <div
+                      key={artifact.id}
+                      className="flex items-center justify-between gap-3 rounded-md border border-slate-700/50 bg-slate-950/40 px-3 py-2 text-[11px]"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate text-slate-100">{artifact.title}</p>
+                        <p className="truncate text-slate-500">
+                          {artifact.kind}
+                          {artifact.path ? ` · ${artifact.path}` : ""}
+                        </p>
+                      </div>
+                      <span className="shrink-0 text-slate-500">{fmtTime(artifact.created_at)}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-slate-500">
+                  {t({
+                    ko: "자동 수집된 산출물이 없습니다",
+                    en: "No captured artifacts",
+                    ja: "自動収集された成果物はありません",
+                    zh: "暂无自动采集产物",
+                  })}
+                </p>
+              )}
+            </div>
           </div>
         </div>
       )}

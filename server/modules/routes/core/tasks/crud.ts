@@ -8,8 +8,7 @@ import type { MeetingMinuteEntryRow, MeetingMinutesRow } from "../../shared/type
 import { isWorkflowPackKey } from "../../../workflow/packs/definitions.ts";
 import { resolveWorkflowPackKeyForTask } from "../../../workflow/packs/task-pack-resolver.ts";
 import {
-  computeTaskQualitySummary,
-  loadTaskQualityItems,
+  buildTaskQualityPayload,
   seedTaskQualityItemsFromWorkflowMeta,
 } from "./quality.ts";
 import { deleteTaskRetryQueueRow } from "../../../workflow/orchestration/task-execution-policy.ts";
@@ -83,23 +82,12 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
     return path.normalize(absolute);
   }
 
-  function buildQualityPayload(taskId: string): {
-    items: Array<Record<string, unknown>>;
-    summary: ReturnType<typeof computeTaskQualitySummary>;
-  } {
-    const items = loadTaskQualityItems(db as any, taskId);
-    return {
-      items,
-      summary: computeTaskQualitySummary(items),
-    };
-  }
-
   function canEnterReview(taskId: string): {
     ok: boolean;
     items: Array<Record<string, unknown>>;
-    summary: ReturnType<typeof computeTaskQualitySummary>;
+    summary: ReturnType<typeof buildTaskQualityPayload>["summary"];
   } {
-    const quality = buildQualityPayload(taskId);
+    const quality = buildTaskQualityPayload(db as any, taskId);
     return {
       ok: !quality.summary.blocked_review,
       items: quality.items,
@@ -482,7 +470,7 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
 
     const logs = db.prepare("SELECT * FROM task_logs WHERE task_id = ? ORDER BY created_at DESC LIMIT 200").all(id);
     const subtasks = db.prepare("SELECT * FROM subtasks WHERE task_id = ? ORDER BY created_at").all(id);
-    const quality = buildQualityPayload(id);
+    const quality = buildTaskQualityPayload(db as any, id);
 
     res.json({ task: { ...(task as Record<string, unknown>), quality_summary: quality.summary }, logs, subtasks });
   });
@@ -491,7 +479,7 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
     const id = String(req.params.id);
     const task = db.prepare("SELECT id FROM tasks WHERE id = ?").get(id);
     if (!task) return res.status(404).json({ error: "not_found" });
-    res.json(buildQualityPayload(id));
+    res.json(buildTaskQualityPayload(db as any, id));
   });
 
   app.patch("/api/tasks/:id/quality/items/:itemId", (req, res) => {
@@ -520,7 +508,7 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
     );
 
     const updated = db.prepare("SELECT * FROM task_quality_items WHERE id = ? AND task_id = ?").get(itemId, id);
-    res.json({ ok: true, item: updated, summary: buildQualityPayload(id).summary });
+    res.json({ ok: true, item: updated, summary: buildTaskQualityPayload(db as any, id).summary });
   });
 
   app.get("/api/tasks/:id/meeting-minutes", (req, res) => {
@@ -731,6 +719,8 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
     db.prepare("DELETE FROM task_logs WHERE task_id = ?").run(id);
     db.prepare("DELETE FROM task_retry_queue WHERE task_id = ?").run(id);
     db.prepare("DELETE FROM task_quality_items WHERE task_id = ?").run(id);
+    db.prepare("DELETE FROM task_quality_runs WHERE task_id = ?").run(id);
+    db.prepare("DELETE FROM task_artifacts WHERE task_id = ?").run(id);
     db.prepare("DELETE FROM messages WHERE task_id = ?").run(id);
     db.prepare("DELETE FROM tasks WHERE id = ?").run(id);
 

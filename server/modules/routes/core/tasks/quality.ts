@@ -1,5 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
+import {
+  listTaskArtifactsForTask,
+  listTaskQualityRunsForTask,
+  type TaskArtifact,
+  type TaskQualityRun,
+} from "../../../workflow/orchestration/task-quality-evidence.ts";
 
 type DbLike = Pick<DatabaseSync, "prepare">;
 
@@ -13,6 +19,13 @@ export type TaskQualitySummary = {
   failed: number;
   pending: number;
   blocked_review: boolean;
+};
+
+export type TaskQualityPayload = {
+  items: Array<Record<string, unknown>>;
+  summary: TaskQualitySummary;
+  runs: TaskQualityRun[];
+  artifacts: TaskArtifact[];
 };
 
 export function computeTaskQualitySummary(items: Array<Record<string, unknown>>): TaskQualitySummary {
@@ -48,6 +61,16 @@ export function loadTaskQualityItems(db: DbLike, taskId: string): Array<Record<s
   } catch {
     return [];
   }
+}
+
+export function buildTaskQualityPayload(db: DbLike, taskId: string): TaskQualityPayload {
+  const items = loadTaskQualityItems(db, taskId);
+  return {
+    items,
+    summary: computeTaskQualitySummary(items),
+    runs: listTaskQualityRunsForTask(db, taskId, 20),
+    artifacts: listTaskArtifactsForTask(db, taskId, 20),
+  };
 }
 
 function normalizeSeedList(raw: unknown, kind: TaskQualityKind, now: number): Array<{

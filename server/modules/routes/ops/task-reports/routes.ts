@@ -1,6 +1,6 @@
 import type { RuntimeContext } from "../../../../types/runtime-context.ts";
 import { createTaskReportHelpers } from "./helpers.ts";
-import { computeTaskQualitySummary, loadTaskQualityItems } from "../../core/tasks/quality.ts";
+import { buildTaskQualityPayload } from "../../core/tasks/quality.ts";
 import {
   listTaskExecutionEventsForTask,
   summarizeTaskExecutionEvents,
@@ -177,8 +177,7 @@ export function registerTaskReportRoutes(ctx: RuntimeContext): void {
         .prepare("SELECT kind, message, created_at FROM task_logs WHERE task_id = ? ORDER BY created_at ASC")
         .all(rootTaskId);
       const rootMinutes = fetchMeetingMinutesForTask(rootTaskId);
-      const qualityItems = loadTaskQualityItems(db as any, rootTaskId);
-      const qualitySummary = computeTaskQualitySummary(qualityItems);
+      const quality = buildTaskQualityPayload(db as any, rootTaskId);
       const executionSummary = summarizeTaskExecutionEvents(db as any, rootTaskId);
       const executionEvents = listTaskExecutionEventsForTask(db as any, rootTaskId, 50);
 
@@ -257,10 +256,7 @@ export function registerTaskReportRoutes(ctx: RuntimeContext): void {
         task: rootTask,
         logs: rootLogs,
         subtasks: rootSubtasks,
-        quality: {
-          items: qualityItems,
-          summary: qualitySummary,
-        },
+        quality,
         execution: {
           summary: executionSummary,
           events: executionEvents,

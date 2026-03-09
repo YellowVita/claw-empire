@@ -9,6 +9,7 @@ import { evaluateRemotionOnlyGateFromLogFiles } from "../packs/video-render-engi
 import { resolveScopedTeamLeader } from "../packs/agent-scope.ts";
 import { readYoloModeEnabled } from "../../routes/ops/messages/decision-inbox/yolo-mode.ts";
 import { reconcileVideoRenderDelegationState } from "./video-render-delegation-state.ts";
+import { recordTaskArtifact, recordTaskQualityRun } from "./task-quality-evidence.ts";
 
 type CreateReviewFinalizeToolsDeps = Record<string, any>;
 
@@ -403,6 +404,21 @@ export function createReviewFinalizeTools(deps: CreateReviewFinalizeToolsDeps) {
       }
 
       if (!verifiedPath) {
+        recordTaskQualityRun(db as any, {
+          taskId,
+          runType: "artifact_check",
+          name: "video_artifact_verification",
+          status: "failed",
+          summary: "Video artifact verification failed",
+          metadata: {
+            relative_path: videoArtifactSpec.relativePath,
+            checked_paths: candidatePaths,
+            reason: "missing_or_empty_video",
+          },
+          startedAt: nowMs(),
+          completedAt: nowMs(),
+          createdAt: nowMs(),
+        });
         appendTaskLog(
           taskId,
           "system",
@@ -436,6 +452,21 @@ export function createReviewFinalizeTools(deps: CreateReviewFinalizeToolsDeps) {
         "system",
         `Review gate: video artifact verified for approval (${verifiedPath}, ${verifiedSize} bytes)`,
       );
+      recordTaskArtifact(db as any, {
+        taskId,
+        kind: "video",
+        title: path.basename(verifiedPath),
+        path: verifiedPath,
+        mime: "video/mp4",
+        sizeBytes: verifiedSize,
+        source: "video_gate",
+        metadata: {
+          relative_path: videoArtifactSpec.relativePath,
+          verified_path: verifiedPath,
+          verified_size: verifiedSize,
+        },
+        createdAt: nowMs(),
+      });
 
       const remotionEvidenceTaskIds = new Set<string>([taskId]);
       try {
@@ -482,6 +513,22 @@ export function createReviewFinalizeTools(deps: CreateReviewFinalizeToolsDeps) {
         taskIds: [...remotionEvidenceTaskIds],
       });
       if (!remotionGate.passed) {
+        recordTaskQualityRun(db as any, {
+          taskId,
+          runType: "artifact_check",
+          name: "remotion_runtime_verification",
+          status: "failed",
+          summary: "Remotion runtime evidence missing or invalid",
+          metadata: {
+            checked_task_ids: remotionGate.checkedTaskIds,
+            remotion_task_ids: remotionGate.remotionEvidenceTaskIds,
+            forbidden_task_ids: remotionGate.forbiddenEngineTaskIds,
+            reason: "missing_or_invalid_remotion_evidence",
+          },
+          startedAt: nowMs(),
+          completedAt: nowMs(),
+          createdAt: nowMs(),
+        });
         appendTaskLog(
           taskId,
           "system",
@@ -515,6 +562,23 @@ export function createReviewFinalizeTools(deps: CreateReviewFinalizeToolsDeps) {
         "system",
         `Review gate: remotion runtime evidence verified (${remotionGate.remotionEvidenceTaskIds.join(", ")})`,
       );
+      recordTaskQualityRun(db as any, {
+        taskId,
+        runType: "artifact_check",
+        name: "video_review_gate_verification",
+        status: "passed",
+        summary: "Video artifact and Remotion runtime evidence verified",
+        metadata: {
+          relative_path: videoArtifactSpec.relativePath,
+          verified_path: verifiedPath,
+          verified_size: verifiedSize,
+          checked_task_ids: remotionGate.checkedTaskIds,
+          remotion_task_ids: remotionGate.remotionEvidenceTaskIds,
+        },
+        startedAt: nowMs(),
+        completedAt: nowMs(),
+        createdAt: nowMs(),
+      });
     }
 
     const finalizeApprovedReview = () => {

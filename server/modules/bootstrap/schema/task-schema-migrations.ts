@@ -186,6 +186,49 @@ export function applyTaskSchemaMigrations(db: DbLike): void {
   }
   try {
     db.exec(`
+      CREATE TABLE IF NOT EXISTS task_quality_runs (
+        id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+        quality_item_id TEXT REFERENCES task_quality_items(id) ON DELETE SET NULL,
+        run_type TEXT NOT NULL CHECK(run_type IN ('command','artifact_check','system')),
+        name TEXT NOT NULL,
+        command TEXT,
+        status TEXT NOT NULL CHECK(status IN ('passed','failed','skipped')),
+        exit_code INTEGER,
+        summary TEXT,
+        output_excerpt TEXT,
+        metadata_json TEXT,
+        started_at INTEGER,
+        completed_at INTEGER,
+        created_at INTEGER DEFAULT (unixepoch()*1000)
+      )
+    `);
+    db.exec("CREATE INDEX IF NOT EXISTS idx_task_quality_runs_task_created ON task_quality_runs(task_id, created_at DESC)");
+  } catch {
+    /* already exists */
+  }
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS task_artifacts (
+        id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+        quality_item_id TEXT REFERENCES task_quality_items(id) ON DELETE SET NULL,
+        kind TEXT NOT NULL CHECK(kind IN ('report_archive','video','file','document','other')),
+        title TEXT NOT NULL,
+        path TEXT,
+        mime TEXT,
+        size_bytes INTEGER,
+        source TEXT NOT NULL CHECK(source IN ('auto','report_archive','video_gate','system')),
+        metadata_json TEXT,
+        created_at INTEGER DEFAULT (unixepoch()*1000)
+      )
+    `);
+    db.exec("CREATE INDEX IF NOT EXISTS idx_task_artifacts_task_created ON task_artifacts(task_id, created_at DESC)");
+  } catch {
+    /* already exists */
+  }
+  try {
+    db.exec(`
       CREATE TABLE IF NOT EXISTS task_execution_events (
         id TEXT PRIMARY KEY,
         task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,

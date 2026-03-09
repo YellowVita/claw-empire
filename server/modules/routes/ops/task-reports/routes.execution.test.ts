@@ -85,6 +85,35 @@ function setupDb(): DatabaseSync {
       updated_at INTEGER,
       completed_at INTEGER
     );
+    CREATE TABLE task_quality_runs (
+      id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL,
+      quality_item_id TEXT,
+      run_type TEXT NOT NULL,
+      name TEXT NOT NULL,
+      command TEXT,
+      status TEXT NOT NULL,
+      exit_code INTEGER,
+      summary TEXT,
+      output_excerpt TEXT,
+      metadata_json TEXT,
+      started_at INTEGER,
+      completed_at INTEGER,
+      created_at INTEGER NOT NULL
+    );
+    CREATE TABLE task_artifacts (
+      id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL,
+      quality_item_id TEXT,
+      kind TEXT NOT NULL,
+      title TEXT NOT NULL,
+      path TEXT,
+      mime TEXT,
+      size_bytes INTEGER,
+      source TEXT NOT NULL,
+      metadata_json TEXT,
+      created_at INTEGER NOT NULL
+    );
     CREATE TABLE meeting_minutes (
       id TEXT PRIMARY KEY,
       task_id TEXT NOT NULL,
@@ -228,6 +257,25 @@ function setupDb(): DatabaseSync {
   db.prepare(
     "INSERT INTO task_retry_queue (task_id, attempt_count, next_run_at, last_reason, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
   ).run("task-1", 1, 999999, "hard_timeout", 1800, 1800);
+  db.prepare(
+    "INSERT INTO task_quality_items (id, task_id, kind, label, details, required, status, evidence_markdown, source, sort_order, created_at, updated_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  ).run("quality-1", "task-1", "validation", "Video verified", null, 1, "passed", null, "system", 0, 1000, 1000, 1900);
+  db.prepare(
+    "INSERT INTO task_quality_runs (id, task_id, quality_item_id, run_type, name, status, summary, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  ).run("quality-run-1", "task-1", null, "artifact_check", "video gate", "passed", "verified", '{"path":"/tmp/project/video_output/final.mp4"}', 1950);
+  db.prepare(
+    "INSERT INTO task_artifacts (id, task_id, quality_item_id, kind, title, path, source, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  ).run(
+    "artifact-1",
+    "task-1",
+    null,
+    "video",
+    "final.mp4",
+    "/tmp/project/video_output/final.mp4",
+    "video_gate",
+    '{"verified":true}',
+    1960,
+  );
 
   return db;
 }
@@ -277,6 +325,33 @@ describe("task report execution block", () => {
       });
       expect(payload.execution.events).toHaveLength(2);
       expect(payload.execution.events[0]?.id).toBe("event-2");
+      expect(payload.quality).toEqual({
+        items: [
+          expect.objectContaining({
+            id: "quality-1",
+            label: "Video verified",
+          }),
+        ],
+        summary: {
+          required_total: 1,
+          passed: 1,
+          failed: 0,
+          pending: 0,
+          blocked_review: false,
+        },
+        runs: [
+          expect.objectContaining({
+            id: "quality-run-1",
+            name: "video gate",
+          }),
+        ],
+        artifacts: [
+          expect.objectContaining({
+            id: "artifact-1",
+            title: "final.mp4",
+          }),
+        ],
+      });
     } finally {
       db.close();
     }

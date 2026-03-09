@@ -108,6 +108,35 @@ function createHarness() {
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
+    CREATE TABLE task_quality_runs (
+      id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL,
+      quality_item_id TEXT,
+      run_type TEXT NOT NULL,
+      name TEXT NOT NULL,
+      command TEXT,
+      status TEXT NOT NULL,
+      exit_code INTEGER,
+      summary TEXT,
+      output_excerpt TEXT,
+      metadata_json TEXT,
+      started_at INTEGER,
+      completed_at INTEGER,
+      created_at INTEGER NOT NULL
+    );
+    CREATE TABLE task_artifacts (
+      id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL,
+      quality_item_id TEXT,
+      kind TEXT NOT NULL,
+      title TEXT NOT NULL,
+      path TEXT,
+      mime TEXT,
+      size_bytes INTEGER,
+      source TEXT NOT NULL,
+      metadata_json TEXT,
+      created_at INTEGER NOT NULL
+    );
     CREATE TABLE messages (
       id TEXT PRIMARY KEY,
       task_id TEXT,
@@ -294,6 +323,16 @@ describe("task CRUD cleanup paths", () => {
       harness.db
         .prepare("INSERT INTO agents (id, name, status, current_task_id, avatar_emoji) VALUES (?, ?, ?, ?, ?)")
         .run("agent-1", "Agent One", "working", "task-delete", null);
+      harness.db
+        .prepare(
+          "INSERT INTO task_quality_runs (id, task_id, quality_item_id, run_type, name, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run("run-1", "task-delete", null, "system", "evidence", "passed", 1);
+      harness.db
+        .prepare(
+          "INSERT INTO task_artifacts (id, task_id, quality_item_id, kind, title, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run("artifact-1", "task-delete", null, "report_archive", "archive", "system", 1);
       harness.maps.taskWorktrees.set("task-delete", {
         worktreePath: "/tmp/task-delete",
         branchName: "climpire/task-delete",
@@ -311,9 +350,89 @@ describe("task CRUD cleanup paths", () => {
       expect(harness.spies.endTaskExecutionSession).toHaveBeenCalledWith("task-delete", "task_deleted");
       expect(harness.spies.clearTaskWorkflowState).toHaveBeenCalledWith("task-delete");
       expect(harness.db.prepare("SELECT * FROM tasks WHERE id = ?").get("task-delete")).toBeUndefined();
+      expect(harness.db.prepare("SELECT * FROM task_quality_runs WHERE task_id = ?").get("task-delete")).toBeUndefined();
+      expect(harness.db.prepare("SELECT * FROM task_artifacts WHERE task_id = ?").get("task-delete")).toBeUndefined();
       expect(harness.db.prepare("SELECT status, current_task_id FROM agents WHERE id = ?").get("agent-1")).toEqual({
         status: "idle",
         current_task_id: null,
+      });
+    } finally {
+      harness.db.close();
+    }
+  });
+
+  it("GET /api/tasks/:id/quality 는 runs와 artifacts를 함께 반환한다", () => {
+    const harness = createHarness();
+    try {
+      harness.db
+        .prepare(
+          `INSERT INTO tasks (
+            id, title, status, workflow_pack_key, task_type, priority, hidden, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run("task-quality", "Quality", "review", "development", "general", 0, 0, 1, 1);
+      harness.db
+        .prepare(
+          "INSERT INTO task_quality_items (id, task_id, kind, label, status, required, source, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run("item-1", "task-quality", "validation", "Video verified", "passed", 1, "system", 0, 1, 1);
+      harness.db
+        .prepare(
+          "INSERT INTO task_quality_runs (id, task_id, quality_item_id, run_type, name, status, summary, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run("run-1", "task-quality", null, "artifact_check", "video gate", "passed", "verified", '{"path":"/tmp/video.mp4"}', 2);
+      harness.db
+        .prepare(
+          "INSERT INTO task_artifacts (id, task_id, quality_item_id, kind, title, path, source, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run(
+          "artifact-1",
+          "task-quality",
+          null,
+          "video",
+          "final.mp4",
+          "/tmp/video.mp4",
+          "video_gate",
+          '{"verified":true}',
+          3,
+        );
+
+      const handler = harness.routes.get("GET /api/tasks/:id/quality");
+      expect(handler).toBeTypeOf("function");
+
+      const res = createFakeResponse();
+      handler?.({ params: { id: "task-quality" } }, res);
+
+      expect(res.statusCode).toBe(200);
+      expect(res.payload).toEqual({
+        items: [
+          expect.objectContaining({
+            id: "item-1",
+            label: "Video verified",
+          }),
+        ],
+        summary: {
+          required_total: 1,
+          passed: 1,
+          failed: 0,
+          pending: 0,
+          blocked_review: false,
+        },
+        runs: [
+          expect.objectContaining({
+            id: "run-1",
+            name: "video gate",
+            metadata: { path: "/tmp/video.mp4" },
+          }),
+        ],
+        artifacts: [
+          expect.objectContaining({
+            id: "artifact-1",
+            title: "final.mp4",
+            path: "/tmp/video.mp4",
+            metadata: { verified: true },
+          }),
+        ],
       });
     } finally {
       harness.db.close();

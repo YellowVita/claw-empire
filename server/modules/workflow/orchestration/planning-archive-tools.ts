@@ -1,4 +1,5 @@
 import { resolveScopedTeamLeader } from "../packs/agent-scope.ts";
+import { recordTaskArtifact } from "./task-quality-evidence.ts";
 
 type CreatePlanningArchiveToolsDeps = Record<string, any>;
 
@@ -314,6 +315,21 @@ export function createPlanningArchiveTools(deps: CreatePlanningArchiveToolsDeps)
       updated_at = excluded.updated_at
   `,
       ).run(randomUUID(), rootTaskId, planningLeader.id, summaryMarkdown, snapshot, t, t);
+      recordTaskArtifact(db as any, {
+        taskId: rootTaskId,
+        kind: "report_archive",
+        title: `${rootTask.title || "task"} planning archive`,
+        path: null,
+        mime: "text/markdown",
+        sizeBytes: summaryMarkdown.length,
+        source: "report_archive",
+        metadata: {
+          archive_id: rootTaskId,
+          updated_at: t,
+          has_snapshot: Boolean(snapshot),
+        },
+        createdAt: t,
+      });
 
       appendTaskLog(
         rootTaskId,

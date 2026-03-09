@@ -146,6 +146,68 @@ export interface TaskExecutionSummary {
   last_event_at: number | null;
 }
 
+export interface TaskQualityItem {
+  id: string;
+  task_id: string;
+  kind: "acceptance" | "validation";
+  label: string;
+  details: string | null;
+  required: number;
+  status: "pending" | "passed" | "failed" | "waived";
+  evidence_markdown: string | null;
+  source: "manual" | "workflow_meta" | "workflow_pack" | "system";
+  sort_order: number;
+  created_at: number;
+  updated_at: number;
+  completed_at: number | null;
+}
+
+export interface TaskQualitySummary {
+  required_total: number;
+  passed: number;
+  failed: number;
+  pending: number;
+  blocked_review: boolean;
+}
+
+export interface TaskQualityRun {
+  id: string;
+  task_id: string;
+  quality_item_id: string | null;
+  run_type: "command" | "artifact_check" | "system";
+  name: string;
+  command: string | null;
+  status: "passed" | "failed" | "skipped";
+  exit_code: number | null;
+  summary: string | null;
+  output_excerpt: string | null;
+  metadata: Record<string, unknown> | null;
+  started_at: number | null;
+  completed_at: number | null;
+  created_at: number;
+}
+
+export interface TaskArtifact {
+  id: string;
+  task_id: string;
+  quality_item_id: string | null;
+  kind: "report_archive" | "video" | "file" | "document" | "other";
+  title: string;
+  path: string | null;
+  mime: string | null;
+  size_bytes: number | null;
+  source: "auto" | "report_archive" | "video_gate" | "system";
+  metadata: Record<string, unknown> | null;
+  created_at: number;
+}
+
+export interface TaskQualityPayload {
+  items: TaskQualityItem[];
+  summary: TaskQualitySummary;
+  runs: TaskQualityRun[];
+  artifacts: TaskArtifact[];
+}
+
 export interface TaskReportTeamSection {
   id: string;
   task_id: string;
@@ -217,6 +279,7 @@ export interface TaskReportDetail {
     entries: string;
     created_at: number;
   }>;
+  quality?: TaskQualityPayload;
   execution?: {
     summary: TaskExecutionSummary;
     events: TaskExecutionEvent[];
