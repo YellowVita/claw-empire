@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { exec } from "node:child_process";
 import type { DatabaseSync } from "node:sqlite";
+import { recordTaskExecutionEvent } from "./task-execution-events.ts";
 
 type DbLike = Pick<DatabaseSync, "prepare">;
 
@@ -397,6 +398,20 @@ export async function runTaskExecutionHooks(params: RunTaskExecutionHooksParams)
   const resolved = resolveTaskExecutionHooksForStage(params.db, params.worktreePath, params.stage);
   for (const warning of resolved.warnings) {
     params.appendTaskLog(params.taskId, "system", warning);
+    recordTaskExecutionEvent(params.db, {
+      taskId: params.taskId,
+      category: "hook",
+      action: "config_fallback",
+      status: "warning",
+      message: warning,
+      hookSource: "global",
+      details: {
+        stage: params.stage,
+        provider: params.provider,
+        project_path: params.projectPath,
+        worktree_path: params.worktreePath,
+      },
+    });
   }
   const hooks = resolved.hooks;
   if (hooks.length <= 0) return { ok: true };
@@ -404,7 +419,9 @@ export async function runTaskExecutionHooks(params: RunTaskExecutionHooksParams)
   const env = buildHookEnv(params);
   for (const hook of hooks) {
     params.appendTaskLog(params.taskId, "system", `Task hook start [${params.stage}] ${hook.label} (${hook.id})`);
+    const startedAt = Date.now();
     const result = await runCommandHook(hook, params.worktreePath, env);
+    const durationMs = Math.max(0, Date.now() - startedAt);
     const detail = [
       `code=${result.code}`,
       result.timedOut ? "timed_out=yes" : "",
@@ -416,6 +433,24 @@ export async function runTaskExecutionHooks(params: RunTaskExecutionHooksParams)
 
     if (result.code === 0) {
       params.appendTaskLog(params.taskId, "system", `Task hook done [${params.stage}] ${hook.label} (${detail || "ok"})`);
+      recordTaskExecutionEvent(params.db, {
+        taskId: params.taskId,
+        category: "hook",
+        action: "success",
+        status: "success",
+        message: `Task hook done [${params.stage}] ${hook.label} (${detail || "ok"})`,
+        hookSource: resolved.source,
+        durationMs,
+        details: {
+          stage: params.stage,
+          hook_id: hook.id,
+          hook_label: hook.label,
+          provider: params.provider,
+          continue_on_error: hook.continue_on_error,
+          timed_out: result.timedOut,
+          code: result.code,
+        },
+      });
       continue;
     }
 
@@ -423,6 +458,24 @@ export async function runTaskExecutionHooks(params: RunTaskExecutionHooksParams)
     const isBlocking = params.stage === "before_run" && !hook.continue_on_error;
     const kind = isBlocking ? "error" : "system";
     params.appendTaskLog(params.taskId, kind, message);
+    recordTaskExecutionEvent(params.db, {
+      taskId: params.taskId,
+      category: "hook",
+      action: "failure",
+      status: "failure",
+      message,
+      hookSource: resolved.source,
+      durationMs,
+      details: {
+        stage: params.stage,
+        hook_id: hook.id,
+        hook_label: hook.label,
+        provider: params.provider,
+        continue_on_error: hook.continue_on_error,
+        timed_out: result.timedOut,
+        code: result.code,
+      },
+    });
 
     if (isBlocking) {
       return { ok: false, failedHookId: hook.id, error: message };

@@ -179,6 +179,20 @@ CREATE TABLE IF NOT EXISTS task_quality_items (
   completed_at INTEGER
 );
 
+CREATE TABLE IF NOT EXISTS task_execution_events (
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  category TEXT NOT NULL CHECK(category IN ('retry','hook','watchdog')),
+  action TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('info','success','warning','failure')),
+  message TEXT NOT NULL,
+  details_json TEXT,
+  attempt_count INTEGER,
+  hook_source TEXT CHECK(hook_source IN ('global','project')),
+  duration_ms INTEGER,
+  created_at INTEGER DEFAULT (unixepoch()*1000)
+);
+
 CREATE TABLE IF NOT EXISTS task_interrupt_injections (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -380,6 +394,8 @@ CREATE INDEX IF NOT EXISTS idx_task_creation_audits_task ON task_creation_audits
 CREATE INDEX IF NOT EXISTS idx_task_creation_audits_trigger ON task_creation_audits(trigger, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_task_logs_task ON task_logs(task_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_task_retry_queue_next_run ON task_retry_queue(next_run_at, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_task_execution_events_task_created ON task_execution_events(task_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_task_execution_events_task_category_created ON task_execution_events(task_id, category, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_task_quality_items_task ON task_quality_items(task_id, sort_order ASC, created_at ASC);
 CREATE INDEX IF NOT EXISTS idx_task_interrupt_injections_task
   ON task_interrupt_injections(task_id, session_id, consumed_at, created_at DESC);

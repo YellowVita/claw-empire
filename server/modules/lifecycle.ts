@@ -19,6 +19,7 @@ import {
   shouldRetryForReason,
   upsertTaskRetryQueueRow,
 } from "./workflow/orchestration/task-execution-policy.ts";
+import { recordTaskExecutionEvent } from "./workflow/orchestration/task-execution-events.ts";
 
 export function startLifecycle(ctx: RuntimeContext): void {
   const {
@@ -194,6 +195,16 @@ export function startLifecycle(ctx: RuntimeContext): void {
         "system",
         `Recovery watchdog exhausted orphan retries (max=${policy.max_auto_retries}) -> inbox`,
       );
+      recordTaskExecutionEvent(db as any, {
+        taskId: task.id,
+        category: "retry",
+        action: "exhausted",
+        status: "warning",
+        message: `Recovery watchdog exhausted orphan retries (max=${policy.max_auto_retries}) -> inbox`,
+        attemptCount,
+        details: { reason: "orphan_recovery", max_auto_retries: policy.max_auto_retries },
+        createdAt: now,
+      });
       return false;
     }
 
@@ -212,6 +223,16 @@ export function startLifecycle(ctx: RuntimeContext): void {
       "system",
       `Recovery watchdog queued automatic retry (reason=orphan_recovery, attempt=${attemptCount}, delay_ms=${delayMs})`,
     );
+    recordTaskExecutionEvent(db as any, {
+      taskId: task.id,
+      category: "retry",
+      action: "queued",
+      status: "warning",
+      message: `Recovery watchdog queued automatic retry (reason=orphan_recovery, attempt=${attemptCount}, delay_ms=${delayMs})`,
+      attemptCount,
+      details: { reason: "orphan_recovery", delay_ms: delayMs },
+      createdAt: now,
+    });
     return true;
   }
 
@@ -231,11 +252,31 @@ export function startLifecycle(ctx: RuntimeContext): void {
         | undefined;
       if (!task || task.status !== "pending") {
         deleteTaskRetryQueueRow(db as any, row.task_id);
+        recordTaskExecutionEvent(db as any, {
+          taskId: row.task_id,
+          category: "retry",
+          action: "dropped",
+          status: "warning",
+          message: "Automatic retry dropped: task missing or no longer pending",
+          attemptCount: row.attempt_count,
+          details: { reason: row.last_reason ?? null, task_missing: !task, task_status: task?.status ?? null },
+          createdAt: nowMs(),
+        });
         continue;
       }
       if (!task.assigned_agent_id) {
         deleteTaskRetryQueueRow(db as any, row.task_id);
         appendTaskLog(row.task_id, "system", "Automatic retry dropped: no assigned agent");
+        recordTaskExecutionEvent(db as any, {
+          taskId: row.task_id,
+          category: "retry",
+          action: "dropped",
+          status: "warning",
+          message: "Automatic retry dropped: no assigned agent",
+          attemptCount: row.attempt_count,
+          details: { reason: row.last_reason ?? null },
+          createdAt: nowMs(),
+        });
         continue;
       }
 
@@ -269,20 +310,60 @@ export function startLifecycle(ctx: RuntimeContext): void {
       if (!agent) {
         deleteTaskRetryQueueRow(db as any, row.task_id);
         appendTaskLog(row.task_id, "system", "Automatic retry dropped: assigned agent missing");
+        recordTaskExecutionEvent(db as any, {
+          taskId: row.task_id,
+          category: "retry",
+          action: "dropped",
+          status: "warning",
+          message: "Automatic retry dropped: assigned agent missing",
+          attemptCount: row.attempt_count,
+          details: { reason: row.last_reason ?? null, assigned_agent_id: task.assigned_agent_id },
+          createdAt: nowMs(),
+        });
         continue;
       }
       if (activeProcesses.has(row.task_id)) {
         deleteTaskRetryQueueRow(db as any, row.task_id);
+        recordTaskExecutionEvent(db as any, {
+          taskId: row.task_id,
+          category: "retry",
+          action: "dropped",
+          status: "info",
+          message: "Automatic retry dropped: process already active",
+          attemptCount: row.attempt_count,
+          details: { reason: row.last_reason ?? null },
+          createdAt: nowMs(),
+        });
         continue;
       }
       if (agent.status === "working" || (agent.status !== "idle" && agent.status !== "break")) {
         rescheduleBusyTaskRetryQueueRow(db as any, row.task_id, nowMs(), 30_000);
         appendTaskLog(row.task_id, "system", `Automatic retry deferred: agent busy (${agent.status})`);
+        recordTaskExecutionEvent(db as any, {
+          taskId: row.task_id,
+          category: "retry",
+          action: "deferred",
+          status: "info",
+          message: `Automatic retry deferred: agent busy (${agent.status})`,
+          attemptCount: row.attempt_count,
+          details: { reason: row.last_reason ?? null, agent_status: agent.status, delay_ms: 30000 },
+          createdAt: nowMs(),
+        });
         continue;
       }
 
       deleteTaskRetryQueueRow(db as any, row.task_id);
       appendTaskLog(row.task_id, "system", `Automatic retry dispatching (attempt=${row.attempt_count})`);
+      recordTaskExecutionEvent(db as any, {
+        taskId: row.task_id,
+        category: "retry",
+        action: "dispatching",
+        status: "success",
+        message: `Automatic retry dispatching (attempt=${row.attempt_count})`,
+        attemptCount: row.attempt_count,
+        details: { reason: row.last_reason ?? null, agent_id: agent.id, provider: agent.cli_provider ?? null },
+        createdAt: nowMs(),
+      });
       startTaskExecutionForAgent(row.task_id, agent, agent.department_id ?? null, agent.department_name || "Unassigned");
     }
   }
@@ -326,6 +407,15 @@ export function startLifecycle(ctx: RuntimeContext): void {
         if (pid !== null && pid > 0 && !isPidAlive(pid)) {
           activeProcesses.delete(task.id);
           appendTaskLog(task.id, "system", `Recovery (${reason}): removed stale process handle (pid=${pid})`);
+          recordTaskExecutionEvent(db as any, {
+            taskId: task.id,
+            category: "watchdog",
+            action: "stale_process_cleared",
+            status: "warning",
+            message: `Recovery (${reason}): removed stale process handle (pid=${pid})`,
+            details: { recovery_reason: reason, pid },
+            createdAt: now,
+          });
         } else {
           continue;
         }
@@ -398,6 +488,15 @@ export function startLifecycle(ctx: RuntimeContext): void {
       }
 
       const retried = enqueueOrphanRetry(task);
+      recordTaskExecutionEvent(db as any, {
+        taskId: task.id,
+        category: "watchdog",
+        action: "orphan_recovery_decision",
+        status: retried ? "warning" : "failure",
+        message: `Recovery (${reason}): in_progress without active process/run log (age_ms=${ageMs}) -> ${retried ? "pending/retry" : "inbox"}`,
+        details: { recovery_reason: reason, age_ms: ageMs, outcome: retried ? "pending_retry" : "inbox" },
+        createdAt: now,
+      });
       if (!retried) {
         const t = nowMs();
         const move = db

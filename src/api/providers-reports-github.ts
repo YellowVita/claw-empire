@@ -123,6 +123,29 @@ export interface TaskReportDocument {
   content: string;
 }
 
+export interface TaskExecutionEvent {
+  id: string;
+  task_id: string;
+  category: "retry" | "hook" | "watchdog";
+  action: string;
+  status: "info" | "success" | "warning" | "failure";
+  message: string;
+  details: Record<string, unknown> | null;
+  attempt_count: number | null;
+  hook_source: "global" | "project" | null;
+  duration_ms: number | null;
+  created_at: number;
+}
+
+export interface TaskExecutionSummary {
+  retry_count: number;
+  last_retry_reason: string | null;
+  pending_retry: boolean;
+  hook_failures: number;
+  project_hook_override_used: boolean;
+  last_event_at: number | null;
+}
+
 export interface TaskReportTeamSection {
   id: string;
   task_id: string;
@@ -194,6 +217,10 @@ export interface TaskReportDetail {
     entries: string;
     created_at: number;
   }>;
+  execution?: {
+    summary: TaskExecutionSummary;
+    events: TaskExecutionEvent[];
+  };
   planning_summary?: {
     title: string;
     content: string;

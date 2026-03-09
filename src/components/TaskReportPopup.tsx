@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect } from "react";
 import type { Agent, Department } from "../types";
-import type { TaskReportDetail, TaskReportDocument, TaskReportTeamSection } from "../api";
+import type { TaskExecutionEvent, TaskReportDetail, TaskReportDocument, TaskReportTeamSection } from "../api";
 import { archiveTaskReport, getTaskReportDetail } from "../api";
 import type { UiLanguage } from "../i18n";
 import { pickLang } from "../i18n";
@@ -65,6 +65,7 @@ export default function TaskReportPopup({ report, agents, departments, uiLanguag
   const projectName = currentReport.project?.project_name || projectNameFromPath(currentReport.task.project_path);
   const projectPath = currentReport.project?.project_path || currentReport.task.project_path;
   const planningSummary = currentReport.planning_summary;
+  const execution = currentReport.execution;
   const branchVerificationLogs = useMemo(
     () =>
       (currentReport.logs ?? []).filter(
@@ -265,6 +266,68 @@ export default function TaskReportPopup({ report, agents, departments, uiLanguag
               >
                 <span className="mr-2 text-slate-500">{fmtTime(log.created_at)}</span>
                 {log.message}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {execution?.events && execution.events.length > 0 && (
+        <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-3">
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <p className="text-xs font-semibold text-amber-200">
+              {t({
+                ko: "실행 Observability",
+                en: "Execution Observability",
+                ja: "実行オブザーバビリティ",
+                zh: "执行可观测性",
+              })}
+            </p>
+            <span className="text-[11px] text-amber-300/80">
+              {execution.summary.last_event_at ? fmtTime(execution.summary.last_event_at) : "-"}
+            </span>
+          </div>
+          <div className="mb-3 grid grid-cols-2 gap-2 md:grid-cols-3">
+            <div className="rounded-md border border-amber-500/20 bg-slate-950/30 px-3 py-2">
+              <p className="text-[11px] text-slate-400">{t({ ko: "자동 재시도", en: "Retries", ja: "再試行", zh: "重试次数" })}</p>
+              <p className="text-sm font-semibold text-slate-100">{execution.summary.retry_count}</p>
+            </div>
+            <div className="rounded-md border border-amber-500/20 bg-slate-950/30 px-3 py-2">
+              <p className="text-[11px] text-slate-400">{t({ ko: "마지막 사유", en: "Last Reason", ja: "直近理由", zh: "最近原因" })}</p>
+              <p className="truncate text-sm font-semibold text-slate-100">{execution.summary.last_retry_reason || "-"}</p>
+            </div>
+            <div className="rounded-md border border-amber-500/20 bg-slate-950/30 px-3 py-2">
+              <p className="text-[11px] text-slate-400">{t({ ko: "Hook 실패", en: "Hook Failures", ja: "Hook失敗", zh: "Hook 失败" })}</p>
+              <p className="text-sm font-semibold text-slate-100">{execution.summary.hook_failures}</p>
+            </div>
+            <div className="rounded-md border border-amber-500/20 bg-slate-950/30 px-3 py-2">
+              <p className="text-[11px] text-slate-400">{t({ ko: "대기 중 재시도", en: "Pending Retry", ja: "保留中の再試行", zh: "待处理重试" })}</p>
+              <p className="text-sm font-semibold text-slate-100">
+                {execution.summary.pending_retry
+                  ? t({ ko: "예", en: "Yes", ja: "はい", zh: "是" })
+                  : t({ ko: "아니오", en: "No", ja: "いいえ", zh: "否" })}
+              </p>
+            </div>
+            <div className="rounded-md border border-amber-500/20 bg-slate-950/30 px-3 py-2">
+              <p className="text-[11px] text-slate-400">{t({ ko: "프로젝트 Hook", en: "Project Hook", ja: "プロジェクトHook", zh: "项目 Hook" })}</p>
+              <p className="text-sm font-semibold text-slate-100">
+                {execution.summary.project_hook_override_used
+                  ? t({ ko: "사용됨", en: "Used", ja: "使用", zh: "已使用" })
+                  : t({ ko: "없음", en: "None", ja: "なし", zh: "无" })}
+              </p>
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            {execution.events.map((event: TaskExecutionEvent) => (
+              <div key={event.id} className="rounded-md border border-slate-700/50 bg-slate-950/40 px-3 py-2">
+                <div className="flex items-center justify-between gap-2 text-[11px]">
+                  <div className="min-w-0">
+                    <span className="mr-2 rounded bg-slate-800 px-1.5 py-0.5 text-slate-300">{event.category}</span>
+                    <span className="mr-2 text-slate-200">{event.action}</span>
+                    <span className="text-slate-500">{event.hook_source ? `source=${event.hook_source}` : ""}</span>
+                  </div>
+                  <span className="shrink-0 text-slate-500">{fmtTime(event.created_at)}</span>
+                </div>
+                <p className="mt-1 text-[11px] text-slate-300">{event.message}</p>
               </div>
             ))}
           </div>

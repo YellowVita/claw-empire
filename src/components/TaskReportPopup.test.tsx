@@ -34,6 +34,31 @@ const baseReport = {
     generated_at: 1600,
     documents: [],
   },
+  execution: {
+    summary: {
+      retry_count: 2,
+      last_retry_reason: "hard_timeout",
+      pending_retry: true,
+      hook_failures: 1,
+      project_hook_override_used: true,
+      last_event_at: 1700,
+    },
+    events: [
+      {
+        id: "event-1",
+        task_id: "task-1",
+        category: "retry",
+        action: "queued",
+        status: "warning",
+        message: "Automatic retry scheduled",
+        details: { reason: "hard_timeout" },
+        attempt_count: 2,
+        hook_source: null,
+        duration_ms: null,
+        created_at: 1700,
+      },
+    ],
+  },
   team_reports: [],
   project: {
     root_task_id: "task-1",
@@ -69,5 +94,23 @@ describe("TaskReportPopup", () => {
     );
 
     expect(screen.getByAltText("Ari")).toBeInTheDocument();
+  });
+
+  it("shows execution observability summary when execution data exists", () => {
+    render(
+      <I18nProvider language="en">
+        <TaskReportPopup
+          report={baseReport as any}
+          agents={[{ id: "agent-1", name: "Ari", name_ko: "아리", avatar_emoji: "A" } as any]}
+          departments={[{ id: "planning", name: "Planning", name_ko: "기획팀", color: "#00aa88", icon: "P" } as any]}
+          uiLanguage="en"
+          onClose={() => {}}
+        />
+      </I18nProvider>,
+    );
+
+    expect(screen.getByText("Execution Observability")).toBeInTheDocument();
+    expect(screen.getByText("hard_timeout")).toBeInTheDocument();
+    expect(screen.getByText("Automatic retry scheduled")).toBeInTheDocument();
   });
 });

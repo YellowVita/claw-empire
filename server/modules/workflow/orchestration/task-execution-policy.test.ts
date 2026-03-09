@@ -33,7 +33,22 @@ function writeWorkflowConfig(
 
 function createDbWithGlobalHooks(partial: Partial<TaskExecutionHooks> = {}): DatabaseSync {
   const db = new DatabaseSync(":memory:");
-  db.exec("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);");
+  db.exec(`
+    CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE TABLE task_execution_events (
+      id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL,
+      category TEXT NOT NULL,
+      action TEXT NOT NULL,
+      status TEXT NOT NULL,
+      message TEXT NOT NULL,
+      details_json TEXT,
+      attempt_count INTEGER,
+      hook_source TEXT,
+      duration_ms INTEGER,
+      created_at INTEGER NOT NULL
+    );
+  `);
   const hooks: TaskExecutionHooks = {
     before_run: partial.before_run ?? DEFAULT_TASK_EXECUTION_HOOKS.before_run,
     after_run_success: partial.after_run_success ?? DEFAULT_TASK_EXECUTION_HOOKS.after_run_success,
@@ -214,6 +229,10 @@ describe("task execution policy project hook overrides", () => {
       expect(result).toEqual({ ok: true });
       expect(logLines.some((line) => line.includes("Local Before"))).toBe(true);
       expect(logLines.some((line) => line.includes("Global Before"))).toBe(false);
+      const event = db.prepare("SELECT action, status, hook_source FROM task_execution_events WHERE task_id = ?").get(
+        "task-1",
+      ) as { action: string; status: string; hook_source: string } | undefined;
+      expect(event).toEqual({ action: "success", status: "success", hook_source: "project" });
     } finally {
       db.close();
     }
@@ -257,6 +276,11 @@ describe("task execution policy project hook overrides", () => {
       expect(result).toEqual({ ok: true });
       expect(logLines).toContain(".claw-workflow.json invalid hook schema, falling back to global");
       expect(logLines.some((line) => line.includes("Global Before"))).toBe(true);
+      const actions = db
+        .prepare("SELECT action FROM task_execution_events WHERE task_id = ? ORDER BY created_at ASC")
+        .all("task-2") as Array<{ action: string }>;
+      expect(actions.map((row) => row.action)).toContain("config_fallback");
+      expect(actions.map((row) => row.action)).toContain("success");
     } finally {
       db.close();
     }
@@ -297,6 +321,10 @@ describe("task execution policy project hook overrides", () => {
       expect(result.ok).toBe(false);
       expect(result.failedHookId).toBe("local-block");
       expect(logLines.some((line) => line.includes("Task hook failed [before_run] Local Blocking Hook"))).toBe(true);
+      const event = db
+        .prepare("SELECT action, status FROM task_execution_events WHERE task_id = ? ORDER BY created_at DESC LIMIT 1")
+        .get("task-3") as { action: string; status: string } | undefined;
+      expect(event).toEqual({ action: "failure", status: "failure" });
     } finally {
       db.close();
     }
@@ -338,6 +366,10 @@ describe("task execution policy project hook overrides", () => {
       expect(logLines.some((line) => line.includes("Task hook failed [after_run_failure] Local After Failure"))).toBe(
         true,
       );
+      const event = db
+        .prepare("SELECT action, status FROM task_execution_events WHERE task_id = ? ORDER BY created_at DESC LIMIT 1")
+        .get("task-4") as { action: string; status: string } | undefined;
+      expect(event).toEqual({ action: "failure", status: "failure" });
     } finally {
       db.close();
     }

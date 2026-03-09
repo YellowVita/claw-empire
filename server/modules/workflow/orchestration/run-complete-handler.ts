@@ -23,6 +23,7 @@ import {
   upsertTaskRetryQueueRow,
   type TaskRetryReason,
 } from "./task-execution-policy.ts";
+import { recordTaskExecutionEvent } from "./task-execution-events.ts";
 
 type CreateRunCompleteHandlerDeps = Record<string, any>;
 
@@ -91,8 +92,20 @@ export function createRunCompleteHandler(deps: CreateRunCompleteHandlerDeps) {
 
     if (attemptCount > policy.max_auto_retries) {
       deleteTaskRetryQueueRow(db as any, task.id);
-      db.prepare("UPDATE tasks SET status = 'inbox', updated_at = ? WHERE id = ?").run(nowMs(), task.id);
-      appendTaskLog(task.id, "system", `Automatic retry exhausted (${reason}, max=${policy.max_auto_retries}) -> inbox`);
+      const exhaustedAt = nowMs();
+      db.prepare("UPDATE tasks SET status = 'inbox', updated_at = ? WHERE id = ?").run(exhaustedAt, task.id);
+      const exhaustedMessage = `Automatic retry exhausted (${reason}, max=${policy.max_auto_retries}) -> inbox`;
+      appendTaskLog(task.id, "system", exhaustedMessage);
+      recordTaskExecutionEvent(db as any, {
+        taskId: task.id,
+        category: "retry",
+        action: "exhausted",
+        status: "warning",
+        message: exhaustedMessage,
+        attemptCount,
+        details: { reason, max_auto_retries: policy.max_auto_retries },
+        createdAt: exhaustedAt,
+      });
       notifyTaskStatus(task.id, task.title, "inbox", lang);
       notifyCeo(
         pickL(
@@ -120,11 +133,18 @@ export function createRunCompleteHandler(deps: CreateRunCompleteHandlerDeps) {
       updated_at: now,
     });
     db.prepare("UPDATE tasks SET status = 'pending', updated_at = ? WHERE id = ?").run(now, task.id);
-    appendTaskLog(
-      task.id,
-      "system",
-      `Automatic retry scheduled (${reason}, attempt=${attemptCount}, delay_ms=${delayMs})`,
-    );
+    const scheduledMessage = `Automatic retry scheduled (${reason}, attempt=${attemptCount}, delay_ms=${delayMs})`;
+    appendTaskLog(task.id, "system", scheduledMessage);
+    recordTaskExecutionEvent(db as any, {
+      taskId: task.id,
+      category: "retry",
+      action: "queued",
+      status: "warning",
+      message: scheduledMessage,
+      attemptCount,
+      details: { reason, delay_ms: delayMs },
+      createdAt: now,
+    });
     notifyTaskStatus(task.id, task.title, "pending", lang);
     notifyCeo(
       pickL(

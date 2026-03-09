@@ -184,6 +184,31 @@ export function applyTaskSchemaMigrations(db: DbLike): void {
   } catch {
     /* already exists */
   }
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS task_execution_events (
+        id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+        category TEXT NOT NULL CHECK(category IN ('retry','hook','watchdog')),
+        action TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('info','success','warning','failure')),
+        message TEXT NOT NULL,
+        details_json TEXT,
+        attempt_count INTEGER,
+        hook_source TEXT CHECK(hook_source IN ('global','project')),
+        duration_ms INTEGER,
+        created_at INTEGER DEFAULT (unixepoch()*1000)
+      )
+    `);
+    db.exec(
+      "CREATE INDEX IF NOT EXISTS idx_task_execution_events_task_created ON task_execution_events(task_id, created_at DESC)",
+    );
+    db.exec(
+      "CREATE INDEX IF NOT EXISTS idx_task_execution_events_task_category_created ON task_execution_events(task_id, category, created_at DESC)",
+    );
+  } catch {
+    /* already exists */
+  }
 
   ensureOfficePackScopedDepartmentSchema(db);
   ensureProjectReviewDecisionEventSchema(db);

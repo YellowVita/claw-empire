@@ -1,6 +1,10 @@
 import type { RuntimeContext } from "../../../../types/runtime-context.ts";
 import { createTaskReportHelpers } from "./helpers.ts";
 import { computeTaskQualitySummary, loadTaskQualityItems } from "../../core/tasks/quality.ts";
+import {
+  listTaskExecutionEventsForTask,
+  summarizeTaskExecutionEvents,
+} from "../../../workflow/orchestration/task-execution-events.ts";
 
 export function registerTaskReportRoutes(ctx: RuntimeContext): void {
   const { app, db, nowMs, archivePlanningConsolidatedReport } = ctx;
@@ -175,6 +179,8 @@ export function registerTaskReportRoutes(ctx: RuntimeContext): void {
       const rootMinutes = fetchMeetingMinutesForTask(rootTaskId);
       const qualityItems = loadTaskQualityItems(db as any, rootTaskId);
       const qualitySummary = computeTaskQualitySummary(qualityItems);
+      const executionSummary = summarizeTaskExecutionEvents(db as any, rootTaskId);
+      const executionEvents = listTaskExecutionEventsForTask(db as any, rootTaskId, 50);
 
       const archiveRow = db
         .prepare(
@@ -254,6 +260,10 @@ export function registerTaskReportRoutes(ctx: RuntimeContext): void {
         quality: {
           items: qualityItems,
           summary: qualitySummary,
+        },
+        execution: {
+          summary: executionSummary,
+          events: executionEvents,
         },
         meeting_minutes: rootMinutes,
         planning_summary: planningSummary,
