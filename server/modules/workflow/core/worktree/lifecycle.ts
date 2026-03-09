@@ -13,6 +13,132 @@ type CreateWorktreeLifecycleToolsDeps = {
   taskWorktrees: Map<string, WorktreeInfo>;
 };
 
+const WORKTREE_LOG_PREFIX = "worktree_path_guard";
+const WORKTREE_ROOT_DIRNAME = ".climpire-worktrees";
+const SHORT_ID_PATTERN = /^[A-Za-z0-9]{8}$/;
+const WORKTREE_DIRNAME_PATTERN = /^([A-Za-z0-9]{8})(?:-(\d+))?$/;
+
+export type ParsedWorktreeDirName = {
+  shortId: string;
+  suffix: number;
+};
+
+export type ManagedWorktreePathGuardResult =
+  | {
+      ok: true;
+      projectRealPath: string;
+      worktreeRootPath: string;
+      targetPath?: string;
+    }
+  | {
+      ok: false;
+      reason: string;
+    };
+
+function canonicalPath(targetPath: string): string {
+  return fs.realpathSync.native?.(targetPath) ?? fs.realpathSync(targetPath);
+}
+
+function isPathInside(parentPath: string, childPath: string): boolean {
+  const relative = path.relative(parentPath, childPath);
+  return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+function isDirectChild(parentPath: string, childPath: string): boolean {
+  return path.dirname(childPath) === parentPath;
+}
+
+function detectSymlinkOrJunction(targetPath: string): boolean {
+  try {
+    return fs.lstatSync(targetPath).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+export function getTaskShortId(taskId: string): string {
+  return taskId.slice(0, 8);
+}
+
+export function buildManagedWorktreeRoot(projectPath: string): string {
+  return path.join(projectPath, WORKTREE_ROOT_DIRNAME);
+}
+
+export function buildManagedWorktreeDirName(shortId: string, suffix = 0): string {
+  return suffix === 0 ? shortId : `${shortId}-${suffix}`;
+}
+
+export function buildManagedWorktreeBranchName(shortId: string, suffix = 0): string {
+  return `climpire/${buildManagedWorktreeDirName(shortId, suffix)}`;
+}
+
+export function buildManagedWorktreePath(projectPath: string, shortId: string, suffix = 0): string {
+  return path.join(buildManagedWorktreeRoot(projectPath), buildManagedWorktreeDirName(shortId, suffix));
+}
+
+export function parseManagedWorktreeDirName(dirName: string): ParsedWorktreeDirName | null {
+  const match = dirName.match(WORKTREE_DIRNAME_PATTERN);
+  if (!match) return null;
+  const shortId = match[1] ?? "";
+  if (!SHORT_ID_PATTERN.test(shortId)) return null;
+  const suffix = Number(match[2] ?? "0");
+  if (!Number.isInteger(suffix) || suffix < 0) return null;
+  return { shortId, suffix };
+}
+
+export function guardManagedWorktreePath(projectPath: string, targetPath?: string): ManagedWorktreePathGuardResult {
+  let projectRealPath: string;
+  try {
+    projectRealPath = canonicalPath(projectPath);
+  } catch {
+    return { ok: false, reason: `project_path_unresolved:${projectPath}` };
+  }
+
+  const worktreeRootPath = buildManagedWorktreeRoot(projectRealPath);
+  const worktreeRootParent = path.dirname(worktreeRootPath);
+  if (worktreeRootParent !== projectRealPath) {
+    return { ok: false, reason: `worktree_root_escape:${worktreeRootPath}` };
+  }
+
+  if (fs.existsSync(worktreeRootPath) && detectSymlinkOrJunction(worktreeRootPath)) {
+    return { ok: false, reason: `worktree_root_symlink:${worktreeRootPath}` };
+  }
+
+  if (!targetPath) {
+    return { ok: true, projectRealPath, worktreeRootPath };
+  }
+
+  const projectInputPath = path.resolve(projectPath);
+  const normalizedTargetPath = path.resolve(projectRealPath, path.relative(projectInputPath, path.resolve(targetPath)));
+  if (!isDirectChild(worktreeRootPath, normalizedTargetPath)) {
+    return { ok: false, reason: `target_not_direct_child:${normalizedTargetPath}` };
+  }
+  if (!isPathInside(worktreeRootPath, normalizedTargetPath)) {
+    return { ok: false, reason: `target_outside_root:${normalizedTargetPath}` };
+  }
+
+  if (fs.existsSync(normalizedTargetPath)) {
+    if (detectSymlinkOrJunction(normalizedTargetPath)) {
+      return { ok: false, reason: `target_symlink:${normalizedTargetPath}` };
+    }
+    try {
+      const targetRealPath = canonicalPath(normalizedTargetPath);
+      if (!isPathInside(worktreeRootPath, targetRealPath)) {
+        return { ok: false, reason: `target_realpath_escape:${targetRealPath}` };
+      }
+    } catch {
+      return { ok: false, reason: `target_unresolved:${normalizedTargetPath}` };
+    }
+  }
+
+  return {
+    ok: true,
+    projectRealPath,
+    worktreeRootPath,
+    targetPath: normalizedTargetPath,
+  };
+}
+
 export function createWorktreeLifecycleTools(deps: CreateWorktreeLifecycleToolsDeps) {
   const { appendTaskLog, taskWorktrees } = deps;
 
@@ -27,7 +153,7 @@ export function createWorktreeLifecycleTools(deps: CreateWorktreeLifecycleToolsD
 
   function ensureWorktreeBootstrapRepo(projectPath: string, taskId: string): boolean {
     if (isGitRepo(projectPath)) return true;
-    const shortId = taskId.slice(0, 8);
+    const shortId = getTaskShortId(taskId);
     try {
       if (!fs.existsSync(projectPath) || !fs.statSync(projectPath).isDirectory()) {
         appendTaskLog(taskId, "system", `Git bootstrap skipped: invalid project path (${projectPath})`);
@@ -126,12 +252,21 @@ export function createWorktreeLifecycleTools(deps: CreateWorktreeLifecycleToolsD
     if (!ensureWorktreeBootstrapRepo(projectPath, taskId)) return null;
     if (!isGitRepo(projectPath)) return null;
 
-    const shortId = taskId.slice(0, 8);
-    const branchName = `climpire/${shortId}`;
-    const worktreeBase = path.join(projectPath, ".climpire-worktrees");
-    const worktreePath = path.join(worktreeBase, shortId);
+    const shortId = getTaskShortId(taskId);
+    if (!SHORT_ID_PATTERN.test(shortId)) {
+      appendTaskLog(taskId, "system", `${WORKTREE_LOG_PREFIX} create blocked: invalid_short_id:${shortId}`);
+      return null;
+    }
+    const branchName = buildManagedWorktreeBranchName(shortId);
+    const worktreeBase = buildManagedWorktreeRoot(projectPath);
+    const worktreePath = buildManagedWorktreePath(projectPath, shortId);
 
     try {
+      const rootGuard = guardManagedWorktreePath(projectPath);
+      if (!rootGuard.ok) {
+        appendTaskLog(taskId, "system", `${WORKTREE_LOG_PREFIX} create blocked: ${rootGuard.reason}`);
+        return null;
+      }
       fs.mkdirSync(worktreeBase, { recursive: true });
       execFileSync("git", ["worktree", "prune"], { cwd: projectPath, stdio: "pipe", timeout: 5000 });
 
@@ -161,7 +296,13 @@ export function createWorktreeLifecycleTools(deps: CreateWorktreeLifecycleToolsD
 
       for (let idx = 0; idx < branchCandidates.length; idx += 1) {
         const candidateBranch = branchCandidates[idx]!;
-        const candidatePath = idx === 0 ? worktreePath : path.join(worktreeBase, `${shortId}-${idx}`);
+        const candidatePath = buildManagedWorktreePath(projectPath, shortId, idx);
+        const candidateGuard = guardManagedWorktreePath(projectPath, candidatePath);
+        if (!candidateGuard.ok) {
+          lastError = new Error(candidateGuard.reason);
+          appendTaskLog(taskId, "system", `${WORKTREE_LOG_PREFIX} create blocked: ${candidateGuard.reason}`);
+          break;
+        }
         try {
           if (fs.existsSync(candidatePath)) {
             fs.rmSync(candidatePath, { recursive: true, force: true });
@@ -235,7 +376,13 @@ export function createWorktreeLifecycleTools(deps: CreateWorktreeLifecycleToolsD
     const info = taskWorktrees.get(taskId);
     if (!info) return;
 
-    const shortId = taskId.slice(0, 8);
+    const shortId = getTaskShortId(taskId);
+    const targetGuard = guardManagedWorktreePath(projectPath, info.worktreePath);
+    if (!targetGuard.ok) {
+      appendTaskLog(taskId, "system", `${WORKTREE_LOG_PREFIX} cleanup blocked: ${targetGuard.reason}`);
+      console.warn(`[Claw-Empire] ${WORKTREE_LOG_PREFIX} cleanup blocked for ${shortId}: ${targetGuard.reason}`);
+      return;
+    }
 
     try {
       execFileSync("git", ["worktree", "remove", info.worktreePath, "--force"], {

@@ -26,8 +26,12 @@ function initRepo(basePrefix: string): string {
 }
 
 const tempDirs: string[] = [];
+const originalCwd = process.cwd();
 
 afterEach(() => {
+  if (process.cwd() !== originalCwd) {
+    process.chdir(originalCwd);
+  }
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop();
     if (!dir) continue;
@@ -83,5 +87,128 @@ describe("worktree lifecycle branch collision handling", () => {
     tools.cleanupWorktree(repo, taskId);
     runGit(repo, ["worktree", "remove", occupiedPath, "--force"]);
     runGit(repo, ["branch", "-D", baseBranch]);
+  });
+});
+
+describe("worktree lifecycle path guard hardening", () => {
+  it("blocks create when .climpire-worktrees is a junction", () => {
+    const repo = initRepo("climpire-wt-root-junction-");
+    const junctionTarget = fs.mkdtempSync(path.join(os.tmpdir(), "climpire-wt-root-target-"));
+    tempDirs.push(repo, junctionTarget);
+
+    fs.symlinkSync(junctionTarget, path.join(repo, ".climpire-worktrees"), "junction");
+
+    const taskId = "safe1234-0000-0000-0000-000000000000";
+    const taskWorktrees = new Map();
+    const tools = createWorktreeLifecycleTools({
+      appendTaskLog: () => {},
+      taskWorktrees,
+    });
+
+    expect(tools.createWorktree(repo, taskId, "Tester")).toBeNull();
+    expect(taskWorktrees.has(taskId)).toBe(false);
+  });
+
+  it("blocks create when the derived worktree path escapes the managed root", () => {
+    const repo = initRepo("climpire-wt-escape-");
+    tempDirs.push(repo);
+
+    const taskId = "../evil1-0000-0000-0000-000000000000";
+    const taskWorktrees = new Map();
+    const tools = createWorktreeLifecycleTools({
+      appendTaskLog: () => {},
+      taskWorktrees,
+    });
+
+    expect(tools.createWorktree(repo, taskId, "Tester")).toBeNull();
+    expect(taskWorktrees.has(taskId)).toBe(false);
+  });
+
+  it("blocks cleanup when the tracked worktree path is outside the managed root", () => {
+    const repo = initRepo("climpire-wt-cleanup-outside-");
+    const escapedDir = fs.mkdtempSync(path.join(os.tmpdir(), "climpire-wt-escaped-"));
+    tempDirs.push(repo, escapedDir);
+    fs.writeFileSync(path.join(escapedDir, "keep.txt"), "do-not-delete", "utf8");
+
+    const taskId = "outside1-0000-0000-0000-000000000000";
+    const taskWorktrees = new Map([
+      [
+        taskId,
+        {
+          branchName: "climpire/outside1",
+          projectPath: repo,
+          worktreePath: escapedDir,
+        },
+      ],
+    ]);
+    const tools = createWorktreeLifecycleTools({
+      appendTaskLog: () => {},
+      taskWorktrees,
+    });
+
+    tools.cleanupWorktree(repo, taskId);
+
+    expect(fs.existsSync(escapedDir)).toBe(true);
+    expect(taskWorktrees.has(taskId)).toBe(true);
+  });
+
+  it("blocks cleanup when the tracked worktree path is a junction", () => {
+    const repo = initRepo("climpire-wt-cleanup-junction-");
+    const managedRoot = path.join(repo, ".climpire-worktrees");
+    const junctionTarget = fs.mkdtempSync(path.join(os.tmpdir(), "climpire-wt-cleanup-target-"));
+    tempDirs.push(repo, junctionTarget);
+    fs.mkdirSync(managedRoot, { recursive: true });
+    fs.writeFileSync(path.join(junctionTarget, "keep.txt"), "do-not-delete", "utf8");
+
+    const taskId = "linksafe-0000-0000-0000-000000000000";
+    const junctionPath = path.join(managedRoot, "linksafe");
+    fs.symlinkSync(junctionTarget, junctionPath, "junction");
+
+    const taskWorktrees = new Map([
+      [
+        taskId,
+        {
+          branchName: "climpire/linksafe",
+          projectPath: repo,
+          worktreePath: junctionPath,
+        },
+      ],
+    ]);
+    const tools = createWorktreeLifecycleTools({
+      appendTaskLog: () => {},
+      taskWorktrees,
+    });
+
+    tools.cleanupWorktree(repo, taskId);
+
+    expect(fs.lstatSync(junctionPath).isSymbolicLink()).toBe(true);
+    expect(fs.existsSync(path.join(junctionTarget, "keep.txt"))).toBe(true);
+    expect(taskWorktrees.has(taskId)).toBe(true);
+  });
+
+  it("keeps .claude/skills junction propagation working under the new guard", () => {
+    const repo = initRepo("climpire-wt-skills-");
+    const harness = fs.mkdtempSync(path.join(os.tmpdir(), "climpire-wt-harness-"));
+    tempDirs.push(repo, harness);
+    fs.mkdirSync(path.join(harness, ".claude", "skills"), { recursive: true });
+    fs.writeFileSync(path.join(harness, ".claude", "skills", "README.md"), "skill", "utf8");
+
+    const taskId = "skills01-0000-0000-0000-000000000000";
+    const taskWorktrees = new Map();
+    const tools = createWorktreeLifecycleTools({
+      appendTaskLog: () => {},
+      taskWorktrees,
+    });
+
+    process.chdir(harness);
+    const worktreePath = tools.createWorktree(repo, taskId, "Tester");
+    process.chdir(originalCwd);
+
+    expect(worktreePath).toBeTruthy();
+    const propagatedPath = path.join(String(worktreePath), ".claude", "skills");
+    expect(fs.existsSync(propagatedPath)).toBe(true);
+    expect(fs.lstatSync(propagatedPath).isSymbolicLink()).toBe(true);
+
+    tools.cleanupWorktree(repo, taskId);
   });
 });
