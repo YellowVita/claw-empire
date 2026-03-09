@@ -5,6 +5,7 @@ export const WORKFLOW_PACK_KEYS = [
   "video_preprod",
   "web_research_report",
   "roleplay",
+  "jedi",
 ] as const;
 
 export type WorkflowPackKey = (typeof WORKFLOW_PACK_KEYS)[number];
@@ -182,6 +183,32 @@ export const DEFAULT_WORKFLOW_PACK_SEEDS: WorkflowPackSeed[] = [
       ...COMMON_COST_PROFILE,
       maxRounds: 1,
       defaultReasoning: "low",
+    },
+  },
+  {
+    key: "jedi",
+    name: "Jedi Council",
+    inputSchema: {
+      required: ["mission", "instruction"],
+      optional: ["constraints", "force_alignment", "deadline"],
+    },
+    promptPreset: {
+      mode: "jedi_council",
+      style: "diplomatic",
+      enforceTests: true,
+    },
+    qaRules: {
+      requireTestEvidence: true,
+      requireRiskNotes: true,
+      maxAutoFixPasses: 1,
+    },
+    outputTemplate: {
+      sections: ["summary", "changes", "verification", "next_steps"],
+    },
+    routingKeywords: ["jedi", "force", "council", "temple", "mission", "ジェダイ", "フォース", "評議会"],
+    costProfile: {
+      ...COMMON_COST_PROFILE,
+      defaultReasoning: "high",
     },
   },
 ];
