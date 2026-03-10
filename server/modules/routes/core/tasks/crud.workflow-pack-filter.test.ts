@@ -369,7 +369,7 @@ describe("task CRUD workflow pack filter", () => {
       expect(payload.task.workflow_pack_key).toBe("novel");
       expect((payload.task as any).workflow_pack_source).toBe("project_default");
       expect(payload.task.project_id).toBe("project-novel");
-      expect(payload.task.project_path).toBe("/tmp/novel-project");
+      expect(payload.task.project_path).toBe(path.normalize("/tmp/novel-project"));
       const meta = JSON.parse(payload.task.workflow_meta_json ?? "{}");
       expect(meta.pack_override_source).toBeNull();
       expect(meta.pack_override_fields).toEqual([]);

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
+import { createProjectPathPolicy } from "../../../routes/core/projects/path-policy.ts";
 
 export type WorktreeInfo = {
   worktreePath: string;
@@ -145,6 +146,59 @@ export function guardManagedWorktreePath(projectPath: string, targetPath?: strin
 
 export function createWorktreeLifecycleTools(deps: CreateWorktreeLifecycleToolsDeps) {
   const { appendTaskLog, taskWorktrees } = deps;
+  const { normalizeProjectPathInput, isPathInsideAllowedRoots } = createProjectPathPolicy({
+    normalizeTextField(value: unknown) {
+      if (typeof value !== "string") return null;
+      const trimmed = value.trim();
+      return trimmed.length > 0 ? trimmed : null;
+    },
+  });
+
+  function resolveApprovedProjectPath(projectPath: string, taskId: string): string | null {
+    const normalizedProjectPath = normalizeProjectPathInput(projectPath);
+    if (!normalizedProjectPath) {
+      appendTaskLog(taskId, "system", `${WORKTREE_LOG_PREFIX} create blocked: project_path_policy_invalid:${projectPath}`);
+      return null;
+    }
+    if (!isPathInsideAllowedRoots(normalizedProjectPath)) {
+      appendTaskLog(
+        taskId,
+        "system",
+        `${WORKTREE_LOG_PREFIX} create blocked: project_path_outside_allowed_roots:${normalizedProjectPath}`,
+      );
+      return null;
+    }
+    try {
+      const stat = fs.statSync(normalizedProjectPath);
+      if (!stat.isDirectory()) {
+        appendTaskLog(
+          taskId,
+          "system",
+          `${WORKTREE_LOG_PREFIX} create blocked: project_path_not_directory:${normalizedProjectPath}`,
+        );
+        return null;
+      }
+    } catch {
+      appendTaskLog(taskId, "system", `${WORKTREE_LOG_PREFIX} create blocked: project_path_missing:${normalizedProjectPath}`);
+      return null;
+    }
+
+    try {
+      const realProjectPath = canonicalPath(normalizedProjectPath);
+      if (!isPathInsideAllowedRoots(realProjectPath)) {
+        appendTaskLog(
+          taskId,
+          "system",
+          `${WORKTREE_LOG_PREFIX} create blocked: project_realpath_outside_allowed_roots:${realProjectPath}`,
+        );
+        return null;
+      }
+      return realProjectPath;
+    } catch {
+      appendTaskLog(taskId, "system", `${WORKTREE_LOG_PREFIX} create blocked: project_path_unresolved:${normalizedProjectPath}`);
+      return null;
+    }
+  }
 
   function isGitRepo(dir: string): boolean {
     try {
@@ -253,8 +307,10 @@ export function createWorktreeLifecycleTools(deps: CreateWorktreeLifecycleToolsD
   }
 
   function createWorktree(projectPath: string, taskId: string, agentName: string, baseBranch?: string): string | null {
-    if (!ensureWorktreeBootstrapRepo(projectPath, taskId)) return null;
-    if (!isGitRepo(projectPath)) return null;
+    const approvedProjectPath = resolveApprovedProjectPath(projectPath, taskId);
+    if (!approvedProjectPath) return null;
+    if (!ensureWorktreeBootstrapRepo(approvedProjectPath, taskId)) return null;
+    if (!isGitRepo(approvedProjectPath)) return null;
 
     const shortId = getTaskShortId(taskId);
     if (!SHORT_ID_PATTERN.test(shortId)) {
@@ -262,32 +318,32 @@ export function createWorktreeLifecycleTools(deps: CreateWorktreeLifecycleToolsD
       return null;
     }
     const branchName = buildManagedWorktreeBranchName(shortId);
-    const worktreeBase = buildManagedWorktreeRoot(projectPath);
-    const worktreePath = buildManagedWorktreePath(projectPath, shortId);
+    const worktreeBase = buildManagedWorktreeRoot(approvedProjectPath);
+    const worktreePath = buildManagedWorktreePath(approvedProjectPath, shortId);
 
     try {
-      const rootGuard = guardManagedWorktreePath(projectPath);
+      const rootGuard = guardManagedWorktreePath(approvedProjectPath);
       if (!rootGuard.ok) {
         appendTaskLog(taskId, "system", `${WORKTREE_LOG_PREFIX} create blocked: ${rootGuard.reason}`);
         return null;
       }
       fs.mkdirSync(worktreeBase, { recursive: true });
-      execFileSync("git", ["worktree", "prune"], { cwd: projectPath, stdio: "pipe", timeout: 5000 });
+      execFileSync("git", ["worktree", "prune"], { cwd: approvedProjectPath, stdio: "pipe", timeout: 5000 });
 
       // Get current branch/HEAD as base
       let base: string;
       if (baseBranch) {
         try {
-          base = execFileSync("git", ["rev-parse", baseBranch], { cwd: projectPath, stdio: "pipe", timeout: 5000 })
+          base = execFileSync("git", ["rev-parse", baseBranch], { cwd: approvedProjectPath, stdio: "pipe", timeout: 5000 })
             .toString()
             .trim();
         } catch {
-          base = execFileSync("git", ["rev-parse", "HEAD"], { cwd: projectPath, stdio: "pipe", timeout: 5000 })
+          base = execFileSync("git", ["rev-parse", "HEAD"], { cwd: approvedProjectPath, stdio: "pipe", timeout: 5000 })
             .toString()
             .trim();
         }
       } else {
-        base = execFileSync("git", ["rev-parse", "HEAD"], { cwd: projectPath, stdio: "pipe", timeout: 5000 })
+        base = execFileSync("git", ["rev-parse", "HEAD"], { cwd: approvedProjectPath, stdio: "pipe", timeout: 5000 })
           .toString()
           .trim();
       }
@@ -300,8 +356,8 @@ export function createWorktreeLifecycleTools(deps: CreateWorktreeLifecycleToolsD
 
       for (let idx = 0; idx < branchCandidates.length; idx += 1) {
         const candidateBranch = branchCandidates[idx]!;
-        const candidatePath = buildManagedWorktreePath(projectPath, shortId, idx);
-        const candidateGuard = guardManagedWorktreePath(projectPath, candidatePath);
+        const candidatePath = buildManagedWorktreePath(approvedProjectPath, shortId, idx);
+        const candidateGuard = guardManagedWorktreePath(approvedProjectPath, candidatePath);
         if (!candidateGuard.ok) {
           lastError = new Error(candidateGuard.reason);
           appendTaskLog(taskId, "system", `${WORKTREE_LOG_PREFIX} create blocked: ${candidateGuard.reason}`);
@@ -318,7 +374,7 @@ export function createWorktreeLifecycleTools(deps: CreateWorktreeLifecycleToolsD
         const branchExists = (() => {
           try {
             execFileSync("git", ["show-ref", "--verify", `refs/heads/${candidateBranch}`], {
-              cwd: projectPath,
+              cwd: approvedProjectPath,
               stdio: "pipe",
               timeout: 5000,
             });
@@ -334,7 +390,7 @@ export function createWorktreeLifecycleTools(deps: CreateWorktreeLifecycleToolsD
 
         try {
           execFileSync("git", addArgs, {
-            cwd: projectPath,
+            cwd: approvedProjectPath,
             stdio: "pipe",
             timeout: 15000,
           });
@@ -364,7 +420,11 @@ export function createWorktreeLifecycleTools(deps: CreateWorktreeLifecycleToolsD
         // best effort — skill propagation failure should not block execution
       }
 
-      taskWorktrees.set(taskId, { worktreePath: selectedWorktreePath, branchName: selectedBranch, projectPath });
+      taskWorktrees.set(taskId, {
+        worktreePath: selectedWorktreePath,
+        branchName: selectedBranch,
+        projectPath: approvedProjectPath,
+      });
       console.log(
         `[Claw-Empire] Created worktree for task ${shortId}: ${selectedWorktreePath} (branch: ${selectedBranch}, agent: ${agentName})`,
       );

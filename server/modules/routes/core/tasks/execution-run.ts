@@ -1,7 +1,9 @@
+import fs from "node:fs";
 import path from "node:path";
 import { notifyTaskStatus } from "../../../../gateway/client.ts";
 import type { RuntimeContext } from "../../../../types/runtime-context.ts";
 import type { AgentRow } from "../../shared/types.ts";
+import { createProjectPathPolicy } from "../projects/path-policy.ts";
 import { resolveConstrainedAgentScopeForTask, selectAutoAssignableAgentForTask } from "./execution-run-auto-assign.ts";
 import { buildWorkflowPackExecutionGuidance } from "../../../workflow/packs/execution-guidance.ts";
 import { buildRuntimeWorkflowPackPromptSections } from "../../../workflow/packs/runtime-effective-pack.ts";
@@ -83,6 +85,100 @@ export function registerTaskRunRoute(deps: TaskRunRouteDeps): void {
     handleTaskRunComplete,
     buildAvailableSkillsPromptBlock,
   } = deps;
+
+  const { isRelativeProjectPathInput, normalizeProjectPathInput, isPathInsideAllowedRoots, normalizePathForScopeCompare } =
+    createProjectPathPolicy({ normalizeTextField });
+
+  function buildProjectPathError(error: string, taskLang: string): { error: string; message: string } {
+    const messages = {
+      relative_project_path_not_allowed: pickL(
+        l(
+          ["상대 경로 project path는 허용되지 않습니다. 프로젝트를 다시 연결하거나 절대 경로로 갱신하세요."],
+          ["Relative project paths are not allowed. Re-link the project or update the task with an absolute path."],
+          ["相対パスの project path は許可されません。プロジェクトを再接続するか、絶対パスへ更新してください。"],
+          ["不允许使用相对 project path。请重新关联项目，或将任务路径更新为绝对路径。"],
+        ),
+        taskLang,
+      ),
+      project_path_outside_allowed_roots: pickL(
+        l(
+          ["project path가 허용된 루트 밖에 있습니다. 프로젝트를 다시 연결하거나 승인된 절대 경로로 갱신하세요."],
+          ["The project path is outside the allowed roots. Re-link the project or update the task with an approved absolute path."],
+          ["project path が許可ルート外です。プロジェクトを再接続するか、承認済みの絶対パスへ更新してください。"],
+          ["project path 位于允许根目录之外。请重新关联项目，或更新为受允许的绝对路径。"],
+        ),
+        taskLang,
+      ),
+      conflicting_project_path_sources: pickL(
+        l(
+          ["project 경로 소스가 서로 충돌합니다. project 연결 또는 task path를 정리한 뒤 다시 실행하세요."],
+          ["Project path sources conflict. Fix the project binding or task path, then retry the run."],
+          ["project path のソースが衝突しています。プロジェクト紐付けまたは task path を修正してから再実行してください。"],
+          ["project path 来源互相冲突。请修正项目绑定或任务路径后再重试。"],
+        ),
+        taskLang,
+      ),
+      invalid_task_project_path: pickL(
+        l(
+          ["현재 task의 project path를 실행 경로로 사용할 수 없습니다. 프로젝트를 다시 연결하거나 절대 경로로 수정하세요."],
+          ["The task project path cannot be used for execution. Re-link the project or update the task with a valid absolute path."],
+          ["現在の task project path は実行に使えません。プロジェクトを再接続するか、有効な絶対パスへ更新してください。"],
+          ["当前 task project path 无法用于执行。请重新关联项目，或更新为有效的绝对路径。"],
+        ),
+        taskLang,
+      ),
+      missing_project_path: pickL(
+        l(
+          ["현재 프로젝트 경로가 없어 실행을 시작할 수 없습니다. 기존 프로젝트를 선택하거나 절대 경로를 지정하세요."],
+          ["Task execution requires a project path. Select an existing project or provide an absolute path."],
+          ["実行にはプロジェクトパスが必要です。既存プロジェクトを選択するか、絶対パスを指定してください。"],
+          ["执行需要项目路径。请选择现有项目，或提供绝对路径。"],
+        ),
+        taskLang,
+      ),
+    } as const;
+
+    return {
+      error,
+      message: messages[error as keyof typeof messages] ?? messages.invalid_task_project_path,
+    };
+  }
+
+  function validateConfiguredPath(raw: unknown): { ok: true; path: string } | { ok: false; status: number; error: string } {
+    const normalized = normalizeProjectPathInput(raw);
+    if (!normalized) {
+      return {
+        ok: false,
+        status: 400,
+        error: isRelativeProjectPathInput(raw) ? "relative_project_path_not_allowed" : "invalid_task_project_path",
+      };
+    }
+    if (!isPathInsideAllowedRoots(normalized)) {
+      return { ok: false, status: 403, error: "project_path_outside_allowed_roots" };
+    }
+    return { ok: true, path: normalized };
+  }
+
+  function validateRuntimePath(projectPath: string): { ok: true; path: string } | { ok: false; status: number; error: string } {
+    try {
+      const stat = fs.statSync(projectPath);
+      if (!stat.isDirectory()) {
+        return { ok: false, status: 400, error: "invalid_task_project_path" };
+      }
+    } catch {
+      return { ok: false, status: 400, error: "invalid_task_project_path" };
+    }
+
+    try {
+      const realPath = fs.realpathSync.native?.(projectPath) ?? fs.realpathSync(projectPath);
+      if (!isPathInsideAllowedRoots(realPath)) {
+        return { ok: false, status: 403, error: "project_path_outside_allowed_roots" };
+      }
+      return { ok: true, path: realPath };
+    } catch {
+      return { ok: false, status: 400, error: "invalid_task_project_path" };
+    }
+  }
 
   app.post("/api/tasks/:id/run", (req, res) => {
     const id = String(req.params.id);
@@ -298,23 +394,71 @@ export function registerTaskRunRoute(deps: TaskRunRouteDeps): void {
       appendTaskLog,
     });
 
-    const taskProjectPath = normalizeTextField(task.project_path);
-    const requestProjectPath = normalizeTextField(req.body?.project_path);
-    const projectPath = taskProjectPath || requestProjectPath;
-    if (!projectPath) {
-      return res.status(400).json({
-        error: "missing_project_path",
-        message: pickL(
-          l(
-            ["현재 프로젝트 경로가 없어 실행을 시작할 수 없습니다. 기존 프로젝트를 선택하거나 절대 경로를 지정하세요."],
-            ["Task execution requires a project path. Select an existing project or provide an absolute path."],
-            ["実行にはプロジェクトパスが必要です。既存プロジェクトを選択するか、絶対パスを指定してください。"],
-            ["执行需要项目路径。请选择现有项目，或提供绝对路径。"],
-          ),
-          taskLang,
-        ),
-      });
+    const projectRow = task.project_id
+      ? (db.prepare("SELECT project_path FROM projects WHERE id = ?").get(task.project_id) as
+          | { project_path: string | null }
+          | undefined)
+      : undefined;
+    const resolvedProjectPath = task.project_id ? validateConfiguredPath(projectRow?.project_path) : null;
+    if (task.project_id && (!projectRow || !resolvedProjectPath?.ok)) {
+      const failure = resolvedProjectPath && !resolvedProjectPath.ok
+        ? buildProjectPathError(resolvedProjectPath.error, taskLang)
+        : buildProjectPathError("invalid_task_project_path", taskLang);
+      return res.status(resolvedProjectPath && !resolvedProjectPath.ok ? resolvedProjectPath.status : 400).json(failure);
     }
+
+    const configuredTaskProjectPath = normalizeTextField(task.project_path);
+    const configuredRequestProjectPath = normalizeTextField(req.body?.project_path);
+    const taskPathValidation = configuredTaskProjectPath ? validateConfiguredPath(configuredTaskProjectPath) : null;
+    const requestPathValidation = configuredRequestProjectPath ? validateConfiguredPath(configuredRequestProjectPath) : null;
+
+    if (taskPathValidation && !taskPathValidation.ok) {
+      const failure = buildProjectPathError(taskPathValidation.error, taskLang);
+      return res.status(taskPathValidation.status).json(failure);
+    }
+    if (requestPathValidation && !requestPathValidation.ok) {
+      const failure = buildProjectPathError(requestPathValidation.error, taskLang);
+      return res.status(requestPathValidation.status).json(failure);
+    }
+
+    let configuredProjectPath: string | null = null;
+    if (resolvedProjectPath?.ok) {
+      configuredProjectPath = resolvedProjectPath.path;
+      if (taskPathValidation?.ok && normalizePathForScopeCompare(taskPathValidation.path) !== normalizePathForScopeCompare(configuredProjectPath)) {
+        const failure = buildProjectPathError("conflicting_project_path_sources", taskLang);
+        return res.status(409).json(failure);
+      }
+      if (
+        requestPathValidation?.ok &&
+        normalizePathForScopeCompare(requestPathValidation.path) !== normalizePathForScopeCompare(configuredProjectPath)
+      ) {
+        const failure = buildProjectPathError("conflicting_project_path_sources", taskLang);
+        return res.status(409).json(failure);
+      }
+    } else if (taskPathValidation?.ok) {
+      configuredProjectPath = taskPathValidation.path;
+      if (
+        requestPathValidation?.ok &&
+        normalizePathForScopeCompare(requestPathValidation.path) !== normalizePathForScopeCompare(configuredProjectPath)
+      ) {
+        const failure = buildProjectPathError("conflicting_project_path_sources", taskLang);
+        return res.status(409).json(failure);
+      }
+    } else if (requestPathValidation?.ok) {
+      configuredProjectPath = requestPathValidation.path;
+    }
+
+    if (!configuredProjectPath) {
+      const failure = buildProjectPathError("missing_project_path", taskLang);
+      return res.status(400).json(failure);
+    }
+
+    const runtimeProjectPath = validateRuntimePath(configuredProjectPath);
+    if (!runtimeProjectPath.ok) {
+      const failure = buildProjectPathError(runtimeProjectPath.error, taskLang);
+      return res.status(runtimeProjectPath.status).json(failure);
+    }
+    const projectPath = runtimeProjectPath.path;
 
     const executionSession = ensureTaskExecutionSession(id, agentId, provider);
     const pendingInterruptPrompts = loadPendingInterruptPrompts(db as any, id, executionSession.sessionId);

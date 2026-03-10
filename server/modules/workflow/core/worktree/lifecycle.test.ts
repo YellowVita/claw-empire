@@ -31,10 +31,16 @@ function initRepo(basePrefix: string): string {
 
 const tempDirs: string[] = [];
 const originalCwd = process.cwd();
+const originalAllowedRoots = process.env.PROJECT_PATH_ALLOWED_ROOTS;
 
 afterEach(() => {
   if (process.cwd() !== originalCwd) {
     process.chdir(originalCwd);
+  }
+  if (originalAllowedRoots === undefined) {
+    delete process.env.PROJECT_PATH_ALLOWED_ROOTS;
+  } else {
+    process.env.PROJECT_PATH_ALLOWED_ROOTS = originalAllowedRoots;
   }
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop();
@@ -110,6 +116,25 @@ describe("worktree lifecycle path guard hardening", () => {
     });
 
     expect(tools.createWorktree(repo, taskId, "Tester")).toBeNull();
+    expect(taskWorktrees.has(taskId)).toBe(false);
+  });
+
+  it("blocks create when project realpath escapes allowed roots", () => {
+    const allowedRoot = fs.mkdtempSync(path.join(os.tmpdir(), "climpire-wt-allowed-"));
+    const outsideRoot = initRepo("climpire-wt-outside-");
+    const linkedRepo = path.join(allowedRoot, "linked-repo");
+    tempDirs.push(allowedRoot, outsideRoot);
+    fs.symlinkSync(outsideRoot, linkedRepo, "junction");
+    process.env.PROJECT_PATH_ALLOWED_ROOTS = allowedRoot;
+
+    const taskId = "realroot1-0000-0000-0000-000000000000";
+    const taskWorktrees = new Map();
+    const tools = createWorktreeLifecycleTools({
+      appendTaskLog: () => {},
+      taskWorktrees,
+    });
+
+    expect(tools.createWorktree(linkedRepo, taskId, "Tester")).toBeNull();
     expect(taskWorktrees.has(taskId)).toBe(false);
   });
 

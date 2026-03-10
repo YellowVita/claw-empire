@@ -1,5 +1,4 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { SQLInputValue } from "node:sqlite";
@@ -8,6 +7,7 @@ import type { MeetingMinuteEntryRow, MeetingMinutesRow } from "../../shared/type
 import { isWorkflowPackKey } from "../../../workflow/packs/definitions.ts";
 import { buildEffectiveWorkflowPack } from "../../../workflow/packs/effective-pack.ts";
 import { resolveProjectPathById, resolveTaskWorkflowPackSelection } from "../../../workflow/packs/task-pack-resolver.ts";
+import { createProjectPathPolicy } from "../projects/path-policy.ts";
 import {
   buildTaskQualityPayload,
   seedTaskQualityItemsFromWorkflowMeta,
@@ -62,25 +62,57 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
     logsDir,
   } = deps;
 
-  function normalizeProjectPathInput(raw: unknown): string | null {
-    const value = normalizeTextField(raw);
-    if (!value) return null;
+  const {
+    isRelativeProjectPathInput,
+    normalizeProjectPathInput,
+    isPathInsideAllowedRoots,
+    normalizePathForScopeCompare,
+  } = createProjectPathPolicy({ normalizeTextField });
 
-    let candidate = value;
-    if (candidate === "~") {
-      candidate = os.homedir();
-    } else if (candidate.startsWith("~/")) {
-      candidate = path.join(os.homedir(), candidate.slice(2));
-    } else if (candidate === "/Projects" || candidate.startsWith("/Projects/")) {
-      const suffix = candidate.slice("/Projects".length).replace(/^\/+/, "");
-      candidate = suffix ? path.join(os.homedir(), "Projects", suffix) : path.join(os.homedir(), "Projects");
-    } else if (candidate === "/projects" || candidate.startsWith("/projects/")) {
-      const suffix = candidate.slice("/projects".length).replace(/^\/+/, "");
-      candidate = suffix ? path.join(os.homedir(), "projects", suffix) : path.join(os.homedir(), "projects");
+  function validateTaskProjectPathInput(
+    raw: unknown,
+    requiredError: "project_path_required" | "invalid_task_project_path" = "project_path_required",
+  ): { ok: true; path: string } | { ok: false; status: number; error: string } {
+    const normalized = normalizeProjectPathInput(raw);
+    if (!normalized) {
+      return {
+        ok: false,
+        status: 400,
+        error: isRelativeProjectPathInput(raw) ? "relative_project_path_not_allowed" : requiredError,
+      };
     }
+    if (!isPathInsideAllowedRoots(normalized)) {
+      return { ok: false, status: 403, error: "project_path_outside_allowed_roots" };
+    }
+    return { ok: true, path: normalized };
+  }
 
-    const absolute = path.isAbsolute(candidate) ? candidate : path.resolve(process.cwd(), candidate);
-    return path.normalize(absolute);
+  function pathsMatch(left: string, right: string): boolean {
+    return normalizePathForScopeCompare(left) === normalizePathForScopeCompare(right);
+  }
+
+  function resolveCanonicalProjectPath(
+    projectId: string,
+  ): { ok: true; path: string } | { ok: false; status: number; error: string } {
+    const project = db
+      .prepare("SELECT id, project_path FROM projects WHERE id = ?")
+      .get(projectId) as { id: string; project_path: string | null } | undefined;
+    if (!project) return { ok: false, status: 400, error: "project_not_found" };
+    return validateTaskProjectPathInput(project.project_path, "invalid_task_project_path");
+  }
+
+  function warnOnLegacyInvalidTaskPaths(): void {
+    const rows = db
+      .prepare("SELECT id, project_path FROM tasks WHERE project_path IS NOT NULL AND TRIM(project_path) != ''")
+      .all() as Array<{ id: string; project_path: string | null }>;
+    let invalidCount = 0;
+    for (const row of rows) {
+      const result = validateTaskProjectPathInput(row.project_path, "invalid_task_project_path");
+      if (!result.ok) invalidCount += 1;
+    }
+    if (invalidCount > 0) {
+      console.warn(`[Claw-Empire] task_path_audit invalid_task_project_paths=${invalidCount}`);
+    }
   }
 
   function canEnterReview(taskId: string): {
@@ -140,7 +172,6 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
   }): string {
     const normalizedProjectPath =
       normalizeProjectPathInput(params.projectPath) ??
-      normalizeTextField(params.projectPath) ??
       resolveProjectPathById(db as any, params.projectId);
     const effectivePack = isWorkflowPackKey(params.packKey)
       ? buildEffectiveWorkflowPack({
@@ -163,6 +194,8 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
     nextMeta.effective_pack_snapshot = effectivePack.pack;
     return JSON.stringify(nextMeta);
   }
+
+  warnOnLegacyInvalidTaskPaths();
 
   function stopActiveTaskProcess(taskId: string): void {
     const activeChild = activeProcesses.get(taskId);
@@ -353,8 +386,14 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
 
     const requestedProjectId = normalizeTextField((body as any).project_id);
     let resolvedProjectId: string | null = null;
-    let resolvedProjectPath = normalizeProjectPathInput((body as any).project_path);
+    let resolvedProjectPath: string | null = null;
     let resolvedProjectDefaultPackKey: string | null = null;
+    const hasProjectPathInput = "project_path" in (body as any);
+    const inputProjectPath = hasProjectPathInput ? validateTaskProjectPathInput((body as any).project_path) : null;
+    if (inputProjectPath && !inputProjectPath.ok) {
+      return res.status(inputProjectPath.status).json({ error: inputProjectPath.error });
+    }
+
     if (requestedProjectId) {
       const project = db
         .prepare("SELECT id, project_path, default_pack_key FROM projects WHERE id = ?")
@@ -366,10 +405,18 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
           }
         | undefined;
       if (!project) return res.status(400).json({ error: "project_not_found" });
+      const canonicalProjectPath = validateTaskProjectPathInput(project.project_path, "invalid_task_project_path");
+      if (!canonicalProjectPath.ok) {
+        return res.status(canonicalProjectPath.status).json({ error: canonicalProjectPath.error });
+      }
+      if (inputProjectPath?.ok && !pathsMatch(inputProjectPath.path, canonicalProjectPath.path)) {
+        return res.status(409).json({ error: "conflicting_project_path_sources" });
+      }
       resolvedProjectId = project.id;
-      if (!resolvedProjectPath) resolvedProjectPath = normalizeTextField(project.project_path);
+      resolvedProjectPath = canonicalProjectPath.path;
       resolvedProjectDefaultPackKey = normalizeTextField(project.default_pack_key);
-    } else if (resolvedProjectPath) {
+    } else if (inputProjectPath?.ok) {
+      resolvedProjectPath = inputProjectPath.path;
       const projectByPath = db
         .prepare(
           "SELECT id, project_path, default_pack_key FROM projects WHERE project_path = ? ORDER BY COALESCE(updated_at, created_at) DESC LIMIT 1",
@@ -379,7 +426,11 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
         | undefined;
       if (projectByPath) {
         resolvedProjectId = projectByPath.id;
-        resolvedProjectPath = normalizeTextField(projectByPath.project_path) ?? resolvedProjectPath;
+        const canonicalProjectPath = validateTaskProjectPathInput(projectByPath.project_path, "invalid_task_project_path");
+        if (!canonicalProjectPath.ok) {
+          return res.status(canonicalProjectPath.status).json({ error: canonicalProjectPath.error });
+        }
+        resolvedProjectPath = canonicalProjectPath.path;
         resolvedProjectDefaultPackKey = normalizeTextField(projectByPath.default_pack_key);
       }
     }
@@ -677,7 +728,6 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
       "workflow_pack_key",
       "workflow_meta_json",
       "output_format",
-      "project_path",
       "result",
       "hidden",
     ];
@@ -687,9 +737,18 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
     const params: unknown[] = [updateTs];
     let touchedProjectId: string | null = null;
     let nextProjectId = existing.project_id ?? null;
-    let nextProjectPath = normalizeProjectPathInput(existing.project_path) ?? normalizeTextField(existing.project_path);
+    let nextProjectPath = normalizeProjectPathInput(existing.project_path);
     const shouldResolveWorkflowPack =
       "workflow_pack_key" in body || "project_id" in body || "project_path" in body || "workflow_meta_json" in body;
+    const hasProjectPathInput = "project_path" in (body as any);
+    const requestedProjectId = "project_id" in (body as any) ? normalizeTextField((body as any).project_id) : undefined;
+    const requestedProjectPath = hasProjectPathInput
+      ? validateTaskProjectPathInput((body as any).project_path, "invalid_task_project_path")
+      : null;
+
+    if (requestedProjectPath && !requestedProjectPath.ok) {
+      return res.status(requestedProjectPath.status).json({ error: requestedProjectPath.error });
+    }
 
     for (const field of allowedFields) {
       if (field === "workflow_pack_key" && shouldResolveWorkflowPack) continue;
@@ -701,34 +760,51 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
     }
 
     if ("project_id" in (body as any)) {
-      const requestedProjectId = normalizeTextField((body as any).project_id);
       if (!requestedProjectId) {
         updates.push("project_id = ?");
         params.push(null);
         nextProjectId = null;
-      } else {
-        const project = db
-          .prepare("SELECT id, project_path FROM projects WHERE id = ?")
-          .get(requestedProjectId) as
-          | {
-              id: string;
-              project_path: string;
-            }
-          | undefined;
-        if (!project) return res.status(400).json({ error: "project_not_found" });
-        updates.push("project_id = ?");
-        params.push(project.id);
-        touchedProjectId = project.id;
-        nextProjectId = project.id;
-        if (!("project_path" in (body as any))) {
+        if (!hasProjectPathInput) {
           updates.push("project_path = ?");
-          params.push(project.project_path);
-          nextProjectPath = normalizeTextField(project.project_path);
+          params.push(null);
+          nextProjectPath = null;
         }
+      } else {
+        const canonicalProjectPath = resolveCanonicalProjectPath(requestedProjectId);
+        if (!canonicalProjectPath.ok) {
+          return res.status(canonicalProjectPath.status).json({ error: canonicalProjectPath.error });
+        }
+        if (requestedProjectPath?.ok && !pathsMatch(requestedProjectPath.path, canonicalProjectPath.path)) {
+          return res.status(409).json({ error: "conflicting_project_path_sources" });
+        }
+        updates.push("project_id = ?");
+        params.push(requestedProjectId);
+        touchedProjectId = requestedProjectId;
+        nextProjectId = requestedProjectId;
+        updates.push("project_path = ?");
+        params.push(canonicalProjectPath.path);
+        nextProjectPath = canonicalProjectPath.path;
       }
     }
-    if ("project_path" in (body as any)) {
-      nextProjectPath = normalizeProjectPathInput((body as any).project_path);
+    if (hasProjectPathInput && requestedProjectPath?.ok) {
+      if (nextProjectId) {
+        const canonicalProjectPath = resolveCanonicalProjectPath(nextProjectId);
+        if (!canonicalProjectPath.ok) {
+          return res.status(canonicalProjectPath.status).json({ error: canonicalProjectPath.error });
+        }
+        if (!pathsMatch(requestedProjectPath.path, canonicalProjectPath.path)) {
+          return res.status(409).json({ error: "conflicting_project_path_sources" });
+        }
+        if (!updates.includes("project_path = ?")) {
+          updates.push("project_path = ?");
+          params.push(canonicalProjectPath.path);
+        }
+        nextProjectPath = canonicalProjectPath.path;
+      } else {
+        updates.push("project_path = ?");
+        params.push(requestedProjectPath.path);
+        nextProjectPath = requestedProjectPath.path;
+      }
     }
 
     if (shouldResolveWorkflowPack) {
