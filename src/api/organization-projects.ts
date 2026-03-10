@@ -274,6 +274,18 @@ export async function stopTask(id: string): Promise<void> {
   await post(`/api/tasks/${id}/stop`, { mode: "cancel" });
 }
 
+export type TaskInterruptProof = {
+  session_id: string;
+  control_token: string;
+  requires_csrf: boolean;
+};
+
+export async function getTaskInterruptProof(id: string): Promise<TaskInterruptProof> {
+  await bootstrapSession({ promptOnUnauthorized: false });
+  const result = await post<{ ok: boolean; interrupt: TaskInterruptProof }>(`/api/tasks/${id}/interrupt-proof`, {});
+  return result.interrupt;
+}
+
 export async function pauseTask(id: string): Promise<{
   ok: boolean;
   stopped: boolean;
@@ -281,19 +293,42 @@ export async function pauseTask(id: string): Promise<{
   pid?: number;
   rolled_back?: boolean;
   message?: string;
-  interrupt?: {
-    session_id: string;
-    control_token: string;
-    requires_csrf: boolean;
-  } | null;
 }> {
-  await bootstrapSession({ promptOnUnauthorized: false });
-  return post(`/api/tasks/${id}/stop`, { mode: "pause" });
+  return pauseTaskWithProof(id, await getTaskInterruptProof(id));
 }
 
-export async function resumeTask(id: string): Promise<void> {
+export async function pauseTaskWithProof(
+  id: string,
+  proof: TaskInterruptProof,
+): Promise<{
+  ok: boolean;
+  stopped: boolean;
+  status: string;
+  pid?: number;
+  rolled_back?: boolean;
+  message?: string;
+}> {
   await bootstrapSession({ promptOnUnauthorized: false });
-  await post(`/api/tasks/${id}/resume`);
+  return post(`/api/tasks/${id}/stop`, {
+    mode: "pause",
+    session_id: proof.session_id,
+    interrupt_token: proof.control_token,
+  });
+}
+
+export async function resumeTask(id: string): Promise<{ ok: boolean; status: string; auto_resumed: boolean }> {
+  return resumeTaskWithProof(id, await getTaskInterruptProof(id));
+}
+
+export async function resumeTaskWithProof(
+  id: string,
+  proof: TaskInterruptProof,
+): Promise<{ ok: boolean; status: string; auto_resumed: boolean }> {
+  await bootstrapSession({ promptOnUnauthorized: false });
+  return post(`/api/tasks/${id}/resume`, {
+    session_id: proof.session_id,
+    interrupt_token: proof.control_token,
+  });
 }
 
 export async function injectTaskPrompt(

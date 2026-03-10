@@ -48,6 +48,14 @@ export type TaskExecutionControlRouteDeps = Pick<
   | "randomDelay"
 >;
 
+type ControlTaskRow = {
+  id: string;
+  title: string;
+  status: string;
+  assigned_agent_id: string | null;
+  department_id: string | null;
+};
+
 export function registerTaskExecutionControlRoutes(deps: TaskExecutionControlRouteDeps): void {
   const {
     app,
@@ -114,53 +122,147 @@ export function registerTaskExecutionControlRoutes(deps: TaskExecutionControlRou
     return { ok: true, session: activeSession };
   }
 
-  function buildInterruptProofPayload(
-    taskId: string,
-    fallbackAgentId?: string | null,
-  ): {
+  function serializeInterruptProofPayload(taskId: string, sessionId: string): {
     session_id: string;
     control_token: string;
     requires_csrf: boolean;
-  } | null {
-    let activeSession = taskExecutionSessions.get(taskId);
-    if (!activeSession?.sessionId && fallbackAgentId) {
-      const agentRow = db.prepare("SELECT cli_provider FROM agents WHERE id = ?").get(fallbackAgentId) as
-        | { cli_provider: string | null }
-        | undefined;
-      const provider = (agentRow?.cli_provider || "claude").trim() || "claude";
-      activeSession = ensureTaskExecutionSession(taskId, fallbackAgentId, provider);
-    }
-    if (!activeSession?.sessionId) return null;
+  } {
     return {
-      session_id: activeSession.sessionId,
-      control_token: buildTaskInterruptControlToken(taskId, activeSession.sessionId),
+      session_id: sessionId,
+      control_token: buildTaskInterruptControlToken(taskId, sessionId),
       requires_csrf: true,
     };
   }
+
+  function loadControlTask(id: string): ControlTaskRow | undefined {
+    return db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as ControlTaskRow | undefined;
+  }
+
+  function isInterruptProofIssuableStatus(status: string): boolean {
+    return status === "in_progress" || status === "pending" || status === "cancelled";
+  }
+
+  function issueInterruptProof(
+    task: ControlTaskRow,
+  ):
+    | {
+        ok: true;
+        interrupt: {
+          session_id: string;
+          control_token: string;
+          requires_csrf: boolean;
+        };
+      }
+    | { ok: false; status: number; error: string; message: string } {
+    if (!task.assigned_agent_id) {
+      return {
+        ok: false,
+        status: 409,
+        error: "interrupt_proof_unavailable",
+        message: "Task has no assigned agent.",
+      };
+    }
+    if (!isInterruptProofIssuableStatus(task.status)) {
+      return {
+        ok: false,
+        status: 409,
+        error: "invalid_status",
+        message: `Cannot issue interrupt proof while status is '${task.status}'`,
+      };
+    }
+
+    const agentRow = db.prepare("SELECT cli_provider FROM agents WHERE id = ?").get(task.assigned_agent_id) as
+      | { cli_provider: string | null }
+      | undefined;
+    const provider = (agentRow?.cli_provider || "claude").trim() || "claude";
+    const activeSession = ensureTaskExecutionSession(task.id, task.assigned_agent_id, provider);
+    if (!activeSession?.sessionId) {
+      return {
+        ok: false,
+        status: 409,
+        error: "interrupt_proof_unavailable",
+        message: "Task session is not available.",
+      };
+    }
+    return { ok: true, interrupt: serializeInterruptProofPayload(task.id, activeSession.sessionId) };
+  }
+
+  function requireInterruptProof(
+    task: ControlTaskRow,
+    req: {
+      body?: Record<string, unknown>;
+      header(name: string): string | undefined;
+    },
+  ): { ok: true; session: any } | { ok: false; status: number; error: string; message?: string } {
+    const { sessionId, controlToken } = readInterruptSessionProof(req);
+    if (!sessionId || !controlToken) {
+      return { ok: false, status: 400, error: "session_proof_required" };
+    }
+
+    const proof = validateInterruptProof(task.id, sessionId, controlToken);
+    if (!proof.ok) return proof;
+
+    if (!task.assigned_agent_id) {
+      return {
+        ok: false,
+        status: 409,
+        error: "interrupt_proof_unavailable",
+        message: "Task has no assigned agent.",
+      };
+    }
+    if (proof.session?.agentId && proof.session.agentId !== task.assigned_agent_id) {
+      return {
+        ok: false,
+        status: 409,
+        error: "task_session_mismatch",
+        message: "Task assignment changed after proof issuance.",
+      };
+    }
+    if (task.status === "done" || task.status === "inbox") {
+      return {
+        ok: false,
+        status: 409,
+        error: "invalid_status",
+        message: `Cannot control task while status is '${task.status}'`,
+      };
+    }
+
+    return proof;
+  }
+
+  app.post("/api/tasks/:id/interrupt-proof", (req, res) => {
+    const id = String(req.params.id);
+    if (!requireCsrfGuard(req as any, res)) return;
+
+    const task = loadControlTask(id);
+    if (!task) return res.status(404).json({ error: "not_found" });
+
+    const issued = issueInterruptProof(task);
+    if (!issued.ok) {
+      return res.status(issued.status).json({ error: issued.error, message: issued.message });
+    }
+
+    return res.json({ ok: true, interrupt: issued.interrupt });
+  });
 
   app.post("/api/tasks/:id/inject", (req, res) => {
     const id = String(req.params.id);
     if (!requireCsrfGuard(req as any, res)) return;
 
-    const task = db.prepare("SELECT id, title, status FROM tasks WHERE id = ?").get(id) as
-      | { id: string; title: string; status: string }
-      | undefined;
+    const task = loadControlTask(id);
     if (!task) return res.status(404).json({ error: "not_found" });
     if (task.status !== "pending") {
       return res
-        .status(400)
+        .status(409)
         .json({ error: "invalid_status", message: `Cannot inject prompt while status is '${task.status}'` });
     }
 
-    const { sessionId, controlToken } = readInterruptSessionProof(req as any);
-    if (!sessionId || !controlToken) {
-      return res.status(400).json({ error: "session_proof_required" });
-    }
-
-    const proof = validateInterruptProof(id, sessionId, controlToken);
+    const proof = requireInterruptProof(task, req as any);
     if (!proof.ok) {
-      return res.status(proof.status).json({ error: proof.error });
+      return res.status(proof.status).json({ error: proof.error, message: proof.message });
     }
+    const sessionId = proof.session.sessionId as string;
+    const { controlToken } = readInterruptSessionProof(req as any);
 
     const sanitized = sanitizeInterruptPrompt((req.body ?? {})["prompt"]);
     if (!sanitized.ok) {
@@ -213,18 +315,16 @@ export function registerTaskExecutionControlRoutes(deps: TaskExecutionControlRou
     if (!requireCsrfGuard(req as any, res)) return;
 
     const mode = String(req.body?.mode ?? req.query.mode ?? "cancel");
+    if (mode !== "pause" && mode !== "cancel") {
+      return res.status(400).json({ error: "invalid_mode", message: `Unsupported stop mode '${mode}'` });
+    }
     const targetStatus = mode === "pause" ? "pending" : "cancelled";
+    const task = loadControlTask(id);
+    if (!task) return res.status(404).json({ error: "not_found" });
     if (mode === "pause") {
-      const { sessionId, controlToken } = readInterruptSessionProof(req as any);
-      const hasAnyProof = Boolean(sessionId || controlToken);
-      if (hasAnyProof) {
-        if (!sessionId || !controlToken) {
-          return res.status(400).json({ error: "session_proof_required" });
-        }
-        const proof = validateInterruptProof(id, sessionId, controlToken);
-        if (!proof.ok) {
-          return res.status(proof.status).json({ error: proof.error });
-        }
+      const proof = requireInterruptProof(task, req as any);
+      if (!proof.ok) {
+        return res.status(proof.status).json({ error: proof.error, message: proof.message });
       }
     }
 
@@ -294,16 +394,6 @@ export function registerTaskExecutionControlRoutes(deps: TaskExecutionControlRou
       }
     };
 
-    const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as
-      | {
-          id: string;
-          title: string;
-          status: string;
-          assigned_agent_id: string | null;
-          department_id: string | null;
-        }
-      | undefined;
-    if (!task) return res.status(404).json({ error: "not_found" });
     const lang = resolveLang(task.title);
 
     stopProgressTimer(id);
@@ -372,7 +462,6 @@ export function registerTaskExecutionControlRoutes(deps: TaskExecutionControlRou
         status: targetStatus,
         rolled_back: rolledBack,
         message: "No active process found.",
-        interrupt: targetStatus === "pending" ? buildInterruptProofPayload(id, task.assigned_agent_id) : null,
       });
     }
 
@@ -467,7 +556,6 @@ export function registerTaskExecutionControlRoutes(deps: TaskExecutionControlRou
       status: targetStatus,
       pid: activeChild.pid,
       rolled_back: rolledBack,
-      interrupt: targetStatus === "pending" ? buildInterruptProofPayload(id, task.assigned_agent_id) : null,
     });
   });
 
@@ -475,27 +563,12 @@ export function registerTaskExecutionControlRoutes(deps: TaskExecutionControlRou
     const id = String(req.params.id);
     if (!requireCsrfGuard(req as any, res)) return;
 
-    const { sessionId, controlToken } = readInterruptSessionProof(req as any);
-    const hasAnyProof = Boolean(sessionId || controlToken);
-    if (hasAnyProof) {
-      if (!sessionId || !controlToken) {
-        return res.status(400).json({ error: "session_proof_required" });
-      }
-      const proof = validateInterruptProof(id, sessionId, controlToken);
-      if (!proof.ok) {
-        return res.status(proof.status).json({ error: proof.error });
-      }
-    }
-
-    const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as
-      | {
-          id: string;
-          title: string;
-          status: string;
-          assigned_agent_id: string | null;
-        }
-      | undefined;
+    const task = loadControlTask(id);
     if (!task) return res.status(404).json({ error: "not_found" });
+    const proof = requireInterruptProof(task, req as any);
+    if (!proof.ok) {
+      return res.status(proof.status).json({ error: proof.error, message: proof.message });
+    }
     const lang = resolveLang(task.title);
     if (activeProcesses.has(id)) {
       return res.status(409).json({
@@ -505,7 +578,7 @@ export function registerTaskExecutionControlRoutes(deps: TaskExecutionControlRou
     }
 
     if (task.status !== "pending" && task.status !== "cancelled") {
-      return res.status(400).json({ error: "invalid_status", message: `Cannot resume from '${task.status}'` });
+      return res.status(409).json({ error: "invalid_status", message: `Cannot resume from '${task.status}'` });
     }
 
     const wasPaused = task.status === "pending";
@@ -571,7 +644,6 @@ export function registerTaskExecutionControlRoutes(deps: TaskExecutionControlRou
       ok: true,
       status: targetStatus,
       auto_resumed: autoResumed,
-      session_id: existingSession?.sessionId ?? null,
     });
   });
 }

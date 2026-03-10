@@ -207,6 +207,19 @@ describe("api client", () => {
     const fetchMock = vi.fn();
     fetchMock
       .mockResolvedValueOnce(jsonResponse({ ok: true, csrf_token: "csrf-abc" }, 200))
+      .mockResolvedValueOnce(
+        jsonResponse(
+          {
+            ok: true,
+            interrupt: {
+              session_id: "session-1",
+              control_token: "token-1",
+              requires_csrf: true,
+            },
+          },
+          200,
+        ),
+      )
       .mockResolvedValueOnce(jsonResponse({ ok: true }, 200));
     vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
 
@@ -215,11 +228,12 @@ describe("api client", () => {
     expect(ok).toBe(true);
 
     await api.pauseTask("task-1");
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
 
-    const init = fetchMock.mock.calls[1]?.[1] as RequestInit | undefined;
-    const headers = new Headers(init?.headers);
-    expect(headers.get("x-csrf-token")).toBe("csrf-abc");
+    const proofInit = fetchMock.mock.calls[1]?.[1] as RequestInit | undefined;
+    const pauseInit = fetchMock.mock.calls[2]?.[1] as RequestInit | undefined;
+    expect(new Headers(proofInit?.headers).get("x-csrf-token")).toBe("csrf-abc");
+    expect(new Headers(pauseInit?.headers).get("x-csrf-token")).toBe("csrf-abc");
   });
 
   it("bootstrapSession force 옵션은 저장된 csrf가 있어도 세션을 다시 확인한다", async () => {

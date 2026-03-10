@@ -17,6 +17,7 @@ type AgentRow = {
   status: string;
   department_id: string | null;
   current_task_id: string | null;
+  cli_provider?: string | null;
 };
 
 type LinkedSubtaskRow = {
@@ -149,6 +150,13 @@ function createFakeDb(state: FakeDbState): {
           run: () => ({ changes: 0 }),
         };
       }
+      if (sql.startsWith("SELECT cli_provider FROM agents WHERE id = ?")) {
+        return {
+          get: (agentId: string) => ({ cli_provider: state.agents.get(agentId)?.cli_provider ?? "claude" }),
+          all: () => [],
+          run: () => ({ changes: 0 }),
+        };
+      }
       if (
         sql.includes("INSERT INTO task_interrupt_injections") &&
         sql.includes("(task_id, session_id, prompt_text, prompt_hash, actor_token_hash, created_at)")
@@ -254,6 +262,7 @@ function createDeps(seed?: {
           status: "running",
           department_id: "qa",
           current_task_id: taskId,
+          cli_provider: "claude",
           ...seed?.agent,
         },
       ],
@@ -289,7 +298,11 @@ function createDeps(seed?: {
   const stopRequestModeByTask = new Map<string, "pause" | "cancel">();
   const taskExecutionSessions = new Map<string, { sessionId: string; agentId?: string; provider?: string }>();
   if (seed?.sessionId) {
-    taskExecutionSessions.set(taskId, { sessionId: seed.sessionId });
+    taskExecutionSessions.set(taskId, {
+      sessionId: seed.sessionId,
+      agentId,
+      provider: state.agents.get(agentId)?.cli_provider ?? "claude",
+    });
   }
   const ensureTaskExecutionSession = vi.fn((taskIdInput: string, agentIdInput: string, provider: string) => {
     const existing = taskExecutionSessions.get(taskIdInput);
@@ -361,8 +374,74 @@ describe("registerTaskExecutionControlRoutes", () => {
     vi.useRealTimers();
   });
 
-  it("pause 요청 시 active pid에 interrupt를 보내고 pending으로 전환한다", () => {
+  it("interrupt-proof는 세션을 재사용하거나 생성하고 같은 proof를 안정적으로 돌려준다", () => {
+    const harness = createDeps({ task: { status: "pending" }, activePid: null });
+    registerTaskExecutionControlRoutes(harness.deps);
+
+    const handler = harness.routes.get("/api/tasks/:id/interrupt-proof");
+    expect(handler).toBeTypeOf("function");
+
+    const req = {
+      params: { id: "task-1" },
+      body: {},
+      query: {},
+      method: "POST",
+      header: (name: string) => (name.toLowerCase() === "x-csrf-token" ? getCsrfToken() : undefined),
+    };
+    const firstRes = createFakeRes();
+    handler?.(req, firstRes);
+    expect(firstRes.statusCode).toBe(200);
+    expect(firstRes.payload).toMatchObject({
+      ok: true,
+      interrupt: {
+        session_id: expect.any(String),
+        control_token: expect.any(String),
+        requires_csrf: true,
+      },
+    });
+    const firstPayload = firstRes.payload as {
+      interrupt: { session_id: string; control_token: string; requires_csrf: boolean };
+    };
+    expect(firstPayload.interrupt.control_token).toBe(
+      buildTaskInterruptControlToken("task-1", firstPayload.interrupt.session_id),
+    );
+    expect(harness.spies.ensureTaskExecutionSession).toHaveBeenCalledTimes(1);
+
+    const secondRes = createFakeRes();
+    handler?.(req, secondRes);
+    expect(secondRes.statusCode).toBe(200);
+    expect(secondRes.payload).toMatchObject({
+      ok: true,
+      interrupt: {
+        session_id: firstPayload.interrupt.session_id,
+        control_token: firstPayload.interrupt.control_token,
+        requires_csrf: true,
+      },
+    });
+    expect(harness.spies.ensureTaskExecutionSession).toHaveBeenCalledTimes(2);
+  });
+
+  it("pause 요청은 proof가 없으면 400을 반환한다", () => {
     const harness = createDeps({ activePid: 4321 });
+    registerTaskExecutionControlRoutes(harness.deps);
+
+    const handler = harness.routes.get("/api/tasks/:id/stop");
+    const req = {
+      params: { id: "task-1" },
+      body: { mode: "pause" },
+      query: {},
+      method: "POST",
+      header: (name: string) => (name.toLowerCase() === "x-csrf-token" ? getCsrfToken() : undefined),
+    };
+    const res = createFakeRes();
+    handler?.(req, res);
+
+    expect(res.statusCode).toBe(400);
+    expect(res.payload).toMatchObject({ error: "session_proof_required" });
+  });
+
+  it("pause 요청 시 proof로 active pid에 interrupt를 보내고 pending으로 전환한다", () => {
+    const harness = createDeps({ activePid: 4321, sessionId: "session-pause-1" });
     registerTaskExecutionControlRoutes(harness.deps);
 
     const handler = harness.routes.get("/api/tasks/:id/stop");
@@ -370,7 +449,11 @@ describe("registerTaskExecutionControlRoutes", () => {
 
     const req = {
       params: { id: "task-1" },
-      body: { mode: "pause" },
+      body: {
+        mode: "pause",
+        session_id: "session-pause-1",
+        interrupt_token: buildTaskInterruptControlToken("task-1", "session-pause-1"),
+      },
       query: {},
       method: "POST",
       header: (name: string) => (name.toLowerCase() === "x-csrf-token" ? getCsrfToken() : undefined),
@@ -385,19 +468,8 @@ describe("registerTaskExecutionControlRoutes", () => {
       status: "pending",
       pid: 4321,
       rolled_back: false,
-      interrupt: {
-        session_id: expect.any(String),
-        control_token: expect.any(String),
-        requires_csrf: true,
-      },
     });
-    const payload = res.payload as {
-      interrupt?: { session_id: string; control_token: string } | null;
-    };
-    expect(payload.interrupt).toBeTruthy();
-    expect(payload.interrupt?.control_token).toBe(
-      buildTaskInterruptControlToken("task-1", String(payload.interrupt?.session_id ?? "")),
-    );
+    expect((res.payload as Record<string, unknown>).interrupt).toBeUndefined();
     expect(harness.state.tasks.get("task-1")?.status).toBe("pending");
     expect(harness.maps.stopRequestedTasks.has("task-1")).toBe(true);
     expect(harness.maps.stopRequestModeByTask.get("task-1")).toBe("pause");
@@ -406,11 +478,6 @@ describe("registerTaskExecutionControlRoutes", () => {
     expect(harness.spies.rollbackTaskWorktree).not.toHaveBeenCalled();
     expect(harness.spies.clearTaskWorkflowState).not.toHaveBeenCalled();
     expect(harness.spies.endTaskExecutionSession).not.toHaveBeenCalled();
-    expect(harness.spies.appendTaskLog).toHaveBeenCalledWith(
-      "task-1",
-      "system",
-      "PAUSE_BREAK sent to pid 4321 (graceful interrupt, session_kept=true)",
-    );
   });
 
   it("cancel 요청 시 kill과 rollback/정리를 수행한다", () => {
@@ -445,7 +512,7 @@ describe("registerTaskExecutionControlRoutes", () => {
     expect(harness.spies.endTaskExecutionSession).toHaveBeenCalledWith("task-1", "stop_cancelled");
   });
 
-  it("pending 상태 재개 시 auto resume을 예약하고 기존 session_id를 반환한다", () => {
+  it("pending 상태 재개 시 proof를 요구하고 auto resume을 예약한다", () => {
     vi.useFakeTimers();
     const harness = createDeps({
       task: { status: "pending" },
@@ -458,7 +525,10 @@ describe("registerTaskExecutionControlRoutes", () => {
     const handler = harness.routes.get("/api/tasks/:id/resume");
     const req = {
       params: { id: "task-1" },
-      body: {},
+      body: {
+        session_id: "session-qa-1",
+        interrupt_token: buildTaskInterruptControlToken("task-1", "session-qa-1"),
+      },
       query: {},
       method: "POST",
       header: (name: string) => (name.toLowerCase() === "x-csrf-token" ? getCsrfToken() : undefined),
@@ -471,8 +541,8 @@ describe("registerTaskExecutionControlRoutes", () => {
       ok: true,
       status: "planned",
       auto_resumed: true,
-      session_id: "session-qa-1",
     });
+    expect((res.payload as Record<string, unknown>).session_id).toBeUndefined();
     expect(harness.state.tasks.get("task-1")?.status).toBe("planned");
     expect(harness.spies.appendTaskLog).toHaveBeenCalledWith(
       "task-1",
@@ -490,20 +560,68 @@ describe("registerTaskExecutionControlRoutes", () => {
     );
   });
 
-  it("pause -> inject -> resume 통합 흐름이 순차 처리된다", () => {
-    vi.useFakeTimers();
-    const sessionId = "session-qa-inject";
-    const harness = createDeps({ activePid: 5678, sessionId, agent: { status: "idle" } });
+  it("proof 발급 후 session rotation이 일어나면 stale proof가 409로 막힌다", () => {
+    const sessionId = "session-stale-1";
+    const harness = createDeps({ task: { status: "pending" }, activePid: null, sessionId });
     registerTaskExecutionControlRoutes(harness.deps);
 
+    const handler = harness.routes.get("/api/tasks/:id/resume");
+    harness.maps.taskExecutionSessions.set("task-1", {
+      sessionId: "session-rotated-2",
+      agentId: "agent-1",
+      provider: "claude",
+    });
+
+    const req = {
+      params: { id: "task-1" },
+      body: {
+        session_id: sessionId,
+        interrupt_token: buildTaskInterruptControlToken("task-1", sessionId),
+      },
+      query: {},
+      method: "POST",
+      header: (name: string) => (name.toLowerCase() === "x-csrf-token" ? getCsrfToken() : undefined),
+    };
+    const res = createFakeRes();
+    handler?.(req, res);
+
+    expect(res.statusCode).toBe(409);
+    expect(res.payload).toMatchObject({ error: "task_session_mismatch" });
+  });
+
+  it("pause -> inject -> resume 통합 흐름이 proof endpoint를 통해 순차 처리된다", () => {
+    vi.useFakeTimers();
+    const harness = createDeps({ activePid: 5678, agent: { status: "idle" } });
+    registerTaskExecutionControlRoutes(harness.deps);
+
+    const proofHandler = harness.routes.get("/api/tasks/:id/interrupt-proof");
     const stopHandler = harness.routes.get("/api/tasks/:id/stop");
     const injectHandler = harness.routes.get("/api/tasks/:id/inject");
     const resumeHandler = harness.routes.get("/api/tasks/:id/resume");
+    expect(proofHandler).toBeTypeOf("function");
     expect(stopHandler).toBeTypeOf("function");
     expect(injectHandler).toBeTypeOf("function");
     expect(resumeHandler).toBeTypeOf("function");
 
-    const interruptToken = buildTaskInterruptControlToken("task-1", sessionId);
+    const proofReq = {
+      params: { id: "task-1" },
+      body: {},
+      query: {},
+      method: "POST",
+      header: (name: string) => {
+        const key = name.toLowerCase();
+        if (key === "x-csrf-token") return getCsrfToken();
+        return undefined;
+      },
+    };
+    const proofRes = createFakeRes();
+    proofHandler?.(proofReq, proofRes);
+    expect(proofRes.statusCode).toBe(200);
+    const proofPayload = proofRes.payload as {
+      interrupt: { session_id: string; control_token: string; requires_csrf: boolean };
+    };
+    const sessionId = proofPayload.interrupt.session_id;
+    const interruptToken = proofPayload.interrupt.control_token;
 
     const stopReq = {
       params: { id: "task-1" },
@@ -523,6 +641,7 @@ describe("registerTaskExecutionControlRoutes", () => {
     const stopRes = createFakeRes();
     stopHandler?.(stopReq, stopRes);
     expect(stopRes.statusCode).toBe(200);
+    expect((stopRes.payload as Record<string, unknown>).interrupt).toBeUndefined();
     expect(harness.state.tasks.get("task-1")?.status).toBe("pending");
 
     const injectReq = {
@@ -556,7 +675,10 @@ describe("registerTaskExecutionControlRoutes", () => {
     harness.maps.activeProcesses.delete("task-1");
     const resumeReq = {
       params: { id: "task-1" },
-      body: {},
+      body: {
+        session_id: sessionId,
+        interrupt_token: interruptToken,
+      },
       query: {},
       method: "POST",
       header: (name: string) => {
@@ -572,7 +694,6 @@ describe("registerTaskExecutionControlRoutes", () => {
       ok: true,
       status: "planned",
       auto_resumed: true,
-      session_id: sessionId,
     });
     expect(harness.state.tasks.get("task-1")?.status).toBe("planned");
     vi.runAllTimers();

@@ -15,6 +15,7 @@ interface CreateProjectRouteHelpersOptions {
 export function createProjectRouteHelpers({ db, normalizeTextField }: CreateProjectRouteHelpersOptions) {
   const {
     PROJECT_PATH_ALLOWED_ROOTS,
+    PROJECT_PATH_SCOPE_CASE_INSENSITIVE,
     isRelativeProjectPathInput,
     normalizeProjectPathInput,
     pathInsideRoot,

@@ -33,11 +33,6 @@ export default function TerminalPanel({
   const [interventionBusy, setInterventionBusy] = useState(false);
   const [interventionError, setInterventionError] = useState<string | null>(null);
   const [interventionMessage, setInterventionMessage] = useState<string | null>(null);
-  const [interruptProof, setInterruptProof] = useState<{
-    session_id: string;
-    control_token: string;
-    requires_csrf: boolean;
-  } | null>(null);
   const preRef = useRef<HTMLPreElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const promptInputRef = useRef<HTMLTextAreaElement>(null);
@@ -86,7 +81,6 @@ export default function TerminalPanel({
           });
         }
         setProgressHints(res.progress_hints ?? null);
-        setInterruptProof(res.interrupt ?? null);
         if (res.exists) {
           const nextText = res.text ?? "";
           setText((prev) => (prev === nextText ? prev : nextText));
@@ -162,41 +156,60 @@ export default function TerminalPanel({
     }
   }
 
-  function sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-  }
-
   useEffect(() => {
     if (!interventionOpen) return;
     setTimeout(() => promptInputRef.current?.focus(), 40);
   }, [interventionOpen]);
 
-  const isInterventionTarget = task?.status === "in_progress" || task?.status === "pending";
-  const canInjectPrompt = task?.status === "pending";
+  const isInterventionTarget =
+    task?.status === "in_progress" || task?.status === "pending" || task?.status === "cancelled";
+  const canUseInterruptPrompt = task?.status === "in_progress" || task?.status === "pending";
+  const canResumeOnly = task?.status === "pending" || task?.status === "cancelled";
   const hasAssignedAgent = Boolean(task?.assigned_agent_id);
-  const hasInterruptProof = Boolean(interruptProof?.session_id && interruptProof?.control_token);
-  const canAttemptInterrupt = hasAssignedAgent || hasInterruptProof;
+  const canAttemptInterrupt = hasAssignedAgent;
 
-  async function fetchInterruptProofNow() {
-    const latest = await api.getTerminal(taskId, TERMINAL_TAIL_LINES, true, TERMINAL_TASK_LOG_LIMIT);
-    if (!latest.ok) return null;
-    setInterruptProof(latest.interrupt ?? null);
-    return latest.interrupt ?? null;
-  }
-
-  async function fetchInterruptProofWithRetry(maxAttempts = 4): Promise<{
-    session_id: string;
-    control_token: string;
-    requires_csrf: boolean;
-  } | null> {
-    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-      const proof = await fetchInterruptProofNow();
-      if (proof?.session_id && proof.control_token) return proof;
-      if (attempt < maxAttempts - 1) {
-        await sleep(180 * (attempt + 1));
+  function formatInterruptError(error: unknown, fallbackMessage: string): string {
+    if (api.isApiRequestError(error)) {
+      if (error.code === "interrupt_proof_unavailable") {
+        return hasAssignedAgent
+          ? tr(
+              "현재 상태에서는 제어 proof를 발급할 수 없습니다. 상태를 새로고침한 뒤 다시 시도해 주세요.",
+              "A control proof is not available for this task state. Refresh and try again.",
+              "現在の状態では制御 proof を発行できません。更新して再試行してください。",
+              "当前状态无法为此任务签发控制 proof。请刷新后重试。",
+            )
+          : tr(
+              "담당 에이전트가 없어 제어 proof를 만들 수 없습니다. 먼저 에이전트를 배정해 주세요.",
+              "A control proof cannot be issued because no agent is assigned. Assign an agent first.",
+              "担当エージェントがいないため、制御 proof を発行できません。先にエージェントを割り当ててください。",
+              "由于未分配代理，无法签发控制 proof。请先分配代理。",
+            );
+      }
+      if (error.status === 409) {
+        return tr(
+          "작업 상태나 실행 세션이 방금 바뀌었습니다. 화면을 새로고침한 뒤 다시 시도해 주세요.",
+          "The task state or execution session changed. Refresh and try again.",
+          "タスク状態または実行セッションが変更されました。更新して再試行してください。",
+          "任务状态或执行会话已变化。请刷新后重试。",
+        );
       }
     }
-    return null;
+    if (error instanceof Error && error.message) return error.message;
+    return fallbackMessage;
+  }
+
+  async function getInterruptProofOrThrow(): Promise<api.TaskInterruptProof> {
+    if (!hasAssignedAgent) {
+      throw new Error(
+        tr(
+          "담당 에이전트가 없어 제어 proof를 만들 수 없습니다. 먼저 에이전트를 배정해 주세요.",
+          "A control proof cannot be issued because no agent is assigned. Assign an agent first.",
+          "担当エージェントがいないため、制御 proof を発行できません。先にエージェントを割り当ててください。",
+          "由于未分配代理，无法签发控制 proof。请先分配代理。",
+        ),
+      );
+    }
+    return api.getTaskInterruptProof(taskId);
   }
 
   async function handlePauseOnly() {
@@ -204,10 +217,8 @@ export default function TerminalPanel({
       setInterventionBusy(true);
       setInterventionError(null);
       setInterventionMessage(null);
-      const pauseResult = await api.pauseTask(taskId);
-      if (pauseResult.interrupt?.session_id && pauseResult.interrupt.control_token) {
-        setInterruptProof(pauseResult.interrupt);
-      }
+      const proof = await getInterruptProofOrThrow();
+      await api.pauseTaskWithProof(taskId, proof);
       await fetchTerminal();
       setInterventionMessage(
         tr(
@@ -219,14 +230,15 @@ export default function TerminalPanel({
       );
     } catch (error) {
       setInterventionError(
-        error instanceof Error
-          ? error.message
-          : tr(
-              "일시중지 요청에 실패했습니다.",
-              "Pause request failed.",
-              "一時停止リクエストに失敗しました。",
-              "暂停请求失败。",
-            ),
+        formatInterruptError(
+          error,
+          tr(
+            "일시중지 요청에 실패했습니다.",
+            "Pause request failed.",
+            "一時停止リクエストに失敗しました。",
+            "暂停请求失败。",
+          ),
+        ),
       );
     } finally {
       setInterventionBusy(false);
@@ -252,46 +264,9 @@ export default function TerminalPanel({
       setInterventionError(null);
       setInterventionMessage(null);
 
-      let proof = interruptProof;
+      const proof = await getInterruptProofOrThrow();
       if (task?.status === "in_progress") {
-        const pauseResult = await api.pauseTask(taskId);
-        if (pauseResult.interrupt?.session_id && pauseResult.interrupt.control_token) {
-          proof = pauseResult.interrupt;
-          setInterruptProof(pauseResult.interrupt);
-        }
-        if (!proof?.session_id || !proof.control_token) {
-          proof = await fetchInterruptProofWithRetry(4);
-        }
-      } else if (task?.status === "pending") {
-        const pauseResult = await api.pauseTask(taskId);
-        if (pauseResult.interrupt?.session_id && pauseResult.interrupt.control_token) {
-          proof = pauseResult.interrupt;
-          setInterruptProof(pauseResult.interrupt);
-        }
-        if (!proof?.session_id || !proof.control_token) {
-          proof = await fetchInterruptProofWithRetry(3);
-        }
-      }
-
-      if (!proof?.session_id || !proof.control_token) {
-        if (!hasAssignedAgent) {
-          throw new Error(
-            tr(
-              "담당 에이전트가 배정되지 않아 난입 세션을 만들 수 없습니다. 먼저 에이전트를 배정해 주세요.",
-              "Cannot create an interrupt session because no agent is assigned. Assign an agent first.",
-              "担当エージェントが未割り当てのため、割り込みセッションを作成できません。先にエージェントを割り当ててください。",
-              "由于未分配执行代理，无法创建中断会话。请先分配代理。",
-            ),
-          );
-        }
-        throw new Error(
-          tr(
-            "난입 세션 토큰이 아직 준비되지 않았습니다. 잠시 후 다시 시도해 주세요.",
-            "Interrupt session token is not ready yet. Please retry shortly.",
-            "割り込みセッショントークンはまだ準備できていません。しばらくしてから再試行してください。",
-            "中断会话令牌尚未就绪，请稍后重试。",
-          ),
-        );
+        await api.pauseTaskWithProof(taskId, proof);
       }
 
       await api.injectTaskPrompt(taskId, {
@@ -299,7 +274,7 @@ export default function TerminalPanel({
         interrupt_token: proof.control_token,
         prompt,
       });
-      await api.resumeTask(taskId);
+      await api.resumeTaskWithProof(taskId, proof);
       setInterventionPrompt("");
       await fetchTerminal();
       setInterventionMessage(
@@ -312,14 +287,15 @@ export default function TerminalPanel({
       );
     } catch (error) {
       setInterventionError(
-        error instanceof Error
-          ? error.message
-          : tr(
-              "난입 실행에 실패했습니다.",
-              "Interrupt inject failed.",
-              "割り込み注入に失敗しました。",
-              "中断注入失败。",
-            ),
+        formatInterruptError(
+          error,
+          tr(
+            "난입 실행에 실패했습니다.",
+            "Interrupt inject failed.",
+            "割り込み注入に失敗しました。",
+            "中断注入失败。",
+          ),
+        ),
       );
     } finally {
       setInterventionBusy(false);
@@ -331,21 +307,23 @@ export default function TerminalPanel({
       setInterventionBusy(true);
       setInterventionError(null);
       setInterventionMessage(null);
-      await api.resumeTask(taskId);
+      const proof = await getInterruptProofOrThrow();
+      await api.resumeTaskWithProof(taskId, proof);
       await fetchTerminal();
       setInterventionMessage(
         tr("재개 요청을 전송했습니다.", "Resume requested.", "再開をリクエストしました。", "已请求恢复。"),
       );
     } catch (error) {
       setInterventionError(
-        error instanceof Error
-          ? error.message
-          : tr(
-              "재개 요청에 실패했습니다.",
-              "Resume request failed.",
-              "再開リクエストに失敗しました。",
-              "恢复请求失败。",
-            ),
+        formatInterruptError(
+          error,
+          tr(
+            "재개 요청에 실패했습니다.",
+            "Resume request failed.",
+            "再開リクエストに失敗しました。",
+            "恢复请求失败。",
+          ),
+        ),
       );
     } finally {
       setInterventionBusy(false);
@@ -492,6 +470,8 @@ export default function TerminalPanel({
             >
               {task?.status === "pending"
                 ? tr("주입", "Inject", "注入", "注入")
+                : task?.status === "cancelled"
+                  ? tr("복구", "Resume", "復旧", "恢复")
                 : tr("난입", "Interrupt", "割込", "中断")}
             </button>
           )}
@@ -548,45 +528,56 @@ export default function TerminalPanel({
                   "実行中タスクを保留にし、新しいプロンプトを注入して自動再開します。",
                   "将运行中的任务暂停，注入新提示后自动恢复。",
                 )
-              : tr(
+              : task?.status === "cancelled"
+                ? tr(
+                    "취소된 작업을 기존 담당 에이전트 기준으로 다시 복구합니다.",
+                    "Resume the cancelled task with its assigned agent context.",
+                    "キャンセル済みタスクを担当エージェントの文脈で復旧します。",
+                    "按已分配代理上下文恢复已取消的任务。",
+                  )
+                : tr(
                   "보류 상태에서 프롬프트를 주입하고 재개할 수 있습니다.",
                   "Inject a prompt while pending and resume execution.",
                   "保留状態でプロンプトを注入し、再開できます。",
                   "可在暂停状态下注入提示并恢复执行。",
                 )}
           </div>
-          <textarea
-            ref={promptInputRef}
-            value={interventionPrompt}
-            onChange={(event) => {
-              const next = event.target.value.slice(0, INTERVENTION_PROMPT_MAX_LENGTH);
-              setInterventionPrompt(next);
-            }}
-            onKeyDown={(event) => {
-              if ((event.ctrlKey || event.metaKey) && event.key === "Enter" && !interventionBusy) {
-                event.preventDefault();
-                void handleInjectAndResume();
-              }
-            }}
-            rows={3}
-            disabled={interventionBusy}
-            className="w-full rounded-md border px-2 py-1.5 text-xs font-mono resize-y focus:outline-none focus:ring-1 focus:ring-cyan-500/50"
-            style={{
-              borderColor: "var(--th-border)",
-              background: "var(--th-bg-surface)",
-              color: "var(--th-text-primary)",
-            }}
-            placeholder={tr(
-              "예) 방금 방식 대신 테스트를 먼저 실행하고 실패 원인을 정리해.",
-              "e.g. Run tests first, then summarize failures before continuing.",
-              "例) 先にテストを実行し、失敗原因を整理してから続行してください。",
-              "例如：先执行测试，再整理失败原因后继续。",
-            )}
-          />
-          <div className="flex items-center justify-between text-[10px]" style={{ color: "var(--th-text-muted)" }}>
-            <span>{`${interventionPrompt.length} / ${INTERVENTION_PROMPT_MAX_LENGTH}`}</span>
-            <span>{tr("Ctrl+Enter로 실행", "Ctrl+Enter to run", "Ctrl+Enterで実行", "Ctrl+Enter 执行")}</span>
-          </div>
+          {canUseInterruptPrompt && (
+            <>
+              <textarea
+                ref={promptInputRef}
+                value={interventionPrompt}
+                onChange={(event) => {
+                  const next = event.target.value.slice(0, INTERVENTION_PROMPT_MAX_LENGTH);
+                  setInterventionPrompt(next);
+                }}
+                onKeyDown={(event) => {
+                  if ((event.ctrlKey || event.metaKey) && event.key === "Enter" && !interventionBusy) {
+                    event.preventDefault();
+                    void handleInjectAndResume();
+                  }
+                }}
+                rows={3}
+                disabled={interventionBusy}
+                className="w-full rounded-md border px-2 py-1.5 text-xs font-mono resize-y focus:outline-none focus:ring-1 focus:ring-cyan-500/50"
+                style={{
+                  borderColor: "var(--th-border)",
+                  background: "var(--th-bg-surface)",
+                  color: "var(--th-text-primary)",
+                }}
+                placeholder={tr(
+                  "예) 방금 방식 대신 테스트를 먼저 실행하고 실패 원인을 정리해.",
+                  "e.g. Run tests first, then summarize failures before continuing.",
+                  "例) 先にテストを実行し、失敗原因を整理してから続行してください。",
+                  "例如：先执行测试，再整理失败原因后继续。",
+                )}
+              />
+              <div className="flex items-center justify-between text-[10px]" style={{ color: "var(--th-text-muted)" }}>
+                <span>{`${interventionPrompt.length} / ${INTERVENTION_PROMPT_MAX_LENGTH}`}</span>
+                <span>{tr("Ctrl+Enter로 실행", "Ctrl+Enter to run", "Ctrl+Enterで実行", "Ctrl+Enter 执行")}</span>
+              </div>
+            </>
+          )}
           {interventionError && <div className="text-[11px] text-rose-300 break-words">{interventionError}</div>}
           {interventionMessage && <div className="text-[11px] text-emerald-300 break-words">{interventionMessage}</div>}
           <div className="flex flex-wrap items-center gap-2">
@@ -602,22 +593,24 @@ export default function TerminalPanel({
                   : tr("일시중지", "Pause", "一時停止", "暂停")}
               </button>
             )}
-            <button
-              onClick={() => void handleInjectAndResume()}
-              disabled={interventionBusy || !interventionPrompt.trim() || !canAttemptInterrupt}
-              className="rounded-md px-2.5 py-1.5 text-[11px] border transition disabled:opacity-70 disabled:cursor-not-allowed"
-              style={{
-                borderColor: "var(--th-danger-border)",
-                background: "var(--th-danger-bg)",
-                color: "var(--th-danger-text)",
-                fontWeight: 600,
-              }}
-            >
-              {interventionBusy
-                ? tr("실행 중...", "Running...", "実行中...", "执行中...")
-                : tr("난입 실행", "Inject + Resume", "割込実行", "中断注入")}
-            </button>
-            {canInjectPrompt && (
+            {canUseInterruptPrompt && (
+              <button
+                onClick={() => void handleInjectAndResume()}
+                disabled={interventionBusy || !interventionPrompt.trim() || !canAttemptInterrupt}
+                className="rounded-md px-2.5 py-1.5 text-[11px] border transition disabled:opacity-70 disabled:cursor-not-allowed"
+                style={{
+                  borderColor: "var(--th-danger-border)",
+                  background: "var(--th-danger-bg)",
+                  color: "var(--th-danger-text)",
+                  fontWeight: 600,
+                }}
+              >
+                {interventionBusy
+                  ? tr("실행 중...", "Running...", "実行中...", "执行中...")
+                  : tr("난입 실행", "Inject + Resume", "割込実行", "中断注入")}
+              </button>
+            )}
+            {canResumeOnly && (
               <button
                 onClick={() => void handleResumeOnly()}
                 disabled={interventionBusy}
@@ -628,21 +621,14 @@ export default function TerminalPanel({
               </button>
             )}
           </div>
-          {!interruptProof?.session_id && (
+          {!hasAssignedAgent && (
             <div className="text-[10px] text-amber-300">
-              {hasAssignedAgent
-                ? tr(
-                    "세션 토큰이 아직 준비되지 않았습니다. 잠시 후 다시 시도해 주세요.",
-                    "Session token is not ready yet. Please retry shortly.",
-                    "セッショントークンがまだ準備されていません。しばらくしてから再試行してください。",
-                    "会话令牌尚未就绪，请稍后重试。",
-                  )
-                : tr(
-                    "담당 에이전트가 없어 세션 토큰을 만들 수 없습니다. 먼저 에이전트를 배정해 주세요.",
-                    "No assigned agent, so a session token cannot be created. Assign an agent first.",
-                    "担当エージェントがいないためセッショントークンを作成できません。先にエージェントを割り当ててください。",
-                    "未分配代理，无法创建会话令牌。请先分配代理。",
-                  )}
+              {tr(
+                "담당 에이전트가 없어 제어 proof를 발급할 수 없습니다. 먼저 에이전트를 배정해 주세요.",
+                "No assigned agent, so a control proof cannot be issued. Assign an agent first.",
+                "担当エージェントがいないため制御 proof を発行できません。先にエージェントを割り当ててください。",
+                "未分配代理，无法签发控制 proof。请先分配代理。",
+              )}
             </div>
           )}
         </div>

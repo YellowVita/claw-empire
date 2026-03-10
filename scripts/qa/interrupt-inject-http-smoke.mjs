@@ -1,9 +1,7 @@
 #!/usr/bin/env node
-/* global process, setTimeout, console, fetch, Headers */
+/* global process, console, fetch, Headers */
 
 const baseUrl = (process.env.SMOKE_BASE_URL || "http://127.0.0.1:18790").replace(/\/$/, "");
-const timeoutMs = Number(process.env.SMOKE_TIMEOUT_MS || 20000);
-const pollMs = Number(process.env.SMOKE_POLL_MS || 600);
 
 const jar = {
   cookie: "",
@@ -54,16 +52,16 @@ async function request(path, options = {}) {
   return { status: res.status, json, text };
 }
 
-async function waitForInterruptProof(taskId) {
-  const started = Date.now();
-  while (Date.now() - started < timeoutMs) {
-    const term = await request(`/api/tasks/${encodeURIComponent(taskId)}/terminal?lines=200&pretty=1&log_limit=200`);
-    if (term.status === 200 && term.json?.interrupt?.session_id && term.json?.interrupt?.control_token) {
-      return term.json.interrupt;
-    }
-    await new Promise((resolve) => setTimeout(resolve, pollMs));
-  }
-  throw new Error("interrupt proof was not available in terminal payload before timeout");
+async function getInterruptProof(taskId) {
+  const proof = await request(`/api/tasks/${encodeURIComponent(taskId)}/interrupt-proof`, {
+    method: "POST",
+    withCsrf: true,
+    body: {},
+  });
+  assert(proof.status === 200, `interrupt-proof failed (${proof.status})`);
+  assert(proof.json?.interrupt?.session_id, "interrupt-proof response missing session_id");
+  assert(proof.json?.interrupt?.control_token, "interrupt-proof response missing control_token");
+  return proof.json.interrupt;
 }
 
 (async () => {
@@ -108,7 +106,7 @@ async function waitForInterruptProof(taskId) {
   });
   assert(runRes.status === 200, `run failed (${runRes.status})`);
 
-  const interrupt = await waitForInterruptProof(taskId);
+  const interrupt = await getInterruptProof(taskId);
 
   const pauseRes = await request(`/api/tasks/${encodeURIComponent(taskId)}/stop`, {
     method: "POST",
@@ -136,7 +134,10 @@ async function waitForInterruptProof(taskId) {
   const resumeRes = await request(`/api/tasks/${encodeURIComponent(taskId)}/resume`, {
     method: "POST",
     withCsrf: true,
-    body: {},
+    body: {
+      session_id: interrupt.session_id,
+      interrupt_token: interrupt.control_token,
+    },
   });
   assert(resumeRes.status === 200, `resume failed (${resumeRes.status})`);
 

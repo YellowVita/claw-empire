@@ -22,10 +22,12 @@ Current baseline target: `v1.2.4` (local snapshot, 2026-03-07).
 - Browser session bootstrap (`GET /api/auth/session`) returns `csrf_token`.
   - For cookie-authenticated mutation requests (`POST/PUT/PATCH/DELETE`), send:
     - `x-csrf-token: <csrf_token>`
-- Interrupt injection endpoint (`POST /api/tasks/:id/inject`) additionally requires:
+- Interrupt control endpoints (`POST /api/tasks/:id/stop` with `mode=pause`, `POST /api/tasks/:id/resume`, `POST /api/tasks/:id/inject`) additionally require:
   - `session_id`
   - `interrupt_token` (or header `x-task-interrupt-token`)
-  - Terminal API (`GET /api/tasks/:id/terminal`) exposes `interrupt.session_id` + `interrupt.control_token`
+- Interrupt proof is issued explicitly via:
+  - `POST /api/tasks/:id/interrupt-proof`
+- Terminal API (`GET /api/tasks/:id/terminal`) no longer exposes interrupt proof material and no longer auto-creates execution sessions
 - Swagger note:
   - `/api/docs` opens with an automatic `/api/auth/session` bootstrap attempt (loopback/local case).
   - If you still get `401 unauthorized`, set `Bearer <API_AUTH_TOKEN>` via Swagger `Authorize`.
@@ -152,6 +154,7 @@ or
 | POST   | `/api/tasks/:id/assign`          | Assign agent                                                |
 | POST   | `/api/tasks/:id/run`             | Start task                                                  |
 | POST   | `/api/tasks/:id/stop`            | Cancel or pause task                                        |
+| POST   | `/api/tasks/:id/interrupt-proof` | Issue task control proof for pause/resume/inject            |
 | POST   | `/api/tasks/:id/resume`          | Resume paused task                                          |
 | POST   | `/api/tasks/:id/inject`          | Queue sanitized interrupt prompt (paused session)           |
 | GET    | `/api/tasks/:id/terminal`        | Task terminal logs                                          |

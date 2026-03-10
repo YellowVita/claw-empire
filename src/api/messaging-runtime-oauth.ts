@@ -181,11 +181,6 @@ export async function getTerminal(
   text: string;
   task_logs?: Array<{ id: number; kind: string; message: string; created_at: number }>;
   progress_hints?: TerminalProgressHintsPayload | null;
-  interrupt?: {
-    session_id: string;
-    control_token: string;
-    requires_csrf: boolean;
-  } | null;
 }> {
   const params = new URLSearchParams();
   if (lines) params.set("lines", String(lines));

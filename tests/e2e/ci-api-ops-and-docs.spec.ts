@@ -180,7 +180,8 @@ test.describe("CI API ops and docs coverage", () => {
           title: `pause-task-${seed}`,
           department_id: deptId,
           assigned_agent_id: agentId,
-          status: "planned",
+          status: "pending",
+          project_path: process.cwd(),
         },
       }),
       "POST /api/tasks",
@@ -189,12 +190,24 @@ test.describe("CI API ops and docs coverage", () => {
 
     const terminalBeforePause = await expectOkJson<{
       ok: boolean;
-      interrupt: InterruptProof | null;
+      interrupt?: InterruptProof | null;
     }>(await request.get(`/api/tasks/${taskId}/terminal?lines=50`), "GET /api/tasks/:id/terminal (before pause)");
     expect(terminalBeforePause.ok).toBe(true);
-    expect(terminalBeforePause.interrupt).not.toBeNull();
+    expect(terminalBeforePause.interrupt).toBeUndefined();
 
-    const interruptProof = terminalBeforePause.interrupt as InterruptProof;
+    const proofRes = await expectOkJson<{
+      ok: boolean;
+      interrupt: InterruptProof;
+    }>(
+      await request.post(`/api/tasks/${taskId}/interrupt-proof`, {
+        data: {},
+        headers: {
+          "x-csrf-token": csrfToken,
+        },
+      }),
+      "POST /api/tasks/:id/interrupt-proof",
+    );
+    const interruptProof = proofRes.interrupt;
     expect(interruptProof.session_id.length).toBeGreaterThan(0);
     expect(interruptProof.control_token.length).toBeGreaterThan(0);
     expect(interruptProof.requires_csrf).toBe(true);
@@ -202,7 +215,6 @@ test.describe("CI API ops and docs coverage", () => {
     const pauseRes = await expectOkJson<{
       ok: boolean;
       status: string;
-      interrupt: InterruptProof | null;
     }>(
       await request.post(`/api/tasks/${taskId}/stop`, {
         data: {
@@ -218,7 +230,6 @@ test.describe("CI API ops and docs coverage", () => {
     );
     expect(pauseRes.ok).toBe(true);
     expect(pauseRes.status).toBe("pending");
-    expect(pauseRes.interrupt?.session_id).toBe(interruptProof.session_id);
 
     const injectRes = await expectOkJson<{
       ok: boolean;
