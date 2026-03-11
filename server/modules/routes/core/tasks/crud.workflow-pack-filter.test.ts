@@ -72,6 +72,7 @@ function createTaskCrudHarness(): { db: DatabaseSync; routes: Map<string, RouteH
     CREATE TABLE agents (
       id TEXT PRIMARY KEY,
       name TEXT,
+      cli_provider TEXT,
       status TEXT,
       current_task_id TEXT,
       avatar_emoji TEXT
@@ -108,7 +109,59 @@ function createTaskCrudHarness(): { db: DatabaseSync; routes: Map<string, RouteH
       id TEXT PRIMARY KEY,
       task_id TEXT NOT NULL,
       status TEXT NOT NULL,
-      delegated_task_id TEXT
+      delegated_task_id TEXT,
+      created_at INTEGER
+    );
+    CREATE TABLE task_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id TEXT NOT NULL,
+      kind TEXT,
+      message TEXT,
+      created_at INTEGER
+    );
+    CREATE TABLE task_quality_items (
+      id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      label TEXT NOT NULL,
+      details TEXT,
+      required INTEGER NOT NULL DEFAULT 1,
+      status TEXT NOT NULL DEFAULT 'pending',
+      evidence_markdown TEXT,
+      source TEXT NOT NULL DEFAULT 'manual',
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER,
+      updated_at INTEGER,
+      completed_at INTEGER
+    );
+    CREATE TABLE task_quality_runs (
+      id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL,
+      quality_item_id TEXT,
+      run_type TEXT NOT NULL,
+      name TEXT NOT NULL,
+      command TEXT,
+      status TEXT NOT NULL,
+      exit_code INTEGER,
+      summary TEXT,
+      output_excerpt TEXT,
+      metadata_json TEXT,
+      started_at INTEGER,
+      completed_at INTEGER,
+      created_at INTEGER NOT NULL
+    );
+    CREATE TABLE task_artifacts (
+      id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL,
+      quality_item_id TEXT,
+      kind TEXT NOT NULL,
+      title TEXT NOT NULL,
+      path TEXT,
+      mime TEXT,
+      size_bytes INTEGER,
+      source TEXT NOT NULL,
+      metadata_json TEXT,
+      created_at INTEGER NOT NULL
     );
   `);
   db.prepare(
@@ -364,12 +417,19 @@ describe("task CRUD workflow pack filter", () => {
 
       expect(res.statusCode).toBe(200);
       const payload = res.payload as {
-        task: { workflow_pack_key: string; project_id: string; project_path: string; workflow_meta_json: string | null };
+        task: {
+          workflow_pack_key: string;
+          project_id: string;
+          project_path: string;
+          workflow_meta_json: string | null;
+          development_handoff: { state: string } | null;
+        };
       };
       expect(payload.task.workflow_pack_key).toBe("novel");
       expect((payload.task as any).workflow_pack_source).toBe("project_default");
       expect(payload.task.project_id).toBe("project-novel");
       expect(payload.task.project_path).toBe(path.normalize("/tmp/novel-project"));
+      expect(payload.task.development_handoff).toBeNull();
       const meta = JSON.parse(payload.task.workflow_meta_json ?? "{}");
       expect(meta.pack_override_source).toBeNull();
       expect(meta.pack_override_fields).toEqual([]);
@@ -493,6 +553,63 @@ describe("task CRUD workflow pack filter", () => {
         key: "report",
         qa_rules: { requireApproval: true },
       });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("development task 응답에는 queued handoff metadata를 정규화해 포함한다", () => {
+    const { db, routes } = createTaskCrudHarness();
+    try {
+      const createHandler = routes.get("POST /api/tasks") as RouteHandler | undefined;
+      expect(createHandler).toBeTypeOf("function");
+
+      const createRes = createFakeResponse();
+      createHandler?.(
+        {
+          body: {
+            title: "Development task",
+          },
+        },
+        createRes,
+      );
+
+      expect(createRes.statusCode).toBe(200);
+      const created = createRes.payload as {
+        id: string;
+        task: {
+          workflow_pack_key: string;
+          development_handoff: { state: string; summary: string | null } | null;
+          workflow_meta_json: string | null;
+        };
+      };
+      expect(created.task.workflow_pack_key).toBe("development");
+      expect(created.task.development_handoff).toEqual(
+        expect.objectContaining({
+          state: "queued",
+        }),
+      );
+      const storedMeta = JSON.parse(created.task.workflow_meta_json ?? "{}");
+      expect(storedMeta.development_handoff).toEqual(
+        expect.objectContaining({
+          state: "queued",
+        }),
+      );
+
+      const detailHandler = routes.get("GET /api/tasks/:id");
+      expect(detailHandler).toBeTypeOf("function");
+      const detailRes = createFakeResponse();
+      detailHandler?.({ params: { id: created.id } }, detailRes);
+
+      expect(detailRes.statusCode).toBe(200);
+      const detailPayload = detailRes.payload as {
+        task: { development_handoff: { state: string } | null };
+      };
+      expect(detailPayload.task.development_handoff).toEqual(
+        expect.objectContaining({
+          state: "queued",
+        }),
+      );
     } finally {
       db.close();
     }

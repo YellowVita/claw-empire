@@ -49,3 +49,10 @@
 - [x] Persist gate outcomes via quality runs and expose them through development run sheets
 - [x] Render PR gate status in `TaskReportPopup`
 - [x] Add regression tests and run targeted server/UI verification plus build
+
+## 10. Development Handoff Metadata Phase 4
+- [x] Add shared `development_handoff` metadata helper and preserve existing `workflow_meta_json` keys
+- [x] Expose normalized `development_handoff` on task and task-report API payloads
+- [x] Update development handoff metadata across task lifecycle milestones
+- [x] Render development handoff summary in `TaskBoard` and `TaskReportPopup`
+- [x] Add regression tests and run targeted server/UI verification plus build

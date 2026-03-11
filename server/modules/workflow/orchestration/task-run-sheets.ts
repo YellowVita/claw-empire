@@ -2,6 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { buildTaskQualityPayload } from "../../routes/core/tasks/quality.ts";
 import type { TaskQualityRun } from "./task-quality-evidence.ts";
 import { summarizeTaskExecutionEvents } from "./task-execution-events.ts";
+import { syncDevelopmentHandoffFromRunSheet } from "./development-handoff.ts";
 
 type DbLike = Pick<DatabaseSync, "prepare">;
 
@@ -680,6 +681,13 @@ export function upsertTaskRunSheet(db: DbLike, input: {
   } catch {
     // Legacy harnesses may not define this table yet.
   }
+
+  syncDevelopmentHandoffFromRunSheet(db, {
+    taskId: input.taskId,
+    stage: input.stage,
+    snapshot,
+    updatedAt,
+  });
 }
 
 export function readTaskRunSheetForTask(db: DbLike, taskId: string): TaskRunSheet | null {

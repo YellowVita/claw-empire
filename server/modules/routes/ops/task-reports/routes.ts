@@ -9,6 +9,7 @@ import {
   buildSyntheticQueuedTaskRunSheet,
   readTaskRunSheetForTask,
 } from "../../../workflow/orchestration/task-run-sheets.ts";
+import { decorateTaskWithDevelopmentHandoff } from "../../../workflow/orchestration/development-handoff.ts";
 
 export function registerTaskReportRoutes(ctx: RuntimeContext): void {
   const { app, db, nowMs, archivePlanningConsolidatedReport } = ctx;
@@ -66,7 +67,7 @@ export function registerTaskReportRoutes(ctx: RuntimeContext): void {
         .prepare(
           `
       SELECT t.id, t.title, t.description, t.department_id, t.assigned_agent_id,
-             t.status, t.project_id, t.project_path, t.result, t.source_task_id,
+             t.status, t.project_id, t.project_path, t.workflow_pack_key, t.workflow_meta_json, t.result, t.source_task_id,
              t.created_at, t.started_at, t.completed_at,
              COALESCE(a.name, '') AS agent_name,
              COALESCE(a.name_ko, '') AS agent_name_ko,
@@ -91,7 +92,7 @@ export function registerTaskReportRoutes(ctx: RuntimeContext): void {
         .prepare(
           `
       SELECT t.id, t.title, t.description, t.department_id, t.assigned_agent_id,
-             t.status, t.project_id, t.project_path, t.result, t.source_task_id,
+             t.status, t.project_id, t.project_path, t.workflow_pack_key, t.workflow_meta_json, t.result, t.source_task_id,
              t.created_at, t.started_at, t.completed_at,
              COALESCE(a.name, '') AS agent_name,
              COALESCE(a.name_ko, '') AS agent_name_ko,
@@ -115,7 +116,7 @@ export function registerTaskReportRoutes(ctx: RuntimeContext): void {
         .prepare(
           `
       SELECT t.id, t.title, t.description, t.department_id, t.assigned_agent_id,
-             t.status, t.project_id, t.project_path, t.result, t.source_task_id,
+             t.status, t.project_id, t.project_path, t.workflow_pack_key, t.workflow_meta_json, t.result, t.source_task_id,
              t.created_at, t.started_at, t.completed_at,
              COALESCE(a.name, '') AS agent_name,
              COALESCE(a.name_ko, '') AS agent_name_ko,
@@ -259,7 +260,7 @@ export function registerTaskReportRoutes(ctx: RuntimeContext): void {
           project_path: projectPath,
           core_goal: projectCoreGoal,
         },
-        task: rootTask,
+        task: decorateTaskWithDevelopmentHandoff(rootTask),
         logs: rootLogs,
         subtasks: rootSubtasks,
         quality,

@@ -5,6 +5,8 @@ import AgentAvatar from "../AgentAvatar";
 import AgentSelect from "../AgentSelect";
 import DiffModal from "./DiffModal";
 import {
+  developmentHandoffBadgeClass,
+  developmentHandoffLabel,
   getTaskTypeBadge,
   isHideableStatus,
   priorityIcon,
@@ -81,6 +83,8 @@ export default function TaskCard({
   const assignedLabel = assignedDisplayName || fallbackAssignedName || null;
   const department = departments.find((d) => d.id === task.department_id);
   const typeBadge = getTaskTypeBadge(task.task_type, t);
+  const developmentHandoff =
+    task.workflow_pack_key === "development" && task.development_handoff ? task.development_handoff : null;
 
   const canRun = task.status === "planned" || task.status === "inbox";
   const canStop = task.status === "in_progress";
@@ -130,7 +134,35 @@ export default function TaskCard({
             {department.icon} {locale === "ko" ? department.name_ko : department.name}
           </span>
         )}
+        {developmentHandoff && (
+          <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${developmentHandoffBadgeClass(developmentHandoff)}`}>
+            {developmentHandoffLabel(developmentHandoff.state, t)}
+          </span>
+        )}
       </div>
+
+      {developmentHandoff && (
+        <div className="mb-3 rounded-lg border border-slate-700/60 bg-slate-900/60 px-3 py-2">
+          <div className="flex items-center justify-between gap-2">
+            <p className="truncate text-[11px] font-medium text-slate-200">
+              {developmentHandoff.summary ||
+                t({
+                  ko: "개발 인수인계 상태가 갱신되었습니다",
+                  en: "Development handoff updated",
+                  ja: "開発ハンドオフが更新されました",
+                  zh: "开发交接状态已更新",
+                })}
+            </p>
+            <span className="shrink-0 text-[10px] uppercase tracking-wide text-slate-500">
+              {developmentHandoff.pr_gate_status === "blocked"
+                ? "pr blocked"
+                : developmentHandoff.pending_retry
+                  ? "retry"
+                  : ""}
+            </span>
+          </div>
+        </div>
+      )}
 
       <div className="mb-3">
         <select

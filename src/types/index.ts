@@ -106,6 +106,25 @@ export const WORKFLOW_PACK_KEYS = [
 ] as const;
 export type WorkflowPackKey = (typeof WORKFLOW_PACK_KEYS)[number];
 export type TaskWorkflowPackSource = "explicit" | "file_default" | "project_default" | "fallback_default";
+export type DevelopmentHandoffState =
+  | "queued"
+  | "in_progress"
+  | "review_ready"
+  | "human_review"
+  | "merging"
+  | "done"
+  | "rework";
+export type DevelopmentHandoffGateStatus = "passed" | "blocked" | "skipped" | null;
+
+export interface DevelopmentHandoff {
+  state: DevelopmentHandoffState;
+  updated_at: number;
+  status_snapshot: string | null;
+  pending_retry: boolean;
+  pr_gate_status: DevelopmentHandoffGateStatus;
+  pr_url: string | null;
+  summary: string | null;
+}
 
 export interface Task {
   id: string;
@@ -124,6 +143,7 @@ export interface Task {
   workflow_pack_key?: WorkflowPackKey;
   workflow_pack_source?: TaskWorkflowPackSource | null;
   workflow_meta_json?: string | null;
+  development_handoff?: DevelopmentHandoff | null;
   output_format?: string | null;
   project_path: string | null;
   result: string | null;
