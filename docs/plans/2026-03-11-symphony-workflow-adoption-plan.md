@@ -246,18 +246,87 @@ Possible scope:
 - render the substate in task UI and reports
 - use it for clearer automation and QA gates
 
+## Implementation Status
+
+The core adoption roadmap has now been completed.
+
+Completed:
+
+- Phase 1. Development workflow contract
+- Phase 2. Canonical development run sheet
+- Phase 3. PR feedback gate
+- Phase 4. Development handoff metadata
+
+This means the original Symphony-inspired adoption scope for the `development` pack is finished.
+What remains is no longer "feature adoption" so much as operational hardening and product polish.
+
+## Post-Phase Priorities
+
+### Priority 1. PR gate tuning
+
+The current PR feedback gate is intentionally conservative.
+
+Recommended next step:
+
+- decide whether optional or non-blocking checks need allowlist/ignore behavior
+- reduce false-positive blocking without weakening the required feedback sweep
+
+This is the highest-value follow-up because it directly affects day-to-day developer friction.
+
+### Priority 2. Last-known-good workflow config loading
+
+The workflow contract loader currently falls back on parse failure, but it does not yet preserve a last valid runtime config snapshot.
+
+Recommended next step:
+
+- retain the last valid effective project workflow config
+- keep execution stable when `WORKFLOW.md` is temporarily malformed
+- surface parse warnings clearly in logs and UI
+
+This is the main remaining Symphony idea with strong operational value.
+
+### Priority 3. Development workflow QA and telemetry
+
+Now that the full `development` workflow stack exists, it should be validated as a system rather than only as isolated features.
+
+Recommended next step:
+
+- build a small regression/QA checklist using real development tasks
+- inspect handoff transitions, run sheet generation, and PR gate outcomes together
+- identify noisy gate conditions and weak UX points from real usage
+
+### Priority 4. UI surface expansion
+
+Handoff metadata and run sheet summaries are currently exposed only where they add the most value with minimal risk.
+
+Recommended next step:
+
+- decide whether project-level history and insight views should expose the same development delivery signals
+- only expand surfaces if the metadata proves useful in actual operator workflows
+
+### Priority 5. Release and architecture documentation
+
+The implementation is in place, but the public/internal documentation should eventually reflect the new development workflow model as one coherent system.
+
+Recommended next step:
+
+- add release notes summarizing the Phase 1-4 rollout
+- refresh architecture docs so `WORKFLOW.md`, run sheets, PR gate, and handoff metadata are described together
+
 ## Decision Matrix
 
-### Adopt now
+### Completed now
 
 - project-owned workflow contract
 - canonical execution summary artifact
 - PR feedback sweep gate
+- development-specific substate model
 
 ### Adopt later if needed
 
 - last-known-good workflow reload behavior
-- development-specific substate model
+- PR gate optional-check tuning
+- broader UI exposure of development delivery metadata
 
 ### Do not adopt
 
@@ -277,4 +346,10 @@ The best next step is not a rewrite. It is a targeted hardening of the `developm
 - one canonical execution record
 - clearer handoff state semantics
 
-If only one thing is implemented, it should be the project-owned workflow contract. That change creates the cleanest foundation for every later improvement.
+That adoption work is now complete.
+
+The next best step is operational hardening:
+
+- tune the PR gate to reduce avoidable blocking
+- add last-known-good workflow config behavior
+- validate the full development workflow with real-world QA passes
