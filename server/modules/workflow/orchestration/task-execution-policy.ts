@@ -1,7 +1,7 @@
 import { exec } from "node:child_process";
 import type { DatabaseSync } from "node:sqlite";
 import { recordTaskExecutionEvent } from "./task-execution-events.ts";
-import { describeProjectWorkflowConfigSource, readProjectWorkflowConfig } from "../packs/project-config.ts";
+import { describeProjectWorkflowConfigSource, readProjectWorkflowConfig, readProjectWorkflowConfigCached } from "../packs/project-config.ts";
 
 type DbLike = Pick<DatabaseSync, "prepare">;
 
@@ -219,7 +219,57 @@ export function readProjectTaskExecutionHooks(worktreePath: string): ProjectTask
   return {
     hooks: normalizeTaskExecutionHooksValue(rawHooks),
     stagePresence,
-    warnings: [],
+    warnings: [...config.warnings],
+    valid: true,
+  };
+}
+
+export function readProjectTaskExecutionHooksCached(db: DbLike, worktreePath: string): ProjectTaskExecutionHooksConfig | null {
+  const config = readProjectWorkflowConfigCached(db, worktreePath);
+  if (!config) return null;
+  if (!config.raw) {
+    return {
+      hooks: DEFAULT_TASK_EXECUTION_HOOKS,
+      stagePresence: { ...EMPTY_TASK_EXECUTION_HOOK_STAGE_PRESENCE },
+      warnings: [...config.warnings],
+      valid: false,
+    };
+  }
+
+  const sourceLabel = describeProjectWorkflowConfigSource(config);
+  const taskExecutionHooksValue = config.raw.taskExecutionHooks;
+  const rawHooks = asObject(taskExecutionHooksValue);
+  if (!rawHooks) {
+    return {
+      hooks: DEFAULT_TASK_EXECUTION_HOOKS,
+      stagePresence: { ...EMPTY_TASK_EXECUTION_HOOK_STAGE_PRESENCE },
+      warnings: [`${sourceLabel} missing taskExecutionHooks object, falling back to global`],
+      valid: false,
+    };
+  }
+
+  const stagePresence: TaskExecutionHookStagePresence = {
+    before_run: Object.prototype.hasOwnProperty.call(rawHooks, "before_run"),
+    after_run_success: Object.prototype.hasOwnProperty.call(rawHooks, "after_run_success"),
+    after_run_failure: Object.prototype.hasOwnProperty.call(rawHooks, "after_run_failure"),
+  };
+
+  const invalidStageSchema = (Object.keys(stagePresence) as TaskHookStage[]).some(
+    (stage) => stagePresence[stage] && !isValidHookStageHookArray(rawHooks[stage]),
+  );
+  if (invalidStageSchema) {
+    return {
+      hooks: DEFAULT_TASK_EXECUTION_HOOKS,
+      stagePresence: { ...EMPTY_TASK_EXECUTION_HOOK_STAGE_PRESENCE },
+      warnings: [`${sourceLabel} invalid hook schema, falling back to global`],
+      valid: false,
+    };
+  }
+
+  return {
+    hooks: normalizeTaskExecutionHooksValue(rawHooks),
+    stagePresence,
+    warnings: [...config.warnings],
     valid: true,
   };
 }
@@ -230,7 +280,7 @@ export function resolveTaskExecutionHooksForStage(
   stage: TaskHookStage,
 ): { hooks: TaskExecutionHook[]; warnings: string[]; source: "global" | "project" } {
   const globalHooks = readTaskExecutionHooks(db);
-  const localConfig = readProjectTaskExecutionHooks(worktreePath);
+  const localConfig = readProjectTaskExecutionHooksCached(db, worktreePath);
   if (!localConfig) {
     return { hooks: globalHooks[stage], warnings: [], source: "global" };
   }
@@ -238,9 +288,9 @@ export function resolveTaskExecutionHooksForStage(
     return { hooks: globalHooks[stage], warnings: localConfig.warnings, source: "global" };
   }
   if (localConfig.stagePresence[stage]) {
-    return { hooks: localConfig.hooks[stage], warnings: [], source: "project" };
+    return { hooks: localConfig.hooks[stage], warnings: localConfig.warnings, source: "project" };
   }
-  return { hooks: globalHooks[stage], warnings: [], source: "global" };
+  return { hooks: globalHooks[stage], warnings: localConfig.warnings, source: "global" };
 }
 
 export function shouldRetryForReason(policy: TaskExecutionPolicy, reason: TaskRetryReason): boolean {

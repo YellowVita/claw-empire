@@ -306,6 +306,8 @@ export interface WorkflowPackEffectivePreview {
   project_policy_markdown: string | null;
   policy_applied: boolean;
   config_sources: Array<"workflow_md" | "claw_workflow_json">;
+  last_known_good_applied: boolean;
+  last_known_good_cached_at: number | null;
   warnings: string[];
 }
 

@@ -7,7 +7,7 @@ import { getAssignedAgentIdsByProjectIds } from "../shared/project-assignments.t
 import { createProjectRouteHelpers } from "./projects/helpers.ts";
 import { DEFAULT_WORKFLOW_PACK_KEY, isWorkflowPackKey } from "../../workflow/packs/definitions.ts";
 import { buildEffectiveWorkflowPack } from "../../workflow/packs/effective-pack.ts";
-import { readProjectWorkflowDefaultPackKey } from "../../workflow/packs/project-config.ts";
+import { readProjectWorkflowDefaultPackKeyCached } from "../../workflow/packs/project-config.ts";
 
 type FirstQueryValue = (value: unknown) => string | undefined;
 type NormalizeTextField = (value: unknown) => string | null;
@@ -58,7 +58,7 @@ export function registerProjectRoutes({
   } {
     const normalizedProjectPath = normalizeTextField(projectPath);
     if (normalizedProjectPath) {
-      const fileDefault = readProjectWorkflowDefaultPackKey(normalizedProjectPath);
+      const fileDefault = readProjectWorkflowDefaultPackKeyCached(db as any, normalizedProjectPath, { nowMs });
       for (const warning of fileDefault.warnings) {
         console.warn(`[workflow-pack/project-detail] ${warning}`);
       }
@@ -95,6 +95,11 @@ export function registerProjectRoutes({
             override_applied: false,
             override_fields: [],
             source: "db" as const,
+            project_policy_markdown: null,
+            policy_applied: false,
+            config_sources: [],
+            last_known_good_applied: false,
+            last_known_good_cached_at: null,
             warnings: [],
           };
       return {

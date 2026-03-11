@@ -170,7 +170,28 @@ export default function ProjectInsightsPanel({
                             {t({ ko: "override 적용", en: "override applied", ja: "override 適用", zh: "已应用 override" })}
                           </span>
                         )}
+                        {effectivePackPreview.last_known_good_applied && (
+                          <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] text-amber-300">
+                            {t({
+                              ko: "last-known-good 활성",
+                              en: "last-known-good active",
+                              ja: "last-known-good 有効",
+                              zh: "last-known-good 已启用",
+                            })}
+                          </span>
+                        )}
                       </div>
+                      {effectivePackPreview.last_known_good_applied && effectivePackPreview.last_known_good_cached_at && (
+                        <p className="text-[11px] text-amber-200">
+                          {t({
+                            ko: "캐시 시각",
+                            en: "Cached At",
+                            ja: "キャッシュ時刻",
+                            zh: "缓存时间",
+                          })}
+                          : {fmtTime(effectivePackPreview.last_known_good_cached_at)}
+                        </p>
+                      )}
                       {effectivePackPreview.warnings.length > 0 && (
                         <div className="space-y-1">
                           {effectivePackPreview.warnings.map((warning) => (

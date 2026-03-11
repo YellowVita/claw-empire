@@ -33,6 +33,10 @@ function createFakeResponse(): FakeResponse {
 function createHarness() {
   const db = new DatabaseSync(":memory:");
   db.exec(`
+    CREATE TABLE settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
     CREATE TABLE workflow_packs (
       key TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -451,6 +455,8 @@ describe("workflow pack import/export routes", () => {
         project_policy_markdown: null,
         policy_applied: false,
         config_sources: ["claw_workflow_json"],
+        last_known_good_applied: false,
+        last_known_good_cached_at: null,
       });
       expect((res.payload as any).warnings).toEqual([
         ".claw-workflow.json unsupported packOverrides.development.enabled, ignoring",
@@ -491,11 +497,57 @@ Repository-owned workflow policy.
         project_policy_markdown: "Repository-owned workflow policy.",
         policy_applied: true,
         config_sources: ["workflow_md"],
+        last_known_good_applied: false,
+        last_known_good_cached_at: null,
         pack: {
           key: "development",
           prompt_preset: { mode: "workflow-engineering" },
         },
       });
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+      harness.db.close();
+    }
+  });
+
+  it("effective preview는 parse 실패 시 last-known-good 상태를 반환한다", () => {
+    const harness = createHarness();
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "claw-effective-cache-preview-"));
+    try {
+      fs.writeFileSync(
+        path.join(projectDir, ".claw-workflow.json"),
+        JSON.stringify(
+          {
+            packOverrides: {
+              development: {
+                prompt_preset: { mode: "cached-engineering" },
+              },
+            },
+          },
+          null,
+          2,
+        ),
+        "utf8",
+      );
+      const handler = harness.getRoutes.get("/api/workflow-packs/:key/effective");
+      const warmRes = createFakeResponse();
+      handler?.({ params: { key: "development" }, query: { projectPath: projectDir } }, warmRes);
+
+      fs.writeFileSync(path.join(projectDir, ".claw-workflow.json"), "{ invalid json", "utf8");
+      const res = createFakeResponse();
+      handler?.({ params: { key: "development" }, query: { projectPath: projectDir } }, res);
+
+      expect(res.statusCode).toBe(200);
+      expect(res.payload).toMatchObject({
+        override_applied: true,
+        last_known_good_applied: true,
+        pack: {
+          key: "development",
+          prompt_preset: { mode: "cached-engineering" },
+        },
+      });
+      expect((res.payload as any).warnings).toContain(".claw-workflow.json parse failed, falling back to global");
+      expect((res.payload as any).warnings).toContain("last-known-good applied from settings cache");
     } finally {
       fs.rmSync(projectDir, { recursive: true, force: true });
       harness.db.close();

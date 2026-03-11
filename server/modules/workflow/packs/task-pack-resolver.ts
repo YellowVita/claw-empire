@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { DEFAULT_WORKFLOW_PACK_KEY, isWorkflowPackKey, type WorkflowPackKey } from "./definitions.ts";
-import { readProjectWorkflowDefaultPackKey } from "./project-config.ts";
+import { readProjectWorkflowDefaultPackKeyCached } from "./project-config.ts";
 
 type DbLike = Pick<DatabaseSync, "prepare">;
 export type TaskWorkflowPackSource = "explicit" | "file_default" | "project_default" | "fallback_default";
@@ -57,7 +57,7 @@ export function resolveTaskWorkflowPackSelection(params: {
 
   const resolvedProjectPath = normalizeText(projectPath) || resolveProjectPathById(db, projectId);
   if (resolvedProjectPath) {
-    const fileDefault = readProjectWorkflowDefaultPackKey(resolvedProjectPath);
+    const fileDefault = readProjectWorkflowDefaultPackKeyCached(db, resolvedProjectPath);
     if (fileDefault.packKey) {
       return { packKey: fileDefault.packKey, source: "file_default", warnings: fileDefault.warnings };
     }

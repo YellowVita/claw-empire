@@ -1,11 +1,15 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   readProjectDevelopmentPrFeedbackGatePolicy,
   readProjectWorkflowConfig,
+  readProjectWorkflowConfigCached,
   readProjectWorkflowDefaultPackKey,
+  readProjectWorkflowDefaultPackKeyCached,
+  readProjectWorkflowPackOverrideCached,
   readProjectWorkflowPackOverride,
 } from "./project-config.ts";
 
@@ -15,6 +19,17 @@ function createTempDir(prefix: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   tempDirs.push(dir);
   return dir;
+}
+
+function createDb(): DatabaseSync {
+  const db = new DatabaseSync(":memory:");
+  db.exec(`
+    CREATE TABLE settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+  `);
+  return db;
 }
 
 afterEach(() => {
@@ -265,5 +280,173 @@ Project policy
       ".claw-workflow.json invalid developmentPrFeedbackGate.ignoredCheckPrefixes, ignoring",
       ".claw-workflow.json invalid developmentPrFeedbackGate.ignoredCheckNames entries, ignoring non-string values",
     ]);
+  });
+
+  it("정상 WORKFLOW.md를 읽으면 last-known-good를 settings에 저장한다", () => {
+    const db = createDb();
+    const projectDir = createTempDir("claw-workflow-cache-save-");
+    try {
+      fs.writeFileSync(
+        path.join(projectDir, "WORKFLOW.md"),
+        `---
+defaultWorkflowPackKey: development
+packOverrides:
+  development:
+    prompt_preset:
+      mode: workflow-dev
+---
+
+Keep build green.
+`,
+        "utf8",
+      );
+
+      const result = readProjectWorkflowConfigCached(db as any, projectDir, { nowMs: () => 1234 });
+      expect(result).toMatchObject({
+        raw: {
+          defaultWorkflowPackKey: "development",
+        },
+        policyMarkdown: "Keep build green.",
+        cacheApplied: false,
+        cacheUpdatedAt: null,
+      });
+
+      const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(
+        `project_workflow_last_known_good::${projectDir}`,
+      ) as { value: string } | undefined;
+      expect(row).toBeDefined();
+      expect(JSON.parse(row?.value ?? "{}")).toMatchObject({
+        policyMarkdown: "Keep build green.",
+        sources: ["workflow_md"],
+        cachedAt: 1234,
+        projectPath: projectDir,
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("파싱 실패 시 이전 last-known-good를 적용한다", () => {
+    const db = createDb();
+    const projectDir = createTempDir("claw-workflow-cache-apply-");
+    try {
+      fs.writeFileSync(
+        path.join(projectDir, "WORKFLOW.md"),
+        `---
+defaultWorkflowPackKey: development
+packOverrides:
+  development:
+    prompt_preset:
+      mode: stable
+---
+
+Stable policy
+`,
+        "utf8",
+      );
+      readProjectWorkflowConfigCached(db as any, projectDir, { nowMs: () => 5000 });
+
+      fs.writeFileSync(
+        path.join(projectDir, "WORKFLOW.md"),
+        `---
+defaultWorkflowPackKey: [broken
+---
+`,
+        "utf8",
+      );
+
+      const config = readProjectWorkflowConfigCached(db as any, projectDir, { nowMs: () => 6000 });
+      expect(config).toMatchObject({
+        raw: {
+          defaultWorkflowPackKey: "development",
+          packOverrides: {
+            development: {
+              prompt_preset: {
+                mode: "stable",
+              },
+            },
+          },
+        },
+        policyMarkdown: "Stable policy",
+        cacheApplied: true,
+        cacheUpdatedAt: 5000,
+      });
+      expect(config?.warnings).toEqual([
+        "WORKFLOW.md parse failed, falling back to .claw-workflow.json/global",
+        "last-known-good applied from settings cache",
+      ]);
+
+      const defaultPack = readProjectWorkflowDefaultPackKeyCached(db as any, projectDir, { nowMs: () => 7000 });
+      expect(defaultPack).toMatchObject({
+        packKey: "development",
+        cacheApplied: true,
+        cacheUpdatedAt: 5000,
+      });
+
+      const override = readProjectWorkflowPackOverrideCached(db as any, projectDir, "development", { nowMs: () => 7000 });
+      expect(override.override).toEqual({
+        prompt_preset: { mode: "stable" },
+      });
+      expect(override.cacheApplied).toBe(true);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("파일이 없어지면 last-known-good를 자동 적용하지 않는다", () => {
+    const db = createDb();
+    const projectDir = createTempDir("claw-workflow-cache-missing-");
+    try {
+      fs.writeFileSync(path.join(projectDir, ".claw-workflow.json"), JSON.stringify({ defaultWorkflowPackKey: "report" }), "utf8");
+      readProjectWorkflowConfigCached(db as any, projectDir, { nowMs: () => 8000 });
+      fs.rmSync(path.join(projectDir, ".claw-workflow.json"));
+
+      const config = readProjectWorkflowConfigCached(db as any, projectDir, { nowMs: () => 9000 });
+      expect(config).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+
+  it("동일 payload는 settings write를 건너뛴다", () => {
+    const db = createDb();
+    const projectDir = createTempDir("claw-workflow-cache-skip-");
+    try {
+      fs.writeFileSync(path.join(projectDir, ".claw-workflow.json"), JSON.stringify({ defaultWorkflowPackKey: "report" }), "utf8");
+      readProjectWorkflowConfigCached(db as any, projectDir, { nowMs: () => 1111 });
+      readProjectWorkflowConfigCached(db as any, projectDir, { nowMs: () => 2222 });
+
+      const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(
+        `project_workflow_last_known_good::${projectDir}`,
+      ) as { value: string } | undefined;
+      expect(JSON.parse(row?.value ?? "{}")).toMatchObject({
+        cachedAt: 1111,
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("깨진 cache payload는 무시하고 기존 fallback을 유지한다", () => {
+    const db = createDb();
+    const projectDir = createTempDir("claw-workflow-cache-broken-");
+    try {
+      db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run(
+        `project_workflow_last_known_good::${projectDir}`,
+        "{broken",
+      );
+      fs.writeFileSync(path.join(projectDir, "WORKFLOW.md"), "---\ndefaultWorkflowPackKey: [broken\n---", "utf8");
+
+      const config = readProjectWorkflowConfigCached(db as any, projectDir, { nowMs: () => 3333 });
+      expect(config).toMatchObject({
+        raw: null,
+        policyMarkdown: null,
+        cacheApplied: false,
+        cacheUpdatedAt: null,
+        warnings: ["WORKFLOW.md parse failed, falling back to .claw-workflow.json/global"],
+      });
+    } finally {
+      db.close();
+    }
   });
 });

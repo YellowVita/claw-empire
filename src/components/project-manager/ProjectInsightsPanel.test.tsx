@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { WorkflowPackEffectivePreview } from "../../api";
 import type { Project } from "../../types";
@@ -29,6 +29,8 @@ describe("ProjectInsightsPanel", () => {
       project_policy_markdown: null,
       policy_applied: false,
       config_sources: ["claw_workflow_json"],
+      last_known_good_applied: false,
+      last_known_good_cached_at: null,
       warnings: [],
     };
     const project: Project = {
@@ -78,5 +80,68 @@ describe("ProjectInsightsPanel", () => {
       screen.getByText((_, element) => element?.tagName === "P" && element.textContent?.includes("Override Fields: prompt_preset, routing_keywords") === true),
     ).toBeInTheDocument();
     expect(screen.getByText("Effective Pack Preview")).toBeInTheDocument();
+  });
+
+  it("effective preview에서 last-known-good 상태를 표시한다", async () => {
+    const preview: WorkflowPackEffectivePreview = {
+      pack: {
+        key: "development",
+        name: "Development",
+        enabled: true,
+        input_schema: {},
+        prompt_preset: {},
+        qa_rules: {},
+        output_template: {},
+        routing_keywords: [],
+        cost_profile: {},
+      },
+      override_applied: false,
+      override_fields: [],
+      source: "db",
+      project_policy_markdown: null,
+      policy_applied: false,
+      config_sources: ["workflow_md"],
+      last_known_good_applied: true,
+      last_known_good_cached_at: 1700000000000,
+      warnings: ["last-known-good applied from settings cache"],
+    };
+    const project: Project = {
+      id: "project-2",
+      name: "Project Two",
+      project_path: "/tmp/project-two",
+      core_goal: "Keep workflow stable",
+      default_pack_key: "development",
+      detected_workflow_pack_key: "development",
+      workflow_pack_source: "file_default",
+      workflow_pack_override_applied: false,
+      workflow_pack_override_fields: [],
+      workflow_pack_preview_key: "development",
+      assignment_mode: "auto",
+      assigned_agent_ids: [],
+      last_used_at: null,
+      created_at: 1,
+      updated_at: 1,
+      github_repo: null,
+    };
+
+    render(
+      <ProjectInsightsPanel
+        t={t}
+        selectedProject={project}
+        loadingDetail={false}
+        isCreating={false}
+        groupedTaskCards={[]}
+        sortedReports={[]}
+        sortedDecisionEvents={[]}
+        getDecisionEventLabel={() => ""}
+        handleOpenTaskDetail={vi.fn(async () => {})}
+        handlePreviewWorkflowPack={vi.fn(async () => preview)}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("Effective Pack Preview"));
+    expect(await screen.findByText("last-known-good active")).toBeInTheDocument();
+    expect(screen.getByText((text) => text.includes("Cached At:"))).toBeInTheDocument();
+    expect(screen.getByText("last-known-good applied from settings cache")).toBeInTheDocument();
   });
 });

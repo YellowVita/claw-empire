@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { WorkflowPackKey } from "./definitions.ts";
 import {
-  readProjectWorkflowPackOverride,
+  readProjectWorkflowPackOverrideCached,
   type ProjectWorkflowConfigSource,
   type WorkflowPackOverrideField,
 } from "./project-config.ts";
@@ -40,6 +40,8 @@ export type EffectiveWorkflowPackResult = {
   project_policy_markdown: string | null;
   policy_applied: boolean;
   config_sources: ProjectWorkflowConfigSource[];
+  last_known_good_applied: boolean;
+  last_known_good_cached_at: number | null;
   warnings: string[];
 };
 
@@ -90,6 +92,8 @@ export function buildEffectiveWorkflowPack(params: {
       project_policy_markdown: null,
       policy_applied: false,
       config_sources: [],
+      last_known_good_applied: false,
+      last_known_good_cached_at: null,
       warnings: [`workflow pack '${packKey}' not found in DB`],
     };
   }
@@ -105,11 +109,13 @@ export function buildEffectiveWorkflowPack(params: {
       project_policy_markdown: null,
       policy_applied: false,
       config_sources: [],
+      last_known_good_applied: false,
+      last_known_good_cached_at: null,
       warnings: [],
     };
   }
 
-  const fileOverride = readProjectWorkflowPackOverride(normalizedProjectPath, packKey);
+  const fileOverride = readProjectWorkflowPackOverrideCached(db, normalizedProjectPath, packKey);
   const projectPolicyMarkdown = fileOverride.policyMarkdown;
   const configSources = fileOverride.configSources;
   const policyApplied = packKey === "development" && typeof projectPolicyMarkdown === "string" && projectPolicyMarkdown.trim().length > 0;
@@ -122,6 +128,8 @@ export function buildEffectiveWorkflowPack(params: {
       project_policy_markdown: projectPolicyMarkdown,
       policy_applied: policyApplied,
       config_sources: configSources,
+      last_known_good_applied: fileOverride.cacheApplied,
+      last_known_good_cached_at: fileOverride.cacheUpdatedAt,
       warnings: fileOverride.warnings,
     };
   }
@@ -144,6 +152,8 @@ export function buildEffectiveWorkflowPack(params: {
     project_policy_markdown: projectPolicyMarkdown,
     policy_applied: policyApplied,
     config_sources: configSources,
+    last_known_good_applied: fileOverride.cacheApplied,
+    last_known_good_cached_at: fileOverride.cacheUpdatedAt,
     warnings: fileOverride.warnings,
   };
 }

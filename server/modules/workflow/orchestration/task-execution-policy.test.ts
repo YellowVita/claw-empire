@@ -445,4 +445,51 @@ Policy only
       warnings: ["WORKFLOW.md missing taskExecutionHooks object, falling back to global"],
     });
   });
+
+  it("hook 파일 파싱 실패 시 마지막 정상 project hook override를 유지한다", () => {
+    const db = createDbWithGlobalHooks({
+      before_run: [
+        {
+          id: "global-before",
+          label: "Global Before",
+          command: 'node -e "process.exit(0)"',
+          timeout_ms: 300000,
+          continue_on_error: false,
+        },
+      ],
+    });
+    const worktreePath = createTempDir("claw-hooks-cache-apply-");
+    writeWorkflowContract(
+      worktreePath,
+      `---
+taskExecutionHooks:
+  before_run:
+    - id: cached-before
+      label: Cached Before
+      command: node -e "process.exit(0)"
+---
+`,
+    );
+
+    try {
+      const warm = resolveTaskExecutionHooksForStage(db as any, worktreePath, "before_run");
+      expect(warm.source).toBe("project");
+      expect(warm.hooks[0]?.id).toBe("cached-before");
+
+      writeWorkflowContract(
+        worktreePath,
+        `---
+taskExecutionHooks: [broken
+---
+`,
+      );
+      const resolved = resolveTaskExecutionHooksForStage(db as any, worktreePath, "before_run");
+      expect(resolved.source).toBe("project");
+      expect(resolved.hooks[0]?.id).toBe("cached-before");
+      expect(resolved.warnings).toContain("WORKFLOW.md parse failed, falling back to .claw-workflow.json/global");
+      expect(resolved.warnings).toContain("last-known-good applied from settings cache");
+    } finally {
+      db.close();
+    }
+  });
 });

@@ -56,3 +56,10 @@
 - [x] Pass project policy into review finalization and persist ignored check details in run sheets/quality runs
 - [x] Render ignored optional-check details in `TaskReportPopup`
 - [x] Add regression tests and run targeted server/UI verification plus build
+
+## 11. Workflow Contract Last-Known-Good Phase 6
+- [x] Add DB-backed last-known-good cache wrapper for project workflow config loading
+- [x] Extend effective workflow preview/API with cache status metadata
+- [x] Switch runtime callers to the cached project workflow config loader
+- [x] Show cache-applied state in Project Insights effective preview
+- [x] Add regression tests and run targeted server/UI verification plus build

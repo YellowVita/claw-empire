@@ -202,6 +202,8 @@ export function registerWorkflowPackRoutes(
       project_policy_markdown: effective.project_policy_markdown,
       policy_applied: effective.policy_applied,
       config_sources: effective.config_sources,
+      last_known_good_applied: effective.last_known_good_applied,
+      last_known_good_cached_at: effective.last_known_good_cached_at,
       warnings: effective.warnings,
     });
   });

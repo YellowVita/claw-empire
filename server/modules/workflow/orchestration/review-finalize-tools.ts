@@ -7,7 +7,7 @@ import {
 } from "../packs/video-artifact.ts";
 import { evaluateRemotionOnlyGateFromLogFiles } from "../packs/video-render-engine-gate.ts";
 import { resolveScopedTeamLeader } from "../packs/agent-scope.ts";
-import { readProjectDevelopmentPrFeedbackGatePolicy } from "../packs/project-config.ts";
+import { readProjectDevelopmentPrFeedbackGatePolicyCached } from "../packs/project-config.ts";
 import { readYoloModeEnabled } from "../../routes/ops/messages/decision-inbox/yolo-mode.ts";
 import { reconcileVideoRenderDelegationState } from "./video-render-delegation-state.ts";
 import {
@@ -658,7 +658,11 @@ export function createReviewFinalizeTools(deps: CreateReviewFinalizeToolsDeps) {
             githubRepo &&
             typeof inspectTaskGithubPrFeedbackGate === "function"
           ) {
-            const prGatePolicyResult = readProjectDevelopmentPrFeedbackGatePolicy(latestTask.project_path ?? "");
+            const prGatePolicyResult = readProjectDevelopmentPrFeedbackGatePolicyCached(
+              db as any,
+              latestTask.project_path ?? "",
+              { nowMs },
+            );
             for (const warning of prGatePolicyResult.warnings) {
               appendTaskLog(taskId, "system", `GitHub PR gate policy warning: ${warning}`);
             }

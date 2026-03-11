@@ -16,6 +16,10 @@ function createTempDir(prefix: string): string {
 function createDb(): DatabaseSync {
   const db = new DatabaseSync(":memory:");
   db.exec(`
+    CREATE TABLE settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
     CREATE TABLE workflow_packs (
       key TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -90,6 +94,8 @@ describe("effective workflow pack", () => {
       expect(result.project_policy_markdown).toBeNull();
       expect(result.policy_applied).toBe(false);
       expect(result.config_sources).toEqual(["claw_workflow_json"]);
+      expect(result.last_known_good_applied).toBe(false);
+      expect(result.last_known_good_cached_at).toBeNull();
       expect(result.pack).toMatchObject({
         key: "report",
         prompt_preset: { mode: "project-report" },
@@ -111,6 +117,8 @@ describe("effective workflow pack", () => {
       expect(result.project_policy_markdown).toBeNull();
       expect(result.policy_applied).toBe(false);
       expect(result.config_sources).toEqual([]);
+      expect(result.last_known_good_applied).toBe(false);
+      expect(result.last_known_good_cached_at).toBeNull();
       expect(result.pack).toMatchObject({
         key: "report",
         prompt_preset: { mode: "reporting", audience: "exec" },
@@ -144,10 +152,48 @@ Repository policy for development only.
       expect(result.project_policy_markdown).toBe("Repository policy for development only.");
       expect(result.policy_applied).toBe(false);
       expect(result.config_sources).toEqual(["workflow_md"]);
+      expect(result.last_known_good_applied).toBe(false);
+      expect(result.last_known_good_cached_at).toBeNull();
       expect(result.pack).toMatchObject({
         key: "report",
         prompt_preset: { mode: "workflow-report" },
       });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("파일 파싱 실패 시 cached override를 effective pack에 유지한다", () => {
+    const db = createDb();
+    const projectDir = createTempDir("claw-effective-pack-cache-");
+    try {
+      fs.writeFileSync(
+        path.join(projectDir, ".claw-workflow.json"),
+        JSON.stringify(
+          {
+            packOverrides: {
+              report: {
+                prompt_preset: { mode: "cached-report" },
+              },
+            },
+          },
+          null,
+          2,
+        ),
+        "utf8",
+      );
+      buildEffectiveWorkflowPack({ db: db as any, packKey: "report", projectPath: projectDir });
+
+      fs.writeFileSync(path.join(projectDir, ".claw-workflow.json"), "{ invalid json", "utf8");
+      const result = buildEffectiveWorkflowPack({ db: db as any, packKey: "report", projectPath: projectDir });
+      expect(result.override_applied).toBe(true);
+      expect(result.pack).toMatchObject({
+        prompt_preset: { mode: "cached-report" },
+      });
+      expect(result.last_known_good_applied).toBe(true);
+      expect(result.last_known_good_cached_at).not.toBeNull();
+      expect(result.warnings).toContain(".claw-workflow.json parse failed, falling back to global");
+      expect(result.warnings).toContain("last-known-good applied from settings cache");
     } finally {
       db.close();
     }
