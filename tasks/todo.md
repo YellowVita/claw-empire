@@ -82,3 +82,8 @@
 - [x] Write an operator-facing development workflow operations guide
 - [x] Link current runtime surfaces, signals, and response playbooks in one document
 - [x] Record documentation completion in this checklist
+
+## 15. Development Workflow Smoke Validation
+- [x] Define real-project smoke validation scope and pass/fail criteria
+- [x] Add an operator-facing smoke validation plan under `docs/plans`
+- [x] Record the smoke validation planning completion in this checklist
