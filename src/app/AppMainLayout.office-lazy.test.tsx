@@ -1,14 +1,15 @@
+import React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render, screen } from "@testing-library/react";
 
 function createDeferredImport() {
-  let resolve: ((value: { default: () => JSX.Element }) => void) | null = null;
-  const promise = new Promise<{ default: () => JSX.Element }>((done) => {
+  let resolve: ((value: { default: () => React.JSX.Element }) => void) | null = null;
+  const promise = new Promise<{ default: () => React.JSX.Element }>((done) => {
     resolve = done;
   });
   return {
     promise,
-    resolve(value: { default: () => JSX.Element }) {
+    resolve(value: { default: () => React.JSX.Element }) {
       resolve?.(value);
     },
   };

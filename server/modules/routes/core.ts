@@ -410,7 +410,6 @@ export function registerRoutesPartA(ctx: RuntimeContext): Record<string, never> 
     nowMs,
     resolveLang,
     ensureTaskExecutionSession,
-    resolveProjectPath,
     logsDir,
     createWorktree,
     generateProjectContext,

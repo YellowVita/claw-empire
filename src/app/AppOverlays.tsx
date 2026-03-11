@@ -12,6 +12,7 @@ import type { DecisionInboxItem } from "../components/chat/decision-inbox";
 import type { UiLanguage } from "../i18n";
 import type { ProjectMetaPayload, RoomThemeMap } from "./types";
 import {
+  useAgentRuntime,
   useAuxiliaryOverlayState,
   useChatOverlayState,
   useChatRuntime,

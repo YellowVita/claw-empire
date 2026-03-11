@@ -451,7 +451,6 @@ export function initializeWorkflowPartC(ctx: RuntimeContext): WorkflowOrchestrat
     ensureTaskExecutionSession,
     resolveLang,
     notifyTaskStatus,
-    resolveProjectPath,
     createWorktree,
     cleanupWorktree,
     getDeptRoleConstraint,

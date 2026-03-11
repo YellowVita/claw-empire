@@ -51,7 +51,7 @@ function createAgent(id: string, name = id): Agent {
     name,
     name_ko: name,
     department_id: null,
-    role: "member",
+    role: "senior",
     acts_as_planning_leader: 0,
     cli_provider: "codex",
     avatar_emoji: ":)",
@@ -68,7 +68,7 @@ function createTask(id: string): Task {
   return {
     id,
     title: `task-${id}`,
-    status: "todo",
+    status: "inbox",
     priority: 1,
     task_type: "general",
     created_at: Date.now(),
@@ -78,6 +78,9 @@ function createTask(id: string): Task {
     description: "",
     project_id: null,
     project_path: null,
+    result: null,
+    started_at: null,
+    completed_at: null,
   } as Task;
 }
 
