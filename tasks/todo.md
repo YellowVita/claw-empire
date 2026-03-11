@@ -77,3 +77,8 @@
 - [x] Add project health aggregation regression tests plus Project Insights UI coverage
 - [x] Add operator QA checklist document for development workflow validation
 - [x] Run targeted server/UI verification plus build
+
+## 14. Development Workflow Operations Doc
+- [x] Write an operator-facing development workflow operations guide
+- [x] Link current runtime surfaces, signals, and response playbooks in one document
+- [x] Record documentation completion in this checklist
