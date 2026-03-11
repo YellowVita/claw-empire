@@ -29,6 +29,7 @@ import { createExecutionStartTaskTools } from "./orchestration/execution-start-t
 import { createPlannedApprovalTools } from "./orchestration/planned-approval.ts";
 import { createPlanningArchiveTools } from "./orchestration/planning-archive-tools.ts";
 import { createProgressNotifyTools } from "./orchestration/progress-notify-tools.ts";
+import { inspectTaskGithubPrFeedbackGate } from "./orchestration/github-pr-feedback-gate.ts";
 import { createReviewFinalizeTools } from "./orchestration/review-finalize-tools.ts";
 import { createRunCompleteHandler } from "./orchestration/run-complete-handler.ts";
 import { createReportWorkflowTools } from "./orchestration/report-workflow-tools.ts";
@@ -695,6 +696,7 @@ export function initializeWorkflowPartC(ctx: RuntimeContext): WorkflowOrchestrat
     subtaskDelegationCallbacks,
     startReviewConsensusMeeting,
     processSubtaskDelegations,
+    inspectTaskGithubPrFeedbackGate,
   });
 
   function reconcileDelegatedSubtasksAfterRun(taskId: string, exitCode: number): void {

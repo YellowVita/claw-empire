@@ -68,6 +68,7 @@ export default function TaskReportPopup({ report, agents, departments, uiLanguag
   const execution = currentReport.execution;
   const quality = currentReport.quality;
   const developmentRunSheet = currentReport.development_run_sheet;
+  const prFeedbackGate = developmentRunSheet?.snapshot.review_checklist.pr_feedback_gate ?? null;
   const branchVerificationLogs = useMemo(
     () =>
       (currentReport.logs ?? []).filter(
@@ -370,7 +371,7 @@ export default function TaskReportPopup({ report, agents, departments, uiLanguag
               <p className="mt-1 text-[11px] text-fuchsia-300/70">{fmtTime(developmentRunSheet.updated_at)}</p>
             </div>
           </div>
-          <div className="mb-3 grid grid-cols-2 gap-2 md:grid-cols-4">
+          <div className="mb-3 grid grid-cols-2 gap-2 md:grid-cols-5">
             <div className="rounded-md border border-fuchsia-500/20 bg-slate-950/30 px-3 py-2">
               <p className="text-[11px] text-slate-400">{t({ ko: "상태", en: "Status", ja: "状態", zh: "状态" })}</p>
               <p className="text-sm font-semibold text-slate-100">{developmentRunSheet.status || "-"}</p>
@@ -401,7 +402,66 @@ export default function TaskReportPopup({ report, agents, departments, uiLanguag
                 {developmentRunSheet.snapshot.review_checklist.merge_status}
               </p>
             </div>
+            <div className="rounded-md border border-fuchsia-500/20 bg-slate-950/30 px-3 py-2">
+              <p className="text-[11px] text-slate-400">
+                {t({ ko: "PR Gate", en: "PR Gate", ja: "PR Gate", zh: "PR Gate" })}
+              </p>
+              <p className="text-sm font-semibold text-slate-100">{prFeedbackGate?.status || "-"}</p>
+            </div>
           </div>
+          {prFeedbackGate && (
+            <div className="mb-3 rounded-md border border-fuchsia-500/20 bg-slate-950/30 p-3">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-fuchsia-200">
+                  {t({ ko: "PR Feedback Gate", en: "PR Feedback Gate", ja: "PR Feedback Gate", zh: "PR Feedback Gate" })}
+                </p>
+                <span className="text-[11px] text-fuchsia-300/70">{prFeedbackGate.checked_at ? fmtTime(prFeedbackGate.checked_at) : "-"}</span>
+              </div>
+              <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+                <div className="rounded-md border border-slate-700/50 bg-black/20 px-3 py-2">
+                  <p className="text-[11px] text-slate-400">{t({ ko: "상태", en: "Status", ja: "状態", zh: "状态" })}</p>
+                  <p className="text-sm font-semibold text-slate-100">{prFeedbackGate.status}</p>
+                </div>
+                <div className="rounded-md border border-slate-700/50 bg-black/20 px-3 py-2">
+                  <p className="text-[11px] text-slate-400">
+                    {t({ ko: "미해결 Thread", en: "Unresolved Threads", ja: "未解決Thread", zh: "未解决 Thread" })}
+                  </p>
+                  <p className="text-sm font-semibold text-slate-100">{prFeedbackGate.unresolved_thread_count}</p>
+                </div>
+                <div className="rounded-md border border-slate-700/50 bg-black/20 px-3 py-2">
+                  <p className="text-[11px] text-slate-400">
+                    {t({ ko: "실패 Check", en: "Failing Checks", ja: "失敗Check", zh: "失败 Check" })}
+                  </p>
+                  <p className="text-sm font-semibold text-slate-100">{prFeedbackGate.failing_check_count}</p>
+                </div>
+                <div className="rounded-md border border-slate-700/50 bg-black/20 px-3 py-2">
+                  <p className="text-[11px] text-slate-400">
+                    {t({ ko: "대기 Check", en: "Pending Checks", ja: "保留Check", zh: "待处理 Check" })}
+                  </p>
+                  <p className="text-sm font-semibold text-slate-100">{prFeedbackGate.pending_check_count}</p>
+                </div>
+              </div>
+              <div className="mt-3 space-y-1.5 text-[11px] text-slate-300">
+                <p>
+                  <span className="text-slate-500">{t({ ko: "PR URL", en: "PR URL", ja: "PR URL", zh: "PR URL" })}: </span>
+                  {prFeedbackGate.pr_url || "-"}
+                </p>
+                <p>
+                  <span className="text-slate-500">
+                    {t({ ko: "Changes Requested", en: "Changes Requested", ja: "Changes Requested", zh: "Changes Requested" })}
+                    :{" "}
+                  </span>
+                  {prFeedbackGate.change_requests_count}
+                </p>
+                <p>
+                  <span className="text-slate-500">
+                    {t({ ko: "차단 사유", en: "Blocking Reasons", ja: "ブロック理由", zh: "阻塞原因" })}:{" "}
+                  </span>
+                  {prFeedbackGate.blocking_reasons.length > 0 ? prFeedbackGate.blocking_reasons.join(" | ") : "-"}
+                </p>
+              </div>
+            </div>
+          )}
           <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded bg-black/30 p-3 text-[11px] leading-relaxed text-fuchsia-50">
             {developmentRunSheet.summary_markdown}
           </pre>

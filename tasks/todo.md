@@ -42,3 +42,10 @@
 - [x] Extend task report API/types with stored and synthetic queued run sheets
 - [x] Render development run sheet in `TaskReportPopup`
 - [x] Add regression tests and run targeted server/UI verification plus build
+
+## 9. Development PR Feedback Gate Phase 3
+- [x] Extract shared GitHub auth helper and add PR feedback gate inspection logic
+- [x] Block `development` review finalization on unresolved PR feedback or failing/pending checks
+- [x] Persist gate outcomes via quality runs and expose them through development run sheets
+- [x] Render PR gate status in `TaskReportPopup`
+- [x] Add regression tests and run targeted server/UI verification plus build

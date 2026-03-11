@@ -158,6 +158,17 @@ const baseReport = {
         waiting_on_child_reviews: false,
         pending_retry: false,
         merge_status: "merged",
+        pr_feedback_gate: {
+          applicable: true,
+          status: "blocked",
+          pr_url: "https://github.com/acme/repo/pull/12",
+          unresolved_thread_count: 2,
+          change_requests_count: 1,
+          failing_check_count: 1,
+          pending_check_count: 0,
+          blocking_reasons: ["Unresolved review threads: 2", "Failing checks: 1"],
+          checked_at: 1990,
+        },
       },
       handoff: {
         status: "done",
@@ -265,5 +276,8 @@ describe("TaskReportPopup", () => {
     expect(screen.getByText("Development Run Sheet")).toBeInTheDocument();
     expect(screen.getByText("Stored canonical brief")).toBeInTheDocument();
     expect(screen.getByText(/Stage: done/)).toBeInTheDocument();
+    expect(screen.getAllByText("blocked").length).toBeGreaterThan(0);
+    expect(screen.getByText("https://github.com/acme/repo/pull/12")).toBeInTheDocument();
+    expect(screen.getByText(/Unresolved review threads: 2/)).toBeInTheDocument();
   });
 });

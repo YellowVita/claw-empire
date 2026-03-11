@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawn, execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { buildGitHubApiHeaders, getGitHubAccessToken } from "../../github/auth.ts";
 import { decryptSecret } from "../../../oauth/helpers.ts";
 import type { RuntimeContext } from "../../../types/runtime-context.ts";
 import { createProjectPathPolicy } from "./projects/path-policy.ts";
@@ -135,20 +136,6 @@ export function registerGitHubRoutes(deps: GitHubRouteDeps): void {
   const { PROJECT_PATH_ALLOWED_ROOTS, isRelativeProjectPathInput, normalizeProjectPathInput, getContainingAllowedRoot } =
     createProjectPathPolicy({ normalizeTextField });
 
-  function getGitHubAccessToken(): string | null {
-    const row = db
-      .prepare(
-        "SELECT access_token_enc, scope FROM oauth_accounts WHERE provider = 'github' AND status = 'active' ORDER BY priority ASC, updated_at DESC LIMIT 1",
-      )
-      .get() as { access_token_enc: string | null; scope: string | null } | undefined;
-    if (!row?.access_token_enc) return null;
-    try {
-      return decryptSecret(row.access_token_enc);
-    } catch {
-      return null;
-    }
-  }
-
   function hasRepoScope(scope: string | null | undefined): boolean {
     if (!scope) return false;
     if (scope.includes("github-app")) return true;
@@ -242,11 +229,7 @@ export function registerGitHubRoutes(deps: GitHubRouteDeps): void {
     if (!repoScope && row.access_token_enc) {
       try {
         const token = decryptSecret(row.access_token_enc);
-        const authHeaders = {
-          Authorization: `Bearer ${token}`,
-          Accept: "application/vnd.github+json",
-          "X-GitHub-Api-Version": "2022-11-28",
-        };
+        const authHeaders = buildGitHubApiHeaders(token);
 
         const probe = await fetch("https://api.github.com/user", {
           headers: authHeaders,
@@ -294,7 +277,7 @@ export function registerGitHubRoutes(deps: GitHubRouteDeps): void {
   });
 
   app.get("/api/github/repos", async (req, res) => {
-    const token = getGitHubAccessToken();
+    const token = getGitHubAccessToken(db as any);
     if (!token) return res.status(401).json({ error: "github_not_connected" });
     const q = String(req.query.q || "").trim();
     const page = Math.max(1, parseInt(String(req.query.page || "1"), 10));
@@ -307,11 +290,7 @@ export function registerGitHubRoutes(deps: GitHubRouteDeps): void {
         url = `https://api.github.com/user/repos?per_page=${perPage}&page=${page}&sort=updated&affiliation=owner,collaborator,organization_member`;
       }
       const resp = await fetch(url, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: "application/vnd.github+json",
-          "X-GitHub-Api-Version": "2022-11-28",
-        },
+        headers: buildGitHubApiHeaders(token),
         signal: AbortSignal.timeout(15000),
       });
       if (!resp.ok) {
@@ -341,19 +320,15 @@ export function registerGitHubRoutes(deps: GitHubRouteDeps): void {
 
   app.get("/api/github/repos/:owner/:repo/branches", async (req, res) => {
     const pat = typeof req.headers["x-github-pat"] === "string" ? req.headers["x-github-pat"].trim() : null;
-    const token = pat || getGitHubAccessToken();
+    const token = pat || getGitHubAccessToken(db as any);
     if (!token) return res.status(401).json({ error: "github_not_connected" });
     const { owner, repo } = req.params;
-    const authHeader = pat ? `token ${token}` : `Bearer ${token}`;
+    const authScheme = pat ? "token" : "Bearer";
     try {
       const resp = await fetch(
         `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/branches?per_page=100`,
         {
-          headers: {
-            Authorization: authHeader,
-            Accept: "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
-          },
+          headers: buildGitHubApiHeaders(token, { authScheme }),
           signal: AbortSignal.timeout(15000),
         },
       );
@@ -373,11 +348,7 @@ export function registerGitHubRoutes(deps: GitHubRouteDeps): void {
       const repoResp = await fetch(
         `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`,
         {
-          headers: {
-            Authorization: authHeader,
-            Accept: "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
-          },
+          headers: buildGitHubApiHeaders(token, { authScheme }),
           signal: AbortSignal.timeout(10000),
         },
       );
@@ -400,7 +371,7 @@ export function registerGitHubRoutes(deps: GitHubRouteDeps): void {
 
   app.post("/api/github/clone", (req, res) => {
     const pat = typeof req.headers["x-github-pat"] === "string" ? req.headers["x-github-pat"].trim() : null;
-    const token = pat || getGitHubAccessToken();
+    const token = pat || getGitHubAccessToken(db as any);
     if (!token) return res.status(401).json({ error: "github_not_connected" });
     const { owner, repo, branch, target_path } = req.body ?? {};
     if (!owner || !repo) return res.status(400).json({ error: "owner_and_repo_required" });

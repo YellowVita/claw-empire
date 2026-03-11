@@ -252,6 +252,17 @@ export interface TaskRunSheetSnapshot {
     waiting_on_child_reviews: boolean;
     pending_retry: boolean;
     merge_status: "not_started" | "merged" | "failed";
+    pr_feedback_gate: null | {
+      applicable: boolean;
+      status: "passed" | "blocked" | "skipped";
+      pr_url: string | null;
+      unresolved_thread_count: number;
+      change_requests_count: number;
+      failing_check_count: number;
+      pending_check_count: number;
+      blocking_reasons: string[];
+      checked_at: number | null;
+    };
   };
   handoff: {
     status: string;

@@ -9,6 +9,10 @@ import { evaluateRemotionOnlyGateFromLogFiles } from "../packs/video-render-engi
 import { resolveScopedTeamLeader } from "../packs/agent-scope.ts";
 import { readYoloModeEnabled } from "../../routes/ops/messages/decision-inbox/yolo-mode.ts";
 import { reconcileVideoRenderDelegationState } from "./video-render-delegation-state.ts";
+import {
+  summarizeTaskGithubPrGateSnapshot,
+  type TaskGithubPrGateSnapshot,
+} from "./github-pr-feedback-gate.ts";
 import { recordTaskArtifact, recordTaskQualityRun } from "./task-quality-evidence.ts";
 import { upsertTaskRunSheet } from "./task-run-sheets.ts";
 
@@ -49,6 +53,7 @@ export function createReviewFinalizeTools(deps: CreateReviewFinalizeToolsDeps) {
     subtaskDelegationCallbacks,
     startReviewConsensusMeeting,
     processSubtaskDelegations,
+    inspectTaskGithubPrFeedbackGate,
   } = deps;
 
   function reconcileDelegatedSubtasksAfterRun(taskId: string, exitCode: number): void {
@@ -620,199 +625,288 @@ export function createReviewFinalizeTools(deps: CreateReviewFinalizeToolsDeps) {
     }
 
     const finalizeApprovedReview = () => {
-      const t = nowMs();
-      const latestTask = db
-        .prepare("SELECT status, department_id, project_id, workflow_pack_key FROM tasks WHERE id = ?")
-        .get(taskId) as
-          | { status: string; department_id: string | null }
-          | undefined;
-      if (!latestTask || latestTask.status !== "review") return;
-      upsertTaskRunSheet(db as any, {
-        taskId,
-        stage: "merging",
-        updatedAt: t,
-      });
+      void (async () => {
+        const t = nowMs();
+        const latestTask = db
+          .prepare("SELECT status, department_id, project_id, workflow_pack_key FROM tasks WHERE id = ?")
+          .get(taskId) as
+            | {
+                status: string;
+                department_id: string | null;
+                project_id: string | null;
+                workflow_pack_key: string | null;
+              }
+            | undefined;
+        if (!latestTask || latestTask.status !== "review") return;
 
-      // If task has a worktree, merge the branch back before marking done
-      const wtInfo = taskWorktrees.get(taskId);
-      let mergeNote = "";
-      if (wtInfo) {
-        // Check if this is a GitHub project → merge to dev + PR flow
-        const projectRow = currentTask.project_id
-          ? (db.prepare("SELECT github_repo FROM projects WHERE id = ?").get(currentTask.project_id) as
-              | { github_repo: string | null }
-              | undefined)
-          : undefined;
-        const githubRepo = projectRow?.github_repo;
+        // If task has a worktree, merge the branch back before marking done
+        const wtInfo = taskWorktrees.get(taskId);
+        let mergeNote = "";
+        if (wtInfo) {
+          // Check if this is a GitHub project → merge to dev + PR flow
+          const projectRow = currentTask.project_id
+            ? (db.prepare("SELECT github_repo FROM projects WHERE id = ?").get(currentTask.project_id) as
+                | { github_repo: string | null }
+                | undefined)
+            : undefined;
+          const githubRepo = projectRow?.github_repo;
 
-        const mergeResult = githubRepo
-          ? mergeToDevAndCreatePR(wtInfo.projectPath, taskId, githubRepo)
-          : mergeWorktree(wtInfo.projectPath, taskId);
+          if (
+            latestTask.workflow_pack_key === "development" &&
+            githubRepo &&
+            typeof inspectTaskGithubPrFeedbackGate === "function"
+          ) {
+            let gateSnapshot: TaskGithubPrGateSnapshot;
+            try {
+              gateSnapshot = await inspectTaskGithubPrFeedbackGate({
+                db: db as any,
+                githubRepo,
+                nowMs,
+              });
+            } catch (error) {
+              const reason = error instanceof Error ? error.message : String(error);
+              gateSnapshot = {
+                applicable: true,
+                status: "blocked",
+                pr_url: null,
+                pr_number: null,
+                review_decision: null,
+                unresolved_thread_count: 0,
+                change_requests_count: 0,
+                failing_check_count: 0,
+                pending_check_count: 0,
+                blocking_reasons: [`GitHub PR inspection failed: ${reason}`],
+                checked_at: t,
+              };
+            }
 
-        if (mergeResult.success) {
-          appendTaskLog(taskId, "system", `Git merge completed: ${mergeResult.message}`);
-          cleanupWorktree(wtInfo.projectPath, taskId);
-          appendTaskLog(taskId, "system", "Worktree cleaned up after successful merge");
-          mergeNote = githubRepo
-            ? pickL(
-                l(
-                  [" (dev 병합 + PR 생성)"],
-                  [" (merged to dev + PR)"],
-                  [" (dev マージ + PR)"],
-                  ["（合并到 dev + PR）"],
+            const gateSummary = summarizeTaskGithubPrGateSnapshot(gateSnapshot);
+            recordTaskQualityRun(db as any, {
+              taskId,
+              runType: "system",
+              name: "github_pr_feedback_gate",
+              status:
+                gateSnapshot.status === "blocked"
+                  ? "failed"
+                  : gateSnapshot.status === "passed"
+                    ? "passed"
+                    : "skipped",
+              summary: gateSummary,
+              metadata: gateSnapshot,
+              startedAt: t,
+              completedAt: t,
+              createdAt: t,
+            });
+            appendTaskLog(taskId, "system", gateSummary);
+
+            if (gateSnapshot.status === "blocked") {
+              upsertTaskRunSheet(db as any, {
+                taskId,
+                stage: "human_review",
+                updatedAt: t,
+              });
+              notifyCeo(
+                pickL(
+                  l(
+                    [
+                      `'${taskTitle}' 는 GitHub PR 피드백 게이트에 막혀 승인/머지가 보류되었습니다. ${gateSnapshot.blocking_reasons.join("; ") || gateSummary}`,
+                    ],
+                    [
+                      `'${taskTitle}' is blocked by the GitHub PR feedback gate. Approval/merge is on hold. ${gateSnapshot.blocking_reasons.join("; ") || gateSummary}`,
+                    ],
+                    [
+                      `'${taskTitle}' は GitHub PR フィードバックゲートにより承認/マージが保留されました。${gateSnapshot.blocking_reasons.join("; ") || gateSummary}`,
+                    ],
+                    [
+                      `'${taskTitle}' 被 GitHub PR 反馈闸门阻止，审批/合并已暂停。${gateSnapshot.blocking_reasons.join("; ") || gateSummary}`,
+                    ],
+                  ),
+                  lang,
                 ),
-                lang,
-              )
-            : pickL(l([" (병합 완료)"], [" (merged)"], [" (マージ完了)"], ["（已合并）"]), lang);
-        } else {
-          appendTaskLog(taskId, "system", `Git merge failed: ${mergeResult.message}`);
+                taskId,
+              );
+              return;
+            }
+          }
 
-          const conflictLeader = resolveScopedTeamLeader({
-            db: db as any,
-            findTeamLeader,
-            departmentId: latestTask.department_id,
-            projectId: currentTask.project_id,
-            sourceTaskId: taskId,
-            explicitPackKey: currentTask.workflow_pack_key,
-            scope: "pack",
+          upsertTaskRunSheet(db as any, {
+            taskId,
+            stage: "merging",
+            updatedAt: t,
           });
-          const conflictLeaderName = conflictLeader
-            ? getAgentDisplayName(conflictLeader, lang)
-            : pickL(l(["팀장"], ["Team Lead"], ["チームリーダー"], ["组长"]), lang);
-          const conflictFiles = mergeResult.conflicts?.length
-            ? pickL(
+
+          const mergeResult = githubRepo
+            ? mergeToDevAndCreatePR(wtInfo.projectPath, taskId, githubRepo)
+            : mergeWorktree(wtInfo.projectPath, taskId);
+
+          if (mergeResult.success) {
+            appendTaskLog(taskId, "system", `Git merge completed: ${mergeResult.message}`);
+            cleanupWorktree(wtInfo.projectPath, taskId);
+            appendTaskLog(taskId, "system", "Worktree cleaned up after successful merge");
+            mergeNote = githubRepo
+              ? pickL(
+                  l(
+                    [" (dev 병합 + PR 생성)"],
+                    [" (merged to dev + PR)"],
+                    [" (dev マージ + PR)"],
+                    ["（合并到 dev + PR）"],
+                  ),
+                  lang,
+                )
+              : pickL(l([" (병합 완료)"], [" (merged)"], [" (マージ完了)"], ["（已合并）"]), lang);
+          } else {
+            appendTaskLog(taskId, "system", `Git merge failed: ${mergeResult.message}`);
+
+            const conflictLeader = resolveScopedTeamLeader({
+              db: db as any,
+              findTeamLeader,
+              departmentId: latestTask.department_id,
+              projectId: currentTask.project_id,
+              sourceTaskId: taskId,
+              explicitPackKey: currentTask.workflow_pack_key,
+              scope: "pack",
+            });
+            const conflictLeaderName = conflictLeader
+              ? getAgentDisplayName(conflictLeader, lang)
+              : pickL(l(["팀장"], ["Team Lead"], ["チームリーダー"], ["组长"]), lang);
+            const conflictFiles = mergeResult.conflicts?.length
+              ? pickL(
+                  l(
+                    [`\n충돌 파일: ${mergeResult.conflicts.join(", ")}`],
+                    [`\nConflicting files: ${mergeResult.conflicts.join(", ")}`],
+                    [`\n競合ファイル: ${mergeResult.conflicts.join(", ")}`],
+                    [`\n冲突文件: ${mergeResult.conflicts.join(", ")}`],
+                  ),
+                  lang,
+                )
+              : "";
+            notifyCeo(
+              pickL(
                 l(
-                  [`\n충돌 파일: ${mergeResult.conflicts.join(", ")}`],
-                  [`\nConflicting files: ${mergeResult.conflicts.join(", ")}`],
-                  [`\n競合ファイル: ${mergeResult.conflicts.join(", ")}`],
-                  [`\n冲突文件: ${mergeResult.conflicts.join(", ")}`],
+                  [
+                    `${conflictLeaderName}: '${taskTitle}' 병합 중 충돌이 발생했습니다. 수동 해결이 필요합니다.${conflictFiles}\n브랜치: ${wtInfo.branchName}`,
+                  ],
+                  [
+                    `${conflictLeaderName}: Merge conflict while merging '${taskTitle}'. Manual resolution is required.${conflictFiles}\nBranch: ${wtInfo.branchName}`,
+                  ],
+                  [
+                    `${conflictLeaderName}: '${taskTitle}' のマージ中に競合が発生しました。手動解決が必要です。${conflictFiles}\nブランチ: ${wtInfo.branchName}`,
+                  ],
+                  [
+                    `${conflictLeaderName}：合并 '${taskTitle}' 时发生冲突，需要手动解决。${conflictFiles}\n分支: ${wtInfo.branchName}`,
+                  ],
                 ),
                 lang,
-              )
-            : "";
-          notifyCeo(
-            pickL(
+              ),
+              taskId,
+            );
+
+            mergeNote = pickL(
               l(
-                [
-                  `${conflictLeaderName}: '${taskTitle}' 병합 중 충돌이 발생했습니다. 수동 해결이 필요합니다.${conflictFiles}\n브랜치: ${wtInfo.branchName}`,
-                ],
-                [
-                  `${conflictLeaderName}: Merge conflict while merging '${taskTitle}'. Manual resolution is required.${conflictFiles}\nBranch: ${wtInfo.branchName}`,
-                ],
-                [
-                  `${conflictLeaderName}: '${taskTitle}' のマージ中に競合が発生しました。手動解決が必要です。${conflictFiles}\nブランチ: ${wtInfo.branchName}`,
-                ],
-                [
-                  `${conflictLeaderName}：合并 '${taskTitle}' 时发生冲突，需要手动解决。${conflictFiles}\n分支: ${wtInfo.branchName}`,
-                ],
+                [" (병합 충돌 - 수동 해결 필요)"],
+                [" (merge conflict - manual resolution required)"],
+                [" (マージ競合 - 手動解決が必要)"],
+                ["（合并冲突 - 需要手动解决）"],
               ),
               lang,
-            ),
-            taskId,
-          );
-
-          mergeNote = pickL(
-            l(
-              [" (병합 충돌 - 수동 해결 필요)"],
-              [" (merge conflict - manual resolution required)"],
-              [" (マージ競合 - 手動解決が必要)"],
-              ["（合并冲突 - 需要手动解决）"],
-            ),
-            lang,
-          );
-        }
-      }
-
-      db.prepare("UPDATE tasks SET status = 'done', completed_at = ?, updated_at = ? WHERE id = ?").run(t, t, taskId);
-      setTaskCreationAuditCompletion(taskId, true);
-      upsertTaskRunSheet(db as any, {
-        taskId,
-        stage: "done",
-        updatedAt: t,
-      });
-
-      appendTaskLog(taskId, "system", "Status → done (all leaders approved)");
-      endTaskExecutionSession(taskId, "task_done");
-
-      const updatedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId);
-      broadcast("task_update", updatedTask);
-      notifyTaskStatus(taskId, taskTitle, "done", lang);
-
-      refreshCliUsageData()
-        .then((usage: unknown) => broadcast("cli_usage_update", usage))
-        .catch(() => {});
-      const deferTaskReport = shouldDeferTaskReportUntilPlanningArchive(currentTask);
-      if (deferTaskReport) {
-        appendTaskLog(taskId, "system", "Task report popup deferred until planning consolidated archive is ready");
-      } else {
-        emitTaskReportEvent(taskId);
-      }
-
-      const leader = resolveScopedTeamLeader({
-        db: db as any,
-        findTeamLeader,
-        departmentId: latestTask.department_id,
-        projectId: currentTask.project_id,
-        sourceTaskId: taskId,
-        explicitPackKey: currentTask.workflow_pack_key,
-        scope: "pack",
-      });
-      const leaderName = leader
-        ? getAgentDisplayName(leader, lang)
-        : pickL(l(["팀장"], ["Team Lead"], ["チームリーダー"], ["组长"]), lang);
-      const subtaskProgressSummary = formatTaskSubtaskProgressSummary(taskId, lang);
-      const progressSuffix = subtaskProgressSummary
-        ? `\n${pickL(l(["보완/협업 완료 현황"], ["Remediation/Collaboration completion"], ["補完/協業 完了状況"], ["整改/协作完成情况"]), lang)}\n${subtaskProgressSummary}`
-        : "";
-      notifyCeo(
-        pickL(
-          l(
-            [`${leaderName}: '${taskTitle}' 최종 승인 완료 보고드립니다.${mergeNote}${progressSuffix}`],
-            [`${leaderName}: Final approval completed for '${taskTitle}'.${mergeNote}${progressSuffix}`],
-            [`${leaderName}: '${taskTitle}' の最終承認が完了しました。${mergeNote}${progressSuffix}`],
-            [`${leaderName}：'${taskTitle}' 最终审批已完成。${mergeNote}${progressSuffix}`],
-          ),
-          lang,
-        ),
-        taskId,
-      );
-
-      reviewRoundState.delete(taskId);
-      reviewInFlight.delete(taskId);
-
-      // Parent final approval is the merge point for collaboration children in review.
-      if (!currentTask.source_task_id) {
-        const childRows = db
-          .prepare("SELECT id, title FROM tasks WHERE source_task_id = ? AND status = 'review' ORDER BY created_at ASC")
-          .all(taskId) as Array<{ id: string; title: string }>;
-        if (childRows.length > 0) {
-          appendTaskLog(
-            taskId,
-            "system",
-            `Finalization: closing ${childRows.length} collaboration child task(s) after parent review`,
-          );
-          for (const child of childRows) {
-            finishReview(child.id, child.title);
+            );
           }
         }
-        // Generate and archive one consolidated project report via planning leader model.
-        void archivePlanningConsolidatedReport(taskId);
-      }
 
-      const nextCallback = crossDeptNextCallbacks.get(taskId);
-      if (nextCallback) {
-        crossDeptNextCallbacks.delete(taskId);
-        nextCallback();
-      } else {
-        // pause/resume or restart can drop in-memory callback chain; reconstruct from DB when possible
-        recoverCrossDeptQueueAfterMissingCallback(taskId);
-      }
+        db.prepare("UPDATE tasks SET status = 'done', completed_at = ?, updated_at = ? WHERE id = ?").run(t, t, taskId);
+        setTaskCreationAuditCompletion(taskId, true);
+        upsertTaskRunSheet(db as any, {
+          taskId,
+          stage: "done",
+          updatedAt: t,
+        });
 
-      const subtaskNext = subtaskDelegationCallbacks.get(taskId);
-      if (subtaskNext) {
-        subtaskDelegationCallbacks.delete(taskId);
-        subtaskNext();
-      }
+        appendTaskLog(taskId, "system", "Status → done (all leaders approved)");
+        endTaskExecutionSession(taskId, "task_done");
+
+        const updatedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId);
+        broadcast("task_update", updatedTask);
+        notifyTaskStatus(taskId, taskTitle, "done", lang);
+
+        refreshCliUsageData()
+          .then((usage: unknown) => broadcast("cli_usage_update", usage))
+          .catch(() => {});
+        const deferTaskReport = shouldDeferTaskReportUntilPlanningArchive(currentTask);
+        if (deferTaskReport) {
+          appendTaskLog(taskId, "system", "Task report popup deferred until planning consolidated archive is ready");
+        } else {
+          emitTaskReportEvent(taskId);
+        }
+
+        const leader = resolveScopedTeamLeader({
+          db: db as any,
+          findTeamLeader,
+          departmentId: latestTask.department_id,
+          projectId: currentTask.project_id,
+          sourceTaskId: taskId,
+          explicitPackKey: currentTask.workflow_pack_key,
+          scope: "pack",
+        });
+        const leaderName = leader
+          ? getAgentDisplayName(leader, lang)
+          : pickL(l(["팀장"], ["Team Lead"], ["チームリーダー"], ["组长"]), lang);
+        const subtaskProgressSummary = formatTaskSubtaskProgressSummary(taskId, lang);
+        const progressSuffix = subtaskProgressSummary
+          ? `\n${pickL(l(["보완/협업 완료 현황"], ["Remediation/Collaboration completion"], ["補完/協業 完了状況"], ["整改/协作完成情况"]), lang)}\n${subtaskProgressSummary}`
+          : "";
+        notifyCeo(
+          pickL(
+            l(
+              [`${leaderName}: '${taskTitle}' 최종 승인 완료 보고드립니다.${mergeNote}${progressSuffix}`],
+              [`${leaderName}: Final approval completed for '${taskTitle}'.${mergeNote}${progressSuffix}`],
+              [`${leaderName}: '${taskTitle}' の最終承認が完了しました。${mergeNote}${progressSuffix}`],
+              [`${leaderName}：'${taskTitle}' 最终审批已完成。${mergeNote}${progressSuffix}`],
+            ),
+            lang,
+          ),
+          taskId,
+        );
+
+        reviewRoundState.delete(taskId);
+        reviewInFlight.delete(taskId);
+
+        // Parent final approval is the merge point for collaboration children in review.
+        if (!currentTask.source_task_id) {
+          const childRows = db
+            .prepare("SELECT id, title FROM tasks WHERE source_task_id = ? AND status = 'review' ORDER BY created_at ASC")
+            .all(taskId) as Array<{ id: string; title: string }>;
+          if (childRows.length > 0) {
+            appendTaskLog(
+              taskId,
+              "system",
+              `Finalization: closing ${childRows.length} collaboration child task(s) after parent review`,
+            );
+            for (const child of childRows) {
+              finishReview(child.id, child.title);
+            }
+          }
+          // Generate and archive one consolidated project report via planning leader model.
+          void archivePlanningConsolidatedReport(taskId);
+        }
+
+        const nextCallback = crossDeptNextCallbacks.get(taskId);
+        if (nextCallback) {
+          crossDeptNextCallbacks.delete(taskId);
+          nextCallback();
+        } else {
+          // pause/resume or restart can drop in-memory callback chain; reconstruct from DB when possible
+          recoverCrossDeptQueueAfterMissingCallback(taskId);
+        }
+
+        const subtaskNext = subtaskDelegationCallbacks.get(taskId);
+        if (subtaskNext) {
+          subtaskDelegationCallbacks.delete(taskId);
+          subtaskNext();
+        }
+      })().catch((error: unknown) => {
+        const message = error instanceof Error ? error.stack || error.message : String(error);
+        appendTaskLog(taskId, "error", `Review finalization error: ${message}`);
+      });
     };
 
     if (currentTask.source_task_id) {

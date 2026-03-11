@@ -319,6 +319,17 @@ function setupDb(): DatabaseSync {
         waiting_on_child_reviews: false,
         pending_retry: true,
         merge_status: "merged",
+        pr_feedback_gate: {
+          applicable: true,
+          status: "passed",
+          pr_url: "https://github.com/acme/repo/pull/12",
+          unresolved_thread_count: 0,
+          change_requests_count: 0,
+          failing_check_count: 0,
+          pending_check_count: 0,
+          blocking_reasons: [],
+          checked_at: 1990,
+        },
       },
       handoff: { status: "done", summary: "done" },
       timeline: { created_at: 1000, started_at: 1100, review_entered_at: 1900, completed_at: 2000, updated_at: 2000 },
@@ -381,6 +392,12 @@ describe("task report execution block", () => {
           stage: "done",
           synthetic: false,
           summary_markdown: "# Development Run Sheet",
+        }),
+      );
+      expect(payload.development_run_sheet.snapshot.review_checklist.pr_feedback_gate).toEqual(
+        expect.objectContaining({
+          status: "passed",
+          pr_url: "https://github.com/acme/repo/pull/12",
         }),
       );
       expect(payload.quality).toEqual({

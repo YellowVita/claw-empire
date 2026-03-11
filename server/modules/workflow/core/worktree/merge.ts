@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { decryptSecret } from "../../../../oauth/helpers.ts";
+import { buildGitHubApiHeaders, getGitHubAccessToken } from "../../../github/auth.ts";
 import { getTaskShortId, type WorktreeInfo } from "./lifecycle.ts";
 import {
   autoCommitWorktreePendingChanges,
@@ -188,20 +188,6 @@ export function createWorktreeMergeTools(deps: CreateWorktreeMergeToolsDeps) {
     }
   }
 
-  function getGitHubToken(): string | null {
-    const row = db
-      .prepare(
-        "SELECT access_token_enc FROM oauth_accounts WHERE provider = 'github' AND status = 'active' ORDER BY priority ASC, updated_at DESC LIMIT 1",
-      )
-      .get() as { access_token_enc: string } | undefined;
-    if (!row?.access_token_enc) return null;
-    try {
-      return decryptSecret(row.access_token_enc);
-    } catch {
-      return null;
-    }
-  }
-
   function mergeToDevAndCreatePR(
     projectPath: string,
     taskId: string,
@@ -266,7 +252,7 @@ export function createWorktreeMergeTools(deps: CreateWorktreeMergeToolsDeps) {
         timeout: 30000,
       });
 
-      const token = getGitHubToken();
+      const token = getGitHubAccessToken(db);
       if (token) {
         const remoteUrl = `https://x-access-token:${token}@github.com/${githubRepo}.git`;
         execFileSync("git", ["remote", "set-url", "origin", remoteUrl], {
@@ -287,7 +273,7 @@ export function createWorktreeMergeTools(deps: CreateWorktreeMergeToolsDeps) {
           try {
             const listRes = await fetch(
               `https://api.github.com/repos/${owner}/${repo}/pulls?head=${owner}:dev&base=main&state=open`,
-              { headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" } },
+              { headers: buildGitHubApiHeaders(token) },
             );
             const existingPRs = await listRes.json();
             if (Array.isArray(existingPRs) && existingPRs.length > 0) {
@@ -298,8 +284,7 @@ export function createWorktreeMergeTools(deps: CreateWorktreeMergeToolsDeps) {
               const createRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls`, {
                 method: "POST",
                 headers: {
-                  Authorization: `Bearer ${token}`,
-                  Accept: "application/vnd.github+json",
+                  ...buildGitHubApiHeaders(token),
                   "Content-Type": "application/json",
                 },
                 body: JSON.stringify({

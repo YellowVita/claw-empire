@@ -167,6 +167,29 @@ describe("task run sheets", () => {
         "INSERT INTO task_quality_runs (id, task_id, quality_item_id, run_type, name, status, summary, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
       ).run("run-1", "task-1", null, "command", "pnpm test", "passed", "42 passed", 1810);
       db.prepare(
+        "INSERT INTO task_quality_runs (id, task_id, quality_item_id, run_type, name, status, summary, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      ).run(
+        "run-2",
+        "task-1",
+        null,
+        "system",
+        "github_pr_feedback_gate",
+        "failed",
+        "GitHub PR feedback gate blocked",
+        JSON.stringify({
+          applicable: true,
+          status: "blocked",
+          pr_url: "https://github.com/acme/repo/pull/12",
+          unresolved_thread_count: 2,
+          change_requests_count: 1,
+          failing_check_count: 1,
+          pending_check_count: 0,
+          blocking_reasons: ["Unresolved review threads: 2"],
+          checked_at: 1825,
+        }),
+        1825,
+      );
+      db.prepare(
         "INSERT INTO task_artifacts (id, task_id, quality_item_id, kind, title, path, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
       ).run("artifact-1", "task-1", null, "file", "coverage.txt", "/tmp/project/coverage.txt", "system", 1820);
 
@@ -188,8 +211,21 @@ describe("task run sheets", () => {
       expect(row?.snapshot.reproduction.status).toBe("recorded");
       expect(row?.snapshot.validation.recent_runs[0]).toEqual(
         expect.objectContaining({
+          name: "github_pr_feedback_gate",
+          status: "failed",
+        }),
+      );
+      expect(row?.snapshot.validation.recent_runs[1]).toEqual(
+        expect.objectContaining({
           name: "pnpm test",
           status: "passed",
+        }),
+      );
+      expect(row?.snapshot.review_checklist.pr_feedback_gate).toEqual(
+        expect.objectContaining({
+          status: "blocked",
+          unresolved_thread_count: 2,
+          pr_url: "https://github.com/acme/repo/pull/12",
         }),
       );
       expect(row?.snapshot.validation.artifacts[0]).toEqual(
@@ -199,6 +235,7 @@ describe("task run sheets", () => {
       );
       expect(row?.summary_markdown).toContain("## Validation");
       expect(row?.summary_markdown).toContain("pnpm test");
+      expect(row?.summary_markdown).toContain("PR Feedback Gate: blocked");
     } finally {
       db.close();
     }
@@ -229,6 +266,7 @@ describe("task run sheets", () => {
           waiting_on_child_reviews: false,
           pending_retry: false,
           merge_status: "not_started",
+          pr_feedback_gate: null,
         },
         handoff: { status: "in_progress", summary: "Working" },
         timeline: {
@@ -264,6 +302,7 @@ describe("task run sheets", () => {
           waiting_on_child_reviews: false,
           pending_retry: false,
           merge_status: "not_started",
+          pr_feedback_gate: null,
         },
         handoff: { status: "in_progress", summary: "Working" },
         timeline: {

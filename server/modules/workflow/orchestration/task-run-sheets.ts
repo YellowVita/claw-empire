@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { buildTaskQualityPayload } from "../../routes/core/tasks/quality.ts";
+import type { TaskQualityRun } from "./task-quality-evidence.ts";
 import { summarizeTaskExecutionEvents } from "./task-execution-events.ts";
 
 type DbLike = Pick<DatabaseSync, "prepare">;
@@ -14,6 +15,18 @@ export type TaskRunSheetStage =
   | "rework";
 
 export type TaskRunSheetEvidenceState = "recorded" | "not_recorded";
+
+export type TaskRunSheetPrFeedbackGate = {
+  applicable: boolean;
+  status: "passed" | "blocked" | "skipped";
+  pr_url: string | null;
+  unresolved_thread_count: number;
+  change_requests_count: number;
+  failing_check_count: number;
+  pending_check_count: number;
+  blocking_reasons: string[];
+  checked_at: number | null;
+};
 
 export type TaskRunSheetSnapshot = {
   current_plan: {
@@ -59,6 +72,7 @@ export type TaskRunSheetSnapshot = {
     waiting_on_child_reviews: boolean;
     pending_retry: boolean;
     merge_status: "not_started" | "merged" | "failed";
+    pr_feedback_gate: TaskRunSheetPrFeedbackGate | null;
   };
   handoff: {
     status: string;
@@ -172,6 +186,7 @@ function buildEmptySnapshot(): TaskRunSheetSnapshot {
       waiting_on_child_reviews: false,
       pending_retry: false,
       merge_status: "not_started",
+      pr_feedback_gate: null,
     },
     handoff: {
       status: "",
@@ -372,6 +387,32 @@ function extractImplementationHighlights(logs: TaskLogRow[]): string[] {
   return highlights;
 }
 
+function extractGithubPrFeedbackGate(runs: TaskQualityRun[]): TaskRunSheetPrFeedbackGate | null {
+  const gateRun = runs.find((run) => run.name === "github_pr_feedback_gate");
+  if (!gateRun?.metadata) return null;
+  const metadata = gateRun.metadata;
+  const blockingReasons = Array.isArray(metadata.blocking_reasons)
+    ? metadata.blocking_reasons
+        .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
+        .slice(0, 6)
+    : [];
+  const status =
+    gateRun.status === "passed" || gateRun.status === "failed" || gateRun.status === "skipped"
+      ? gateRun.status
+      : "skipped";
+  return {
+    applicable: metadata.applicable !== false,
+    status: status === "failed" ? "blocked" : status,
+    pr_url: typeof metadata.pr_url === "string" && metadata.pr_url.trim() ? metadata.pr_url : null,
+    unresolved_thread_count: Number(metadata.unresolved_thread_count ?? 0) || 0,
+    change_requests_count: Number(metadata.change_requests_count ?? 0) || 0,
+    failing_check_count: Number(metadata.failing_check_count ?? 0) || 0,
+    pending_check_count: Number(metadata.pending_check_count ?? 0) || 0,
+    blocking_reasons: blockingReasons,
+    checked_at: Number(metadata.checked_at ?? gateRun.created_at ?? 0) || null,
+  };
+}
+
 function countUnfinishedSubtasks(db: DbLike, taskId: string): number {
   try {
     const row = db
@@ -471,6 +512,17 @@ export function renderTaskRunSheetMarkdown(input: {
     `- Waiting On Child Reviews: ${snapshot.review_checklist.waiting_on_child_reviews ? "yes" : "no"}`,
     `- Pending Retry: ${snapshot.review_checklist.pending_retry ? "yes" : "no"}`,
     `- Merge Status: ${snapshot.review_checklist.merge_status}`,
+    `- PR Feedback Gate: ${snapshot.review_checklist.pr_feedback_gate?.status || "-"}`,
+    `- PR URL: ${snapshot.review_checklist.pr_feedback_gate?.pr_url || "-"}`,
+    `- Unresolved Threads: ${snapshot.review_checklist.pr_feedback_gate?.unresolved_thread_count ?? "-"}`,
+    `- Change Requests: ${snapshot.review_checklist.pr_feedback_gate?.change_requests_count ?? "-"}`,
+    `- Failing Checks: ${snapshot.review_checklist.pr_feedback_gate?.failing_check_count ?? "-"}`,
+    `- Pending Checks: ${snapshot.review_checklist.pr_feedback_gate?.pending_check_count ?? "-"}`,
+    ...(
+      snapshot.review_checklist.pr_feedback_gate?.blocking_reasons?.length
+        ? snapshot.review_checklist.pr_feedback_gate.blocking_reasons.map((reason) => `- PR Gate Reason: ${reason}`)
+        : ["- PR Gate Reason: -"]
+    ),
     "",
     "## Handoff",
     `- Status: ${snapshot.handoff.status || "-"}`,
@@ -498,6 +550,7 @@ export function buildTaskRunSheetSnapshot(db: DbLike, params: {
   const latestReport = loadLatestReportMessage(db, task.id);
   const quality = buildTaskQualityPayload(db as any, task.id);
   const executionSummary = summarizeTaskExecutionEvents(db as any, task.id);
+  const prFeedbackGate = extractGithubPrFeedbackGate(quality.runs as TaskQualityRun[]);
   const reviewEnteredAt = extractReviewEnteredAt(logs);
   const unfinishedSubtasks = countUnfinishedSubtasks(db, task.id);
   const waitingChildReviews = countChildTasksWaitingForReview(db, task.id, task.source_task_id);
@@ -554,6 +607,7 @@ export function buildTaskRunSheetSnapshot(db: DbLike, params: {
       waiting_on_child_reviews: waitingChildReviews > 0,
       pending_retry: executionSummary.pending_retry,
       merge_status: extractMergeStatus(logs),
+      pr_feedback_gate: prFeedbackGate,
     },
     handoff: {
       status: task.status,
