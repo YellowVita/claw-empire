@@ -184,6 +184,8 @@ describe("task run sheets", () => {
           change_requests_count: 1,
           failing_check_count: 1,
           pending_check_count: 0,
+          ignored_check_count: 2,
+          ignored_check_names: ["optional / preview", "optional / smoke"],
           blocking_reasons: ["Unresolved review threads: 2"],
           checked_at: 1825,
         }),
@@ -226,6 +228,8 @@ describe("task run sheets", () => {
           status: "blocked",
           unresolved_thread_count: 2,
           pr_url: "https://github.com/acme/repo/pull/12",
+          ignored_check_count: 2,
+          ignored_check_names: ["optional / preview", "optional / smoke"],
         }),
       );
       expect(row?.snapshot.validation.artifacts[0]).toEqual(
@@ -236,6 +240,8 @@ describe("task run sheets", () => {
       expect(row?.summary_markdown).toContain("## Validation");
       expect(row?.summary_markdown).toContain("pnpm test");
       expect(row?.summary_markdown).toContain("PR Feedback Gate: blocked");
+      expect(row?.summary_markdown).toContain("Ignored Optional Checks: 2");
+      expect(row?.summary_markdown).toContain("Ignored Check: optional / preview");
     } finally {
       db.close();
     }

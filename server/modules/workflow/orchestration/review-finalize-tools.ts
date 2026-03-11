@@ -7,6 +7,7 @@ import {
 } from "../packs/video-artifact.ts";
 import { evaluateRemotionOnlyGateFromLogFiles } from "../packs/video-render-engine-gate.ts";
 import { resolveScopedTeamLeader } from "../packs/agent-scope.ts";
+import { readProjectDevelopmentPrFeedbackGatePolicy } from "../packs/project-config.ts";
 import { readYoloModeEnabled } from "../../routes/ops/messages/decision-inbox/yolo-mode.ts";
 import { reconcileVideoRenderDelegationState } from "./video-render-delegation-state.ts";
 import {
@@ -628,13 +629,14 @@ export function createReviewFinalizeTools(deps: CreateReviewFinalizeToolsDeps) {
       void (async () => {
         const t = nowMs();
         const latestTask = db
-          .prepare("SELECT status, department_id, project_id, workflow_pack_key FROM tasks WHERE id = ?")
+          .prepare("SELECT status, department_id, project_id, workflow_pack_key, project_path FROM tasks WHERE id = ?")
           .get(taskId) as
             | {
                 status: string;
                 department_id: string | null;
                 project_id: string | null;
                 workflow_pack_key: string | null;
+                project_path: string | null;
               }
             | undefined;
         if (!latestTask || latestTask.status !== "review") return;
@@ -656,12 +658,17 @@ export function createReviewFinalizeTools(deps: CreateReviewFinalizeToolsDeps) {
             githubRepo &&
             typeof inspectTaskGithubPrFeedbackGate === "function"
           ) {
+            const prGatePolicyResult = readProjectDevelopmentPrFeedbackGatePolicy(latestTask.project_path ?? "");
+            for (const warning of prGatePolicyResult.warnings) {
+              appendTaskLog(taskId, "system", `GitHub PR gate policy warning: ${warning}`);
+            }
             let gateSnapshot: TaskGithubPrGateSnapshot;
             try {
               gateSnapshot = await inspectTaskGithubPrFeedbackGate({
                 db: db as any,
                 githubRepo,
                 nowMs,
+                policy: prGatePolicyResult.policy,
               });
             } catch (error) {
               const reason = error instanceof Error ? error.message : String(error);
@@ -675,6 +682,8 @@ export function createReviewFinalizeTools(deps: CreateReviewFinalizeToolsDeps) {
                 change_requests_count: 0,
                 failing_check_count: 0,
                 pending_check_count: 0,
+                ignored_check_count: 0,
+                ignored_check_names: [],
                 blocking_reasons: [`GitHub PR inspection failed: ${reason}`],
                 checked_at: t,
               };

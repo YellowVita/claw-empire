@@ -1,8 +1,27 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createReviewFinalizeTools } from "./review-finalize-tools.ts";
 
-function createDb(): DatabaseSync {
+const tempDirs: string[] = [];
+
+function createTempDir(prefix: string): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
+}
+
+afterEach(() => {
+  while (tempDirs.length > 0) {
+    const dir = tempDirs.pop();
+    if (!dir) continue;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+function createDb(projectPath = "/tmp/project"): DatabaseSync {
   const db = new DatabaseSync(":memory:");
   db.exec(`
     CREATE TABLE tasks (
@@ -132,19 +151,37 @@ function createDb(): DatabaseSync {
         workflow_pack_key, project_path, result, created_at, started_at, updated_at
       ) VALUES (?, ?, ?, 'review', 'planning', NULL, 'project-1', 'development', ?, ?, 1, 2, 3)
     `,
-  ).run("task-1", "Ship feature", "Fix production issue", "/tmp/project", "Result summary");
+  ).run("task-1", "Ship feature", "Fix production issue", projectPath, "Result summary");
   return db;
 }
 
 function createTools(options?: {
   inspectSnapshot?: any;
   mergeResult?: { success: boolean; message: string };
+  projectPath?: string;
 }) {
-  const db = createDb();
+  const db = createDb(options?.projectPath);
   const mergeToDevAndCreatePR = vi.fn(() => options?.mergeResult ?? { success: true, message: "merged to dev" });
   const startReviewConsensusMeeting = vi.fn((_taskId, _taskTitle, _departmentId, onApproved) => {
     onApproved();
   });
+  const inspectTaskGithubPrFeedbackGate = vi.fn(async () =>
+    options?.inspectSnapshot ?? {
+      applicable: true,
+      status: "passed",
+      pr_url: "https://github.com/acme/repo/pull/12",
+      pr_number: 12,
+      review_decision: "APPROVED",
+      unresolved_thread_count: 0,
+      change_requests_count: 0,
+      failing_check_count: 0,
+      pending_check_count: 0,
+      ignored_check_count: 0,
+      ignored_check_names: [],
+      blocking_reasons: [],
+      checked_at: 10_000,
+    },
+  );
 
   const tools = createReviewFinalizeTools({
     db,
@@ -189,24 +226,10 @@ function createTools(options?: {
     subtaskDelegationCallbacks: new Map<string, () => void>(),
     startReviewConsensusMeeting,
     processSubtaskDelegations: vi.fn(),
-    inspectTaskGithubPrFeedbackGate: vi.fn(async () =>
-      options?.inspectSnapshot ?? {
-        applicable: true,
-        status: "passed",
-        pr_url: "https://github.com/acme/repo/pull/12",
-        pr_number: 12,
-        review_decision: "APPROVED",
-        unresolved_thread_count: 0,
-        change_requests_count: 0,
-        failing_check_count: 0,
-        pending_check_count: 0,
-        blocking_reasons: [],
-        checked_at: 10_000,
-      },
-    ),
+    inspectTaskGithubPrFeedbackGate,
   } as any);
 
-  return { db, tools, mergeToDevAndCreatePR, startReviewConsensusMeeting };
+  return { db, tools, mergeToDevAndCreatePR, startReviewConsensusMeeting, inspectTaskGithubPrFeedbackGate };
 }
 
 describe("review finalize GitHub PR gate", () => {
@@ -273,6 +296,41 @@ describe("review finalize GitHub PR gate", () => {
       });
       expect(runSheet?.stage).toBe("done");
       expect(mergeToDevAndCreatePR).toHaveBeenCalledTimes(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("review finalize는 project workflow policy를 읽어 gate helper에 전달한다", async () => {
+    const projectDir = createTempDir("claw-pr-gate-policy-");
+    fs.writeFileSync(
+      path.join(projectDir, "WORKFLOW.md"),
+      `---
+developmentPrFeedbackGate:
+  ignoredCheckNames:
+    - preview / deploy
+  ignoredCheckPrefixes:
+    - optional /
+---
+`,
+      "utf8",
+    );
+
+    const { db, tools, inspectTaskGithubPrFeedbackGate } = createTools({ projectPath: projectDir });
+    try {
+      tools.finishReview("task-1", "Ship feature", { bypassProjectDecisionGate: true, trigger: "test" });
+      await vi.waitFor(() => {
+        expect(inspectTaskGithubPrFeedbackGate).toHaveBeenCalledTimes(1);
+      });
+      expect(inspectTaskGithubPrFeedbackGate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          githubRepo: "acme/repo",
+          policy: {
+            ignoredCheckNames: ["preview / deploy"],
+            ignoredCheckPrefixes: ["optional /"],
+          },
+        }),
+      );
     } finally {
       db.close();
     }

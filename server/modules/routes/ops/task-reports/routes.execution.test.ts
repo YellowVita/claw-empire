@@ -327,6 +327,8 @@ function setupDb(): DatabaseSync {
           change_requests_count: 0,
           failing_check_count: 0,
           pending_check_count: 0,
+          ignored_check_count: 2,
+          ignored_check_names: ["optional / preview", "optional / smoke"],
           blocking_reasons: [],
           checked_at: 1990,
         },
@@ -398,6 +400,8 @@ describe("task report execution block", () => {
         expect.objectContaining({
           status: "passed",
           pr_url: "https://github.com/acme/repo/pull/12",
+          ignored_check_count: 2,
+          ignored_check_names: ["optional / preview", "optional / smoke"],
         }),
       );
       expect(payload.quality).toEqual({

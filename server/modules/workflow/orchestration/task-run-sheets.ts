@@ -24,6 +24,8 @@ export type TaskRunSheetPrFeedbackGate = {
   change_requests_count: number;
   failing_check_count: number;
   pending_check_count: number;
+  ignored_check_count: number;
+  ignored_check_names: string[];
   blocking_reasons: string[];
   checked_at: number | null;
 };
@@ -396,6 +398,11 @@ function extractGithubPrFeedbackGate(runs: TaskQualityRun[]): TaskRunSheetPrFeed
         .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
         .slice(0, 6)
     : [];
+  const ignoredCheckNames = Array.isArray(metadata.ignored_check_names)
+    ? metadata.ignored_check_names
+        .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
+        .slice(0, 10)
+    : [];
   const status =
     gateRun.status === "passed" || gateRun.status === "failed" || gateRun.status === "skipped"
       ? gateRun.status
@@ -408,6 +415,8 @@ function extractGithubPrFeedbackGate(runs: TaskQualityRun[]): TaskRunSheetPrFeed
     change_requests_count: Number(metadata.change_requests_count ?? 0) || 0,
     failing_check_count: Number(metadata.failing_check_count ?? 0) || 0,
     pending_check_count: Number(metadata.pending_check_count ?? 0) || 0,
+    ignored_check_count: Number(metadata.ignored_check_count ?? ignoredCheckNames.length ?? 0) || 0,
+    ignored_check_names: ignoredCheckNames,
     blocking_reasons: blockingReasons,
     checked_at: Number(metadata.checked_at ?? gateRun.created_at ?? 0) || null,
   };
@@ -518,6 +527,12 @@ export function renderTaskRunSheetMarkdown(input: {
     `- Change Requests: ${snapshot.review_checklist.pr_feedback_gate?.change_requests_count ?? "-"}`,
     `- Failing Checks: ${snapshot.review_checklist.pr_feedback_gate?.failing_check_count ?? "-"}`,
     `- Pending Checks: ${snapshot.review_checklist.pr_feedback_gate?.pending_check_count ?? "-"}`,
+    `- Ignored Optional Checks: ${snapshot.review_checklist.pr_feedback_gate?.ignored_check_count ?? "-"}`,
+    ...(
+      snapshot.review_checklist.pr_feedback_gate?.ignored_check_names?.length
+        ? snapshot.review_checklist.pr_feedback_gate.ignored_check_names.map((name) => `- Ignored Check: ${name}`)
+        : ["- Ignored Check: -"]
+    ),
     ...(
       snapshot.review_checklist.pr_feedback_gate?.blocking_reasons?.length
         ? snapshot.review_checklist.pr_feedback_gate.blocking_reasons.map((reason) => `- PR Gate Reason: ${reason}`)

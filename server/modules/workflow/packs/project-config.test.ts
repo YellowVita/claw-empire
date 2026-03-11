@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  readProjectDevelopmentPrFeedbackGatePolicy,
   readProjectWorkflowConfig,
   readProjectWorkflowDefaultPackKey,
   readProjectWorkflowPackOverride,
@@ -198,5 +199,71 @@ defaultWorkflowPackKey: [broken
       packKey: "report",
       warnings: ["WORKFLOW.md parse failed, falling back to .claw-workflow.json/global"],
     });
+  });
+
+  it("developmentPrFeedbackGate는 WORKFLOW.md가 JSON보다 우선하고 필드 단위로 shallow merge 된다", () => {
+    const projectDir = createTempDir("claw-workflow-pr-gate-");
+    fs.writeFileSync(
+      path.join(projectDir, ".claw-workflow.json"),
+      JSON.stringify(
+        {
+          developmentPrFeedbackGate: {
+            ignoredCheckNames: ["preview / deploy", "preview / deploy"],
+            ignoredCheckPrefixes: ["optional /"],
+          },
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+    fs.writeFileSync(
+      path.join(projectDir, "WORKFLOW.md"),
+      `---
+developmentPrFeedbackGate:
+  ignoredCheckNames:
+    - ci / flaky
+---
+
+Project policy
+`,
+      "utf8",
+    );
+
+    const result = readProjectDevelopmentPrFeedbackGatePolicy(projectDir);
+    expect(result.policy).toEqual({
+      ignoredCheckNames: ["ci / flaky"],
+      ignoredCheckPrefixes: ["optional /"],
+    });
+    expect(result.warnings).toEqual([]);
+    expect(result.configSources).toEqual(["workflow_md", "claw_workflow_json"]);
+  });
+
+  it("invalid developmentPrFeedbackGate entries는 warning 후 무시한다", () => {
+    const projectDir = createTempDir("claw-workflow-pr-gate-invalid-");
+    fs.writeFileSync(
+      path.join(projectDir, ".claw-workflow.json"),
+      JSON.stringify(
+        {
+          developmentPrFeedbackGate: {
+            ignoredCheckNames: ["preview / deploy", 42, ""],
+            ignoredCheckPrefixes: "optional /",
+          },
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
+    const result = readProjectDevelopmentPrFeedbackGatePolicy(projectDir);
+    expect(result.policy).toEqual({
+      ignoredCheckNames: ["preview / deploy"],
+      ignoredCheckPrefixes: [],
+    });
+    expect(result.warnings).toEqual([
+      ".claw-workflow.json invalid developmentPrFeedbackGate.ignoredCheckPrefixes, ignoring",
+      ".claw-workflow.json invalid developmentPrFeedbackGate.ignoredCheckNames entries, ignoring non-string values",
+    ]);
   });
 });

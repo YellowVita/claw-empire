@@ -96,8 +96,8 @@ describe("github PR feedback gate", () => {
         return new Response(
           JSON.stringify({
             check_runs: [
-              { status: "completed", conclusion: "failure" },
-              { status: "in_progress", conclusion: null },
+              { name: "required / unit", status: "completed", conclusion: "failure" },
+              { name: "required / e2e", status: "in_progress", conclusion: null },
             ],
           }),
           { status: 200, headers: { "Content-Type": "application/json" } },
@@ -281,6 +281,98 @@ describe("github PR feedback gate", () => {
       });
       expect(snapshot.status).toBe("blocked");
       expect(snapshot.blocking_reasons).toContain("GitHub token is unavailable");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("ignored check policy는 check run name과 status context 모두에 적용된다", async () => {
+    const db = createDb();
+    const fetchImpl = async (input: unknown) => {
+      const url = String(input);
+      if (url.includes("/pulls?head=")) {
+        return new Response(
+          JSON.stringify([
+            {
+              number: 21,
+              html_url: "https://github.com/acme/repo/pull/21",
+              head: { sha: "def456" },
+            },
+          ]),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (url.endsWith("/graphql")) {
+        return new Response(
+          JSON.stringify({
+            data: {
+              repository: {
+                pullRequest: {
+                  url: "https://github.com/acme/repo/pull/21",
+                  reviewDecision: "APPROVED",
+                  reviewThreads: {
+                    nodes: [],
+                    pageInfo: {
+                      hasNextPage: false,
+                      endCursor: null,
+                    },
+                  },
+                },
+              },
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (url.includes("/check-runs")) {
+        return new Response(
+          JSON.stringify({
+            check_runs: [
+              { name: "optional / preview", status: "completed", conclusion: "failure" },
+              { name: "optional / deploy smoke", status: "in_progress", conclusion: null },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (url.endsWith("/status")) {
+        return new Response(
+          JSON.stringify({
+            statuses: [{ context: "optional / preview status", state: "pending" }],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    };
+
+    try {
+      const snapshot = await inspectTaskGithubPrFeedbackGate({
+        db: db as any,
+        githubRepo: "acme/repo",
+        nowMs: () => 3000,
+        fetchImpl: fetchImpl as typeof fetch,
+        policy: {
+          ignoredCheckNames: ["optional / preview"],
+          ignoredCheckPrefixes: ["optional /"],
+        },
+      });
+
+      expect(snapshot).toEqual(
+        expect.objectContaining({
+          applicable: true,
+          status: "passed",
+          failing_check_count: 0,
+          pending_check_count: 0,
+          ignored_check_count: 3,
+          ignored_check_names: [
+            "optional / preview",
+            "optional / deploy smoke",
+            "optional / preview status",
+          ],
+        }),
+      );
+      expect(summarizeTaskGithubPrGateSnapshot(snapshot)).toContain("ignored optional checks: 3");
     } finally {
       db.close();
     }

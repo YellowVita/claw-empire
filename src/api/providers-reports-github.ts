@@ -260,6 +260,8 @@ export interface TaskRunSheetSnapshot {
       change_requests_count: number;
       failing_check_count: number;
       pending_check_count: number;
+      ignored_check_count: number;
+      ignored_check_names: string[];
       blocking_reasons: string[];
       checked_at: number | null;
     };

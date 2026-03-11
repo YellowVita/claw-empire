@@ -440,6 +440,12 @@ export default function TaskReportPopup({ report, agents, departments, uiLanguag
                   </p>
                   <p className="text-sm font-semibold text-slate-100">{prFeedbackGate.pending_check_count}</p>
                 </div>
+                <div className="rounded-md border border-slate-700/50 bg-black/20 px-3 py-2">
+                  <p className="text-[11px] text-slate-400">
+                    {t({ ko: "무시된 Check", en: "Ignored Checks", ja: "無視Check", zh: "忽略 Check" })}
+                  </p>
+                  <p className="text-sm font-semibold text-slate-100">{prFeedbackGate.ignored_check_count}</p>
+                </div>
               </div>
               <div className="mt-3 space-y-1.5 text-[11px] text-slate-300">
                 <p>
@@ -452,6 +458,12 @@ export default function TaskReportPopup({ report, agents, departments, uiLanguag
                     :{" "}
                   </span>
                   {prFeedbackGate.change_requests_count}
+                </p>
+                <p>
+                  <span className="text-slate-500">
+                    {t({ ko: "무시된 Check 이름", en: "Ignored Check Names", ja: "無視Check名", zh: "忽略 Check 名称" })}:{" "}
+                  </span>
+                  {prFeedbackGate.ignored_check_names.length > 0 ? prFeedbackGate.ignored_check_names.join(" | ") : "-"}
                 </p>
                 <p>
                   <span className="text-slate-500">

@@ -1,4 +1,5 @@
 import { buildGitHubApiHeaders, getGitHubAccessToken } from "../../github/auth.ts";
+import type { ProjectDevelopmentPrFeedbackGatePolicy } from "../packs/project-config.ts";
 
 type DbLike = {
   prepare: (sql: string) => {
@@ -20,6 +21,8 @@ export type TaskGithubPrGateSnapshot = {
   change_requests_count: number;
   failing_check_count: number;
   pending_check_count: number;
+  ignored_check_count: number;
+  ignored_check_names: string[];
   blocking_reasons: string[];
   checked_at: number;
 };
@@ -31,6 +34,7 @@ type InspectTaskGithubPrFeedbackGateInput = {
   fetchImpl?: FetchLike;
   maxThreadPages?: number;
   maxCheckPages?: number;
+  policy?: ProjectDevelopmentPrFeedbackGatePolicy;
 };
 
 type OpenPullRequest = {
@@ -77,6 +81,8 @@ function buildSnapshot(
     change_requests_count: 0,
     failing_check_count: 0,
     pending_check_count: 0,
+    ignored_check_count: 0,
+    ignored_check_names: [],
     blocking_reasons: [],
     checked_at: checkedAt,
     ...patch,
@@ -250,6 +256,19 @@ function classifyCheckState(
   return { failing: 1, pending: 0 };
 }
 
+function normalizeCheckLabel(rawLabel: unknown): string | null {
+  return typeof rawLabel === "string" && rawLabel.trim() ? rawLabel.trim() : null;
+}
+
+function isIgnoredCheckLabel(
+  label: string | null,
+  policy: ProjectDevelopmentPrFeedbackGatePolicy | undefined,
+): boolean {
+  if (!label) return false;
+  if (policy?.ignoredCheckNames.includes(label)) return true;
+  return policy?.ignoredCheckPrefixes.some((prefix) => label.startsWith(prefix)) ?? false;
+}
+
 async function fetchCheckCounts(input: {
   fetchImpl: FetchLike;
   token: string;
@@ -257,10 +276,14 @@ async function fetchCheckCounts(input: {
   repo: string;
   headSha: string;
   maxPages: number;
-}): Promise<{ failing: number; pending: number }> {
-  const { fetchImpl, token, owner, repo, headSha, maxPages } = input;
+  policy?: ProjectDevelopmentPrFeedbackGatePolicy;
+}): Promise<{ failing: number; pending: number; ignoredCount: number; ignoredNames: string[] }> {
+  const { fetchImpl, token, owner, repo, headSha, maxPages, policy } = input;
   let failing = 0;
   let pending = 0;
+  let ignoredCount = 0;
+  const ignoredNames: string[] = [];
+  const ignoredSet = new Set<string>();
 
   for (let page = 1; page <= maxPages; page += 1) {
     const response = await fetchImpl(
@@ -270,12 +293,23 @@ async function fetchCheckCounts(input: {
         signal: AbortSignal.timeout(15_000),
       },
     );
-    const payload = await readJsonOrThrow<{ check_runs?: Array<{ status?: string; conclusion?: string | null }> }>(
+    const payload = await readJsonOrThrow<
+      { check_runs?: Array<{ name?: string | null; status?: string; conclusion?: string | null }> }
+    >(
       response,
       "Failed to inspect check runs",
     );
     const runs = Array.isArray(payload.check_runs) ? payload.check_runs : [];
     for (const run of runs) {
+      const label = normalizeCheckLabel(run?.name);
+      if (isIgnoredCheckLabel(label, policy)) {
+        ignoredCount += 1;
+        if (label && !ignoredSet.has(label)) {
+          ignoredSet.add(label);
+          ignoredNames.push(label);
+        }
+        continue;
+      }
       const verdict = classifyCheckState(run?.status, run?.conclusion);
       failing += verdict.failing;
       pending += verdict.pending;
@@ -290,18 +324,27 @@ async function fetchCheckCounts(input: {
     headers: buildGitHubApiHeaders(token),
     signal: AbortSignal.timeout(15_000),
   });
-  const statusPayload = await readJsonOrThrow<{ statuses?: Array<{ state?: string | null }> }>(
+  const statusPayload = await readJsonOrThrow<{ statuses?: Array<{ context?: string | null; state?: string | null }> }>(
     statusResponse,
     "Failed to inspect status contexts",
   );
   for (const entry of statusPayload.statuses ?? []) {
+    const label = normalizeCheckLabel(entry?.context);
+    if (isIgnoredCheckLabel(label, policy)) {
+      ignoredCount += 1;
+      if (label && !ignoredSet.has(label)) {
+        ignoredSet.add(label);
+        ignoredNames.push(label);
+      }
+      continue;
+    }
     const state = typeof entry?.state === "string" ? entry.state.toLowerCase() : "";
     if (state === "success") continue;
     if (state === "pending") pending += 1;
     else if (state) failing += 1;
   }
 
-  return { failing, pending };
+  return { failing, pending, ignoredCount, ignoredNames };
 }
 
 export async function inspectTaskGithubPrFeedbackGate(
@@ -356,6 +399,7 @@ export async function inspectTaskGithubPrFeedbackGate(
       repo,
       headSha,
       maxPages: maxCheckPages,
+      policy: input.policy,
     });
 
     const reviewDecision = reviewThreads.reviewDecision;
@@ -384,6 +428,8 @@ export async function inspectTaskGithubPrFeedbackGate(
       change_requests_count: changeRequestsCount,
       failing_check_count: checks.failing,
       pending_check_count: checks.pending,
+      ignored_check_count: checks.ignoredCount,
+      ignored_check_names: checks.ignoredNames,
       blocking_reasons: blockingReasons,
     });
   } catch (error) {
@@ -396,14 +442,16 @@ export async function inspectTaskGithubPrFeedbackGate(
 }
 
 export function summarizeTaskGithubPrGateSnapshot(snapshot: TaskGithubPrGateSnapshot): string {
+  const ignoredSuffix =
+    snapshot.ignored_check_count > 0 ? ` (ignored optional checks: ${snapshot.ignored_check_count})` : "";
   if (snapshot.status === "skipped") {
-    return "GitHub PR feedback gate skipped (no open dev -> main PR)";
+    return `GitHub PR feedback gate skipped (no open dev -> main PR)${ignoredSuffix}`;
   }
   if (snapshot.status === "passed") {
-    return "GitHub PR feedback gate passed";
+    return `GitHub PR feedback gate passed${ignoredSuffix}`;
   }
   if (snapshot.blocking_reasons.length > 0) {
-    return `GitHub PR feedback gate blocked: ${snapshot.blocking_reasons.join("; ")}`;
+    return `GitHub PR feedback gate blocked: ${snapshot.blocking_reasons.join("; ")}${ignoredSuffix}`;
   }
-  return "GitHub PR feedback gate blocked";
+  return `GitHub PR feedback gate blocked${ignoredSuffix}`;
 }

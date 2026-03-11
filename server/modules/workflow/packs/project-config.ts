@@ -15,6 +15,10 @@ export const WORKFLOW_PACK_OVERRIDE_FIELDS = [
 export type WorkflowPackOverrideField = (typeof WORKFLOW_PACK_OVERRIDE_FIELDS)[number];
 export type ProjectWorkflowPackOverride = Partial<Record<WorkflowPackOverrideField, unknown>>;
 export type ProjectWorkflowConfigSource = "workflow_md" | "claw_workflow_json";
+export type ProjectDevelopmentPrFeedbackGatePolicy = {
+  ignoredCheckNames: string[];
+  ignoredCheckPrefixes: string[];
+};
 
 export type ProjectWorkflowConfig = {
   path: string;
@@ -117,9 +121,29 @@ function mergeProjectWorkflowRaw(
       merged[key] = overrideHooks && baseHooks ? { ...baseHooks, ...overrideHooks } : overrideHooks ?? value;
       continue;
     }
+    if (key === "developmentPrFeedbackGate") {
+      const basePolicy = asObject(merged[key]);
+      const overridePolicy = asObject(value);
+      merged[key] = overridePolicy && basePolicy ? { ...basePolicy, ...overridePolicy } : overridePolicy ?? value;
+      continue;
+    }
     merged[key] = value;
   }
   return merged;
+}
+
+function normalizeStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+  for (const entry of value) {
+    if (typeof entry !== "string") continue;
+    const text = entry.trim();
+    if (!text || seen.has(text)) continue;
+    seen.add(text);
+    normalized.push(text);
+  }
+  return normalized;
 }
 
 function readJsonWorkflowSource(basePath: string): ParsedProjectWorkflowSource | null {
@@ -369,6 +393,96 @@ export function readProjectWorkflowPackOverride(
     overrideFields,
     warnings,
     policyMarkdown: config.policyMarkdown,
+    configSources: [...config.sources],
+  };
+}
+
+export function readProjectDevelopmentPrFeedbackGatePolicy(projectPath: string): {
+  policy: ProjectDevelopmentPrFeedbackGatePolicy;
+  warnings: string[];
+  configSources: ProjectWorkflowConfigSource[];
+} {
+  const emptyPolicy: ProjectDevelopmentPrFeedbackGatePolicy = {
+    ignoredCheckNames: [],
+    ignoredCheckPrefixes: [],
+  };
+  const config = readProjectWorkflowConfig(projectPath);
+  if (!config) {
+    return {
+      policy: emptyPolicy,
+      warnings: [],
+      configSources: [],
+    };
+  }
+
+  if (!config.raw) {
+    return {
+      policy: emptyPolicy,
+      warnings: [...config.warnings],
+      configSources: [...config.sources],
+    };
+  }
+
+  const warnings = [...config.warnings];
+  const sourceLabel = describeProjectWorkflowConfigSource(config);
+  const rawPolicy = config.raw.developmentPrFeedbackGate;
+  if (rawPolicy === undefined) {
+    return {
+      policy: emptyPolicy,
+      warnings,
+      configSources: [...config.sources],
+    };
+  }
+  if (!isPlainObject(rawPolicy)) {
+    warnings.push(`${sourceLabel} invalid developmentPrFeedbackGate object, ignoring`);
+    return {
+      policy: emptyPolicy,
+      warnings,
+      configSources: [...config.sources],
+    };
+  }
+
+  const ignoredCheckNames =
+    rawPolicy.ignoredCheckNames === undefined
+      ? []
+      : Array.isArray(rawPolicy.ignoredCheckNames)
+        ? normalizeStringList(rawPolicy.ignoredCheckNames)
+        : (() => {
+            warnings.push(`${sourceLabel} invalid developmentPrFeedbackGate.ignoredCheckNames, ignoring`);
+            return [];
+          })();
+
+  const ignoredCheckPrefixes =
+    rawPolicy.ignoredCheckPrefixes === undefined
+      ? []
+      : Array.isArray(rawPolicy.ignoredCheckPrefixes)
+        ? normalizeStringList(rawPolicy.ignoredCheckPrefixes)
+        : (() => {
+            warnings.push(`${sourceLabel} invalid developmentPrFeedbackGate.ignoredCheckPrefixes, ignoring`);
+            return [];
+          })();
+
+  if (Array.isArray(rawPolicy.ignoredCheckNames)) {
+    const invalidEntries = rawPolicy.ignoredCheckNames.some((entry) => typeof entry !== "string");
+    if (invalidEntries) {
+      warnings.push(`${sourceLabel} invalid developmentPrFeedbackGate.ignoredCheckNames entries, ignoring non-string values`);
+    }
+  }
+  if (Array.isArray(rawPolicy.ignoredCheckPrefixes)) {
+    const invalidEntries = rawPolicy.ignoredCheckPrefixes.some((entry) => typeof entry !== "string");
+    if (invalidEntries) {
+      warnings.push(
+        `${sourceLabel} invalid developmentPrFeedbackGate.ignoredCheckPrefixes entries, ignoring non-string values`,
+      );
+    }
+  }
+
+  return {
+    policy: {
+      ignoredCheckNames,
+      ignoredCheckPrefixes,
+    },
+    warnings,
     configSources: [...config.sources],
   };
 }

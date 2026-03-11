@@ -49,3 +49,10 @@
 - [x] Persist gate outcomes via quality runs and expose them through development run sheets
 - [x] Render PR gate status in `TaskReportPopup`
 - [x] Add regression tests and run targeted server/UI verification plus build
+
+## 10. Development PR Gate Optional-Check Tuning Phase 5
+- [x] Add project workflow config support for `developmentPrFeedbackGate` ignored check policies
+- [x] Extend GitHub PR gate helper to ignore exact/prefix-matched check names and contexts
+- [x] Pass project policy into review finalization and persist ignored check details in run sheets/quality runs
+- [x] Render ignored optional-check details in `TaskReportPopup`
+- [x] Add regression tests and run targeted server/UI verification plus build

@@ -166,6 +166,8 @@ const baseReport = {
           change_requests_count: 1,
           failing_check_count: 1,
           pending_check_count: 0,
+          ignored_check_count: 2,
+          ignored_check_names: ["optional / preview", "optional / smoke"],
           blocking_reasons: ["Unresolved review threads: 2", "Failing checks: 1"],
           checked_at: 1990,
         },
@@ -279,5 +281,7 @@ describe("TaskReportPopup", () => {
     expect(screen.getAllByText("blocked").length).toBeGreaterThan(0);
     expect(screen.getByText("https://github.com/acme/repo/pull/12")).toBeInTheDocument();
     expect(screen.getByText(/Unresolved review threads: 2/)).toBeInTheDocument();
+    expect(screen.getByText("Ignored Checks")).toBeInTheDocument();
+    expect(screen.getByText("optional / preview | optional / smoke")).toBeInTheDocument();
   });
 });
