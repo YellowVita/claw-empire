@@ -9,7 +9,7 @@ interface AppLoadingScreenProps {
 export default function AppLoadingScreen({ language, title, subtitle }: AppLoadingScreenProps) {
   return (
     <I18nProvider language={language}>
-      <div className="h-screen flex items-center justify-center" style={{ background: "var(--th-bg-primary)" }}>
+      <div className="min-h-[100dvh] flex items-center justify-center" style={{ background: "var(--th-bg-primary)" }}>
         <div className="text-center">
           <div className="text-5xl mb-4 animate-agent-bounce">🏢</div>
           <div className="text-lg font-medium" style={{ color: "var(--th-text-secondary)" }}>
