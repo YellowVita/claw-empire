@@ -348,12 +348,18 @@ export interface MessengerSessionConfig {
   targetId: string;
   enabled: boolean;
   token?: string;
+  tokenConfigured?: boolean;
+  tokenMasked?: string | null;
+  clearToken?: boolean;
   agentId?: string;
   workflowPackKey?: WorkflowPackKey;
 }
 
 export interface MessengerChannelConfig {
-  token: string;
+  token?: string;
+  tokenConfigured?: boolean;
+  tokenMasked?: string | null;
+  clearToken?: boolean;
   sessions: MessengerSessionConfig[];
   receiveEnabled?: boolean;
 }

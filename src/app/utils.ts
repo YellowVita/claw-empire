@@ -3,6 +3,7 @@ import type {
   CompanySettings,
   MessengerChannelConfig,
   MessengerChannelsConfig,
+  MessengerSessionConfig,
   RoomTheme,
   Task,
 } from "../types";
@@ -118,6 +119,58 @@ const TASK_EQ_KNOWN_KEYS = new Set<string>([
   "hidden",
 ]);
 
+function maskSecretForClient(token: string): string {
+  return `****${token.slice(-4)}`;
+}
+
+function scrubSessionSecret(session: MessengerSessionConfig): MessengerSessionConfig {
+  const next: MessengerSessionConfig = { ...session };
+  const typedToken = typeof next.token === "string" ? next.token.trim() : "";
+  const configured = next.clearToken === true ? false : typedToken ? true : next.tokenConfigured === true;
+  const masked =
+    next.clearToken === true ? null : typedToken ? maskSecretForClient(typedToken) : (next.tokenMasked ?? null);
+  delete next.token;
+  delete next.clearToken;
+  next.tokenConfigured = configured;
+  next.tokenMasked = configured ? masked : null;
+  return next;
+}
+
+function scrubChannelSecret(channelConfig: MessengerChannelConfig): MessengerChannelConfig {
+  const next: MessengerChannelConfig = { ...channelConfig };
+  const typedToken = typeof next.token === "string" ? next.token.trim() : "";
+  const configured = next.clearToken === true ? false : typedToken ? true : next.tokenConfigured === true;
+  const masked =
+    next.clearToken === true ? null : typedToken ? maskSecretForClient(typedToken) : (next.tokenMasked ?? null);
+  delete next.token;
+  delete next.clearToken;
+  next.tokenConfigured = configured;
+  next.tokenMasked = configured ? masked : null;
+  next.sessions = (next.sessions ?? []).map((session) => scrubSessionSecret(session));
+  return next;
+}
+
+export function scrubMessengerSecretsForClient(
+  channels?: Partial<MessengerChannelsConfig> | null,
+): MessengerChannelsConfig | undefined {
+  if (!channels) return channels === null ? undefined : undefined;
+
+  return MESSENGER_CHANNELS.reduce<MessengerChannelsConfig>((acc, channel) => {
+    const defaults = DEFAULT_SETTINGS.messengerChannels?.[channel] ?? {
+      token: "",
+      sessions: [],
+      receiveEnabled: false,
+    };
+    const incoming: Partial<MessengerChannelConfig> = channels[channel] ?? {};
+    acc[channel] = scrubChannelSecret({
+      ...defaults,
+      ...incoming,
+      sessions: incoming.sessions ?? defaults.sessions ?? [],
+    });
+    return acc;
+  }, {} as MessengerChannelsConfig);
+}
+
 export function areAgentsEquivalent(a: Agent, b: Agent): boolean {
   if (
     a.id === b.id &&
@@ -222,6 +275,13 @@ export function mergeSettingsWithDefaults(settings?: Partial<CompanySettings> | 
       ...(settings?.providerModelConfig ?? {}),
     },
     messengerChannels: mergedMessengerChannels,
+  };
+}
+
+export function scrubSettingsSecretsForClient(settings: CompanySettings): CompanySettings {
+  return {
+    ...settings,
+    messengerChannels: scrubMessengerSecretsForClient(settings.messengerChannels) ?? settings.messengerChannels,
   };
 }
 

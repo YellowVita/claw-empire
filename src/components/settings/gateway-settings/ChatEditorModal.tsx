@@ -84,7 +84,11 @@ export default function ChatEditorModal({
                 setEditor((prev) => ({
                   ...prev,
                   channel: nextChannel,
-                  token: channelsConfig[nextChannel].token ?? "",
+                  token: "",
+                  tokenConfigured: prev.mode === "edit" ? prev.tokenConfigured : false,
+                  tokenMasked: prev.mode === "edit" ? prev.tokenMasked : null,
+                  clearToken: false,
+                  tokenDirty: false,
                   receiveEnabled: channelsConfig[nextChannel].receiveEnabled !== false,
                 }));
               }}
@@ -123,7 +127,14 @@ export default function ChatEditorModal({
           <input
             type="password"
             value={editor.token}
-            onChange={(e) => setEditor((prev) => ({ ...prev, token: e.target.value }))}
+            onChange={(e) =>
+              setEditor((prev) => ({
+                ...prev,
+                token: e.target.value,
+                clearToken: false,
+                tokenDirty: e.target.value.trim().length > 0,
+              }))
+            }
             placeholder={t({
               ko: `${CHANNEL_META[editor.channel].label} 토큰 입력`,
               en: `Enter ${CHANNEL_META[editor.channel].label} token`,
@@ -132,6 +143,41 @@ export default function ChatEditorModal({
             })}
             className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500"
           />
+          {(editor.tokenConfigured || editor.clearToken) && (
+            <div className="mt-2 flex items-center justify-between gap-3 text-[11px]">
+              <span className={editor.clearToken ? "text-amber-300" : "text-slate-400"}>
+                {editor.clearToken
+                  ? t({
+                      ko: "저장 시 기존 토큰이 삭제됩니다.",
+                      en: "The existing token will be cleared on save.",
+                      ja: "保存時に既存トークンが削除されます。",
+                      zh: "保存时会清除现有令牌。",
+                    })
+                  : t({
+                      ko: `기존 토큰 설정됨 (${editor.tokenMasked ?? "****"})`,
+                      en: `Existing token configured (${editor.tokenMasked ?? "****"})`,
+                      ja: `既存トークン設定済み (${editor.tokenMasked ?? "****"})`,
+                      zh: `已配置现有令牌（${editor.tokenMasked ?? "****"}）`,
+                    })}
+              </span>
+              <button
+                type="button"
+                onClick={() =>
+                  setEditor((prev) => ({
+                    ...prev,
+                    token: "",
+                    clearToken: !prev.clearToken,
+                    tokenDirty: false,
+                  }))
+                }
+                className={`rounded border px-2 py-1 ${editor.clearToken ? "border-amber-500/40 text-amber-300" : "border-slate-600 text-slate-300 hover:bg-slate-800"}`}
+              >
+                {editor.clearToken
+                  ? t({ ko: "삭제 취소", en: "Keep token", ja: "削除取り消し", zh: "保留令牌" })
+                  : t({ ko: "토큰 삭제", en: "Clear token", ja: "トークン削除", zh: "清除令牌" })}
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

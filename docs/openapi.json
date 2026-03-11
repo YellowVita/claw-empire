@@ -5523,8 +5523,9 @@
                 },
                 "example": {
                   "clone_id": "clone_001",
-                  "status": "done",
-                  "progress": 100,
+                  "status": "error",
+                  "progress": 42,
+                  "error": "Authentication failed.",
                   "targetPath": "/workspace/my-project",
                   "repoFullName": "org/repo"
                 }
@@ -10196,7 +10197,26 @@
                   "additionalProperties": true
                 },
                 "example": {
-                  "additionalProp1": "value"
+                  "settings": {
+                    "ceoName": "CEO",
+                    "messengerChannels": {
+                      "telegram": {
+                        "tokenConfigured": true,
+                        "tokenMasked": "****1234",
+                        "receiveEnabled": true,
+                        "sessions": [
+                          {
+                            "id": "ops",
+                            "name": "Ops",
+                            "targetId": "-100123",
+                            "enabled": true,
+                            "tokenConfigured": true,
+                            "tokenMasked": "****9876"
+                          }
+                        ]
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -10618,7 +10638,21 @@
               },
               "example": {
                 "ceoName": "CEO",
-                "language": "ko"
+                "language": "ko",
+                "messengerChannels": {
+                  "telegram": {
+                    "token": "telegram-bot-token",
+                    "sessions": [
+                      {
+                        "id": "ops",
+                        "name": "Ops",
+                        "targetId": "-100123",
+                        "enabled": true,
+                        "clearToken": true
+                      }
+                    ]
+                  }
+                }
               }
             }
           }

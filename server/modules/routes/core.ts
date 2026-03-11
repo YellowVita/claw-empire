@@ -459,6 +459,7 @@ export function registerRoutesPartA(ctx: RuntimeContext): Record<string, never> 
     app,
     db,
     broadcast,
+    normalizeTextField,
   });
 
   return {};

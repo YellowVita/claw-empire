@@ -1,8 +1,9 @@
 import type { RuntimeContext } from "../../../types/runtime-context.ts";
 import {
-  decryptMessengerChannelsForClient,
-  encryptMessengerChannelsForStorage,
+  mergeMessengerChannelsForStorage,
+  projectMessengerChannelsForClient,
 } from "../../../messenger/token-crypto.ts";
+import { invalidateMessengerConfigCache } from "../../../gateway/client.ts";
 import { syncOfficePackAgentsForPack } from "../collab/office-pack-agent-hydration.ts";
 import {
   DEFAULT_TASK_EXECUTION_HOOKS,
@@ -133,7 +134,7 @@ export function registerOpsSettingsStatsRoutes(ctx: RuntimeContext): void {
     for (const row of rows) {
       try {
         const parsed = JSON.parse(row.value);
-        settings[row.key] = row.key === MESSENGER_SETTINGS_KEY ? decryptMessengerChannelsForClient(parsed) : parsed;
+        settings[row.key] = row.key === MESSENGER_SETTINGS_KEY ? projectMessengerChannelsForClient(parsed) : parsed;
       } catch {
         settings[row.key] = row.value;
       }
@@ -168,8 +169,16 @@ export function registerOpsSettingsStatsRoutes(ctx: RuntimeContext): void {
       for (const [key, value] of Object.entries(body)) {
         if (key === MESSENGER_SETTINGS_KEY) {
           const parsedValue = typeof value === "string" ? safeJsonParse(value) : value;
-          const encrypted = encryptMessengerChannelsForStorage(parsedValue);
-          upsert.run(key, typeof encrypted === "string" ? encrypted : JSON.stringify(encrypted));
+          const existingRow = db.prepare("SELECT value FROM settings WHERE key = ? LIMIT 1").get(key) as
+            | { value?: unknown }
+            | undefined;
+          const existingValue =
+            typeof existingRow?.value === "string" && existingRow.value.trim().length > 0
+              ? safeJsonParse(existingRow.value)
+              : undefined;
+          const merged = mergeMessengerChannelsForStorage(existingValue, parsedValue);
+          upsert.run(key, typeof merged === "string" ? merged : JSON.stringify(merged));
+          invalidateMessengerConfigCache();
           continue;
         }
 
@@ -191,6 +200,9 @@ export function registerOpsSettingsStatsRoutes(ctx: RuntimeContext): void {
       }
     } catch (err: any) {
       const detail = err?.message || String(err);
+      if (detail === "invalid_token_update") {
+        return res.status(400).json({ ok: false, error: "invalid_token_update" });
+      }
       return res.status(500).json({ ok: false, error: "settings_write_failed", detail });
     }
 

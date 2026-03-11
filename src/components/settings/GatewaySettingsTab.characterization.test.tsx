@@ -190,4 +190,66 @@ describe("GatewaySettingsTab characterization", () => {
       expect(screen.getByRole("option", { name: /Design Guild \/ #ops-alert \(1234567890\)/i })).toBeInTheDocument();
     });
   });
+
+  it("keeps the token input blank while showing configured metadata when editing", async () => {
+    const user = userEvent.setup();
+    const form = createFormWithMessengerChannels({
+      telegram: {
+        receiveEnabled: true,
+        sessions: [
+          {
+            id: "ops",
+            name: "Ops",
+            targetId: "-100123456",
+            enabled: true,
+            tokenConfigured: true,
+            tokenMasked: "****9876",
+            workflowPackKey: "development",
+          },
+        ],
+      },
+    });
+
+    render(<GatewaySettingsTab t={t} form={form as any} setForm={vi.fn()} persistSettings={vi.fn()} />);
+
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+
+    const tokenInput = screen.getByPlaceholderText("Enter Telegram token") as HTMLInputElement;
+    expect(tokenInput.value).toBe("");
+    expect(screen.getByText("Existing token configured (****9876)")).toBeInTheDocument();
+  });
+
+  it("sends clearToken explicitly when clearing an existing token", async () => {
+    const user = userEvent.setup();
+    const setForm = vi.fn();
+    const persistSettings = vi.fn();
+    const form = createFormWithMessengerChannels({
+      telegram: {
+        receiveEnabled: true,
+        sessions: [
+          {
+            id: "ops",
+            name: "Ops",
+            targetId: "-100123456",
+            enabled: true,
+            tokenConfigured: true,
+            tokenMasked: "****4321",
+            workflowPackKey: "development",
+          },
+        ],
+      },
+    });
+
+    render(<GatewaySettingsTab t={t} form={form as any} setForm={setForm} persistSettings={persistSettings} />);
+
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    await user.click(screen.getByRole("button", { name: "Clear token" }));
+    await user.click(screen.getByRole("button", { name: "Confirm" }));
+
+    expect(persistSettings).toHaveBeenCalledTimes(1);
+    const payload = persistSettings.mock.calls[0]?.[0];
+    expect(payload.messengerChannels.telegram.sessions[0].clearToken).toBe(true);
+    expect(payload.messengerChannels.telegram.sessions[0].token).toBeUndefined();
+    expect(setForm).toHaveBeenCalled();
+  });
 });

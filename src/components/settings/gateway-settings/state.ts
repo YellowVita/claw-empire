@@ -12,7 +12,8 @@ import { CHANNEL_META, isWorkflowPackKey } from "./constants";
 export type ChatRow = {
   key: string;
   channel: MessengerChannelType;
-  token: string;
+  tokenConfigured: boolean;
+  tokenMasked: string | null;
   receiveEnabled: boolean;
   session: MessengerSessionConfig;
 };
@@ -25,6 +26,10 @@ export type ChatEditorState = {
   ref: ChatEditorRef;
   channel: MessengerChannelType;
   token: string;
+  tokenConfigured: boolean;
+  tokenMasked: string | null;
+  clearToken: boolean;
+  tokenDirty: boolean;
   name: string;
   targetId: string;
   enabled: boolean;
@@ -43,6 +48,8 @@ export function createSessionId(channel: MessengerChannelType): string {
 export function emptyChannelConfig(channel: MessengerChannelType): MessengerChannelConfig {
   return {
     token: "",
+    tokenConfigured: false,
+    tokenMasked: null,
     sessions: [],
     receiveEnabled: channel === "telegram",
   };
@@ -70,6 +77,9 @@ function normalizeSession(
     targetId: session.targetId?.trim() || "",
     enabled: session.enabled !== false,
     token: token || undefined,
+    tokenConfigured: session.clearToken === true ? false : session.tokenConfigured === true || !!token,
+    tokenMasked: session.clearToken === true ? null : (session.tokenMasked ?? null),
+    clearToken: session.clearToken === true ? true : undefined,
     agentId: agentId || undefined,
     workflowPackKey,
   };
@@ -78,8 +88,12 @@ function normalizeSession(
 export function normalizeChannelsConfig(config: MessengerChannelsConfig): MessengerChannelsConfig {
   return MESSENGER_CHANNELS.reduce((acc, channel) => {
     const channelConfig = config[channel] ?? emptyChannelConfig(channel);
+    const normalizedToken = channelConfig.token?.trim?.() ?? "";
     acc[channel] = {
-      token: channelConfig.token?.trim?.() ?? "",
+      token: normalizedToken || undefined,
+      tokenConfigured: channelConfig.clearToken === true ? false : channelConfig.tokenConfigured === true || !!normalizedToken,
+      tokenMasked: channelConfig.clearToken === true ? null : (channelConfig.tokenMasked ?? null),
+      clearToken: channelConfig.clearToken === true ? true : undefined,
       receiveEnabled:
         channel === "telegram" ? channelConfig.receiveEnabled !== false : channelConfig.receiveEnabled === true,
       sessions: (channelConfig.sessions ?? []).map((session, idx) => normalizeSession(session, channel, idx)),
@@ -108,7 +122,11 @@ export function createEditorState(channelsConfig: MessengerChannelsConfig): Chat
     mode: "create",
     ref: null,
     channel: "telegram",
-    token: channelsConfig.telegram.token ?? "",
+    token: "",
+    tokenConfigured: false,
+    tokenMasked: null,
+    clearToken: false,
+    tokenDirty: false,
     name: "",
     targetId: "",
     enabled: true,
@@ -116,6 +134,45 @@ export function createEditorState(channelsConfig: MessengerChannelsConfig): Chat
     workflowPackKey: "development",
     receiveEnabled: channelsConfig.telegram.receiveEnabled !== false,
   };
+}
+
+function maskSecretForClient(token: string): string {
+  return `****${token.slice(-4)}`;
+}
+
+function scrubSessionSecret(session: MessengerSessionConfig): MessengerSessionConfig {
+  const next: MessengerSessionConfig = { ...session };
+  const typedToken = typeof next.token === "string" ? next.token.trim() : "";
+  const configured = next.clearToken === true ? false : typedToken ? true : next.tokenConfigured === true;
+  const masked =
+    next.clearToken === true ? null : typedToken ? maskSecretForClient(typedToken) : (next.tokenMasked ?? null);
+  delete next.token;
+  delete next.clearToken;
+  next.tokenConfigured = configured;
+  next.tokenMasked = configured ? masked : null;
+  return next;
+}
+
+export function scrubChannelsConfigSecrets(config: MessengerChannelsConfig): MessengerChannelsConfig {
+  return MESSENGER_CHANNELS.reduce((acc, channel) => {
+    const channelConfig = config[channel] ?? emptyChannelConfig(channel);
+    const nextChannel: MessengerChannelConfig = { ...channelConfig };
+    const typedToken = typeof nextChannel.token === "string" ? nextChannel.token.trim() : "";
+    const configured = nextChannel.clearToken === true ? false : typedToken ? true : nextChannel.tokenConfigured === true;
+    const masked =
+      nextChannel.clearToken === true
+        ? null
+        : typedToken
+          ? maskSecretForClient(typedToken)
+          : (nextChannel.tokenMasked ?? null);
+    delete nextChannel.token;
+    delete nextChannel.clearToken;
+    nextChannel.tokenConfigured = configured;
+    nextChannel.tokenMasked = configured ? masked : null;
+    nextChannel.sessions = (nextChannel.sessions ?? []).map((session) => scrubSessionSecret(session));
+    acc[channel] = nextChannel;
+    return acc;
+  }, {} as MessengerChannelsConfig);
 }
 
 export function defaultWorkflowPackLabel(t: ChannelSettingsTabProps["t"], key: WorkflowPackKey): string {

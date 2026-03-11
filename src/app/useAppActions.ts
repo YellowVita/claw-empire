@@ -17,7 +17,7 @@ import type {
   WorkflowPackKey,
 } from "../types";
 import { mapWorkflowDecisionItemsLocalized } from "./decision-inbox";
-import { mergeSettingsWithDefaults, syncClientLanguage } from "./utils";
+import { mergeSettingsWithDefaults, scrubSettingsSecretsForClient, syncClientLanguage } from "./utils";
 import type { ProjectMetaPayload } from "./types";
 
 interface UseAppActionsParams {
@@ -253,11 +253,12 @@ export function useAppActions({
     async (nextInput: CompanySettings) => {
       const previousSettings = settings;
       const nextSettings = mergeSettingsWithDefaults(nextInput);
+      const nextSettingsForClient = scrubSettingsSecretsForClient(nextSettings);
       const autoUpdateChanged = Boolean(nextSettings.autoUpdateEnabled) !== Boolean(settings.autoUpdateEnabled);
       const saveRequestSeq = (settingsSaveRequestSeqRef.current += 1);
-      const attemptedSnapshot = JSON.stringify(nextSettings);
-      setSettings(nextSettings);
-      syncClientLanguage(nextSettings.language);
+      const attemptedSnapshot = JSON.stringify(nextSettingsForClient);
+      setSettings(nextSettingsForClient);
+      syncClientLanguage(nextSettingsForClient.language);
       if (typeof window !== "undefined") {
         window.localStorage.setItem(LANGUAGE_USER_SET_STORAGE_KEY, "1");
       }

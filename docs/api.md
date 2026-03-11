@@ -247,6 +247,24 @@ or
 | POST   | `/api/update-auto-config`                 | Toggle auto update                                               |
 | POST   | `/api/update-apply`                       | Trigger update apply flow immediately                            |
 
+### Secret / Clone Contract Notes
+
+- `GET /api/settings`
+  - `messengerChannels.*.token` and `messengerChannels.*.sessions[*].token` are not returned.
+  - Secret state is exposed as `tokenConfigured: boolean` and `tokenMasked: string | null`.
+- `PUT /api/settings`
+  - Messenger secrets are write-only.
+  - `token` omitted or `""` keeps the existing secret.
+  - `clearToken: true` deletes the existing secret.
+  - `token` plus `clearToken: true` returns `400 invalid_token_update`.
+- `POST /api/github/clone`
+  - The request shape is unchanged.
+  - `X-GitHub-PAT` is accepted as transient input only and is not persisted.
+  - Clone auth is passed through non-interactive `GIT_ASKPASS` transport, not via clone URL or argv.
+  - `target_path` must be absolute and inside allowed project roots.
+- `GET /api/github/clone/:cloneId`
+  - `error` is a sanitized summary only; raw stderr and tokens are never returned.
+
 ## Coverage Notes
 
 - `docs/openapi.json` now includes the main contributor-facing detail/picker/report endpoints that were missing from the previous baseline.

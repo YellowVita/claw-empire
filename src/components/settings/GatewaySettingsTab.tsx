@@ -18,6 +18,7 @@ import {
   defaultWorkflowPackLabel,
   normalizeChannelsConfig,
   resolveChannelsConfig,
+  scrubChannelsConfigSecrets,
 } from "./gateway-settings/state";
 
 export default function GatewaySettingsTab({ t, form, setForm, persistSettings }: ChannelSettingsTabProps) {
@@ -60,7 +61,8 @@ export default function GatewaySettingsTab({ t, form, setForm, persistSettings }
         .map((session) => ({
           key: `${channel}:${session.id}`,
           channel,
-          token: (session.token ?? "").trim() || (channelConfig.token ?? ""),
+          tokenConfigured: session.tokenConfigured === true || channelConfig.tokenConfigured === true,
+          tokenMasked: session.tokenMasked ?? channelConfig.tokenMasked ?? null,
           receiveEnabled: channelConfig.receiveEnabled !== false,
           session,
         }))
@@ -166,7 +168,8 @@ export default function GatewaySettingsTab({ t, form, setForm, persistSettings }
   const persistChannelsForm = (nextChannels: ReturnType<typeof resolveChannelsConfig>, successMsg?: string) => {
     const normalized = normalizeChannelsConfig(nextChannels);
     const nextForm = { ...form, messengerChannels: normalized };
-    setForm(nextForm);
+    const nextFormForUi = { ...form, messengerChannels: scrubChannelsConfigSecrets(normalized) };
+    setForm(nextFormForUi);
     setSaving(true);
     setSaved(null);
     try {
@@ -225,7 +228,11 @@ export default function GatewaySettingsTab({ t, form, setForm, persistSettings }
       mode: "edit",
       ref: { channel: row.channel, sessionId: row.session.id },
       channel: row.channel,
-      token: row.session.token?.trim() || (channelsConfig[row.channel].token ?? ""),
+      token: "",
+      tokenConfigured: row.tokenConfigured,
+      tokenMasked: row.tokenMasked,
+      clearToken: false,
+      tokenDirty: false,
       name: row.session.name ?? "",
       targetId: row.session.targetId ?? "",
       enabled: row.session.enabled !== false,
@@ -247,7 +254,18 @@ export default function GatewaySettingsTab({ t, form, setForm, persistSettings }
     const targetId = editor.targetId.trim();
     const agentId = editor.agentId.trim();
 
-    if (!token) {
+    if (editor.clearToken && token) {
+      setEditorError(
+        t({
+          ko: "토큰 입력과 삭제는 동시에 선택할 수 없습니다.",
+          en: "You can't enter and clear a token at the same time.",
+          ja: "トークン入力と削除は同時に指定できません。",
+          zh: "不能同时输入并清除令牌。",
+        }),
+      );
+      return;
+    }
+    if (!token && !editor.tokenConfigured && !editor.clearToken) {
       setEditorError(
         t({
           ko: "토큰을 입력해주세요.",
@@ -293,7 +311,8 @@ export default function GatewaySettingsTab({ t, form, setForm, persistSettings }
       name,
       targetId,
       enabled: editor.enabled,
-      token,
+      token: token || undefined,
+      clearToken: editor.clearToken || undefined,
       agentId: agentId || undefined,
       workflowPackKey: editor.workflowPackKey,
     };
@@ -536,7 +555,7 @@ export default function GatewaySettingsTab({ t, form, setForm, persistSettings }
                 : "development";
               const workflowPackLabel =
                 workflowPackNameByKey.get(workflowPackKey) ?? defaultWorkflowPackLabel(t, workflowPackKey);
-              const tokenReady = row.token.trim().length > 0;
+              const tokenReady = row.tokenConfigured;
               return (
                 <div key={row.key} className="rounded-md border border-slate-700/70 bg-slate-800/50 px-3 py-2">
                   <div className="flex items-start justify-between gap-2">

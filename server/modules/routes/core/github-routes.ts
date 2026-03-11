@@ -5,11 +5,135 @@ import { spawn, execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { decryptSecret } from "../../../oauth/helpers.ts";
 import type { RuntimeContext } from "../../../types/runtime-context.ts";
+import { createProjectPathPolicy } from "./projects/path-policy.ts";
 
-export type GitHubRouteDeps = Pick<RuntimeContext, "app" | "db" | "broadcast">;
+export type GitHubRouteDeps = Pick<RuntimeContext, "app" | "db" | "broadcast" | "normalizeTextField">;
+
+const GIT_ASKPASS_USERNAME = "x-access-token";
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function buildSensitiveFragments(token: string): string[] {
+  const trimmed = token.trim();
+  if (!trimmed) return [];
+  return [
+    trimmed,
+    `token ${trimmed}`,
+    `Bearer ${trimmed}`,
+    `bearer ${trimmed}`,
+    Buffer.from(`${GIT_ASKPASS_USERNAME}:${trimmed}`).toString("base64"),
+  ];
+}
+
+function redactSensitiveText(rawText: string, token: string | null | undefined): string {
+  let sanitized = String(rawText ?? "");
+  sanitized = sanitized.replace(/https:\/\/[^@\s]+@github\.com/gi, "https://***@github.com");
+  sanitized = sanitized.replace(/(authorization:\s*(?:token|bearer|basic)\s+)[^\s"']+/gi, "$1***");
+
+  for (const fragment of buildSensitiveFragments(token ?? "")) {
+    if (!fragment) continue;
+    sanitized = sanitized.replace(new RegExp(escapeRegExp(fragment), "gi"), "***");
+  }
+
+  return sanitized;
+}
+
+function summarizeGitFailure(rawText: string, token: string | null | undefined, fallback: string): string {
+  const sanitized = redactSensitiveText(rawText, token)
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return sanitized.at(-1) ?? fallback;
+}
+
+function resolvePathForScopeCompare(value: string): string {
+  const resolved = path.resolve(path.normalize(value));
+  return process.platform === "win32" || process.platform === "darwin" ? resolved.toLowerCase() : resolved;
+}
+
+function writeAskpassHelper(token: string): { env: NodeJS.ProcessEnv; cleanup: () => void } {
+  const helperDir = fs.mkdtempSync(path.join(os.tmpdir(), "claw-empire-git-askpass-"));
+  const helperPath = path.join(helperDir, process.platform === "win32" ? "askpass.cmd" : "askpass.sh");
+  const helperSource =
+    process.platform === "win32"
+      ? [
+          "@echo off",
+          "set PROMPT=%~1",
+          'echo %PROMPT% | findstr /I "Username" >nul',
+          "if not errorlevel 1 (",
+          `  echo %CLAW_GIT_ASKPASS_USERNAME%`,
+          "  exit /b 0",
+          ")",
+          "echo %CLAW_GIT_ASKPASS_TOKEN%",
+          "",
+        ].join("\r\n")
+      : [
+          "#!/bin/sh",
+          'case "$1" in',
+          '  *Username*) printf "%s\\n" "$CLAW_GIT_ASKPASS_USERNAME" ;;',
+          '  *) printf "%s\\n" "$CLAW_GIT_ASKPASS_TOKEN" ;;',
+          "esac",
+          "",
+        ].join("\n");
+
+  fs.writeFileSync(helperPath, helperSource, { mode: 0o700 });
+  if (process.platform !== "win32") {
+    fs.chmodSync(helperPath, 0o700);
+  }
+
+  return {
+    env: {
+      ...process.env,
+      GCM_INTERACTIVE: "Never",
+      GIT_ASKPASS: helperPath,
+      GIT_TERMINAL_PROMPT: "0",
+      CLAW_GIT_ASKPASS_USERNAME: GIT_ASKPASS_USERNAME,
+      CLAW_GIT_ASKPASS_TOKEN: token,
+    },
+    cleanup: () => {
+      fs.rmSync(helperDir, { recursive: true, force: true });
+    },
+  };
+}
+
+function findNearestExistingDirectory(targetPath: string): string | null {
+  let probe = path.resolve(targetPath);
+  while (probe && probe !== path.dirname(probe)) {
+    try {
+      if (fs.statSync(probe).isDirectory()) {
+        return probe;
+      }
+    } catch {
+      // keep walking up
+    }
+    probe = path.dirname(probe);
+  }
+
+  try {
+    if (probe && fs.statSync(probe).isDirectory()) {
+      return probe;
+    }
+  } catch {
+    // ignore
+  }
+
+  return null;
+}
+
+function listDirectoryEntries(targetPath: string): string[] {
+  try {
+    return fs.readdirSync(targetPath);
+  } catch {
+    return [];
+  }
+}
 
 export function registerGitHubRoutes(deps: GitHubRouteDeps): void {
-  const { app, db, broadcast } = deps;
+  const { app, db, broadcast, normalizeTextField } = deps;
+  const { PROJECT_PATH_ALLOWED_ROOTS, isRelativeProjectPathInput, normalizeProjectPathInput, getContainingAllowedRoot } =
+    createProjectPathPolicy({ normalizeTextField });
 
   function getGitHubAccessToken(): string | null {
     const row = db
@@ -35,6 +159,74 @@ export function registerGitHubRoutes(deps: GitHubRouteDeps): void {
     string,
     { status: string; progress: number; error?: string; targetPath: string; repoFullName: string }
   >();
+
+  function validateCloneTargetPath(
+    rawTargetPath: unknown,
+    repoName: string,
+  ):
+    | { ok: true; targetPath: string; alreadyExists: boolean }
+    | { ok: false; status: number; payload: Record<string, unknown> } {
+    const defaultTarget = path.join(os.homedir(), "Projects", repoName);
+    const normalizedTarget = normalizeProjectPathInput(rawTargetPath ?? defaultTarget);
+    if (!normalizedTarget) {
+      const error = isRelativeProjectPathInput(rawTargetPath) ? "relative_project_path_not_allowed" : "project_path_required";
+      return { ok: false, status: 400, payload: { error } };
+    }
+
+    const containingRoot = getContainingAllowedRoot(normalizedTarget);
+    if (PROJECT_PATH_ALLOWED_ROOTS.length > 0 && !containingRoot) {
+      return {
+        ok: false,
+        status: 403,
+        payload: { error: "project_path_outside_allowed_roots", allowed_roots: PROJECT_PATH_ALLOWED_ROOTS },
+      };
+    }
+
+    const nearestExistingParent = findNearestExistingDirectory(normalizedTarget);
+    if (nearestExistingParent && containingRoot) {
+      let realParent = resolvePathForScopeCompare(nearestExistingParent);
+      let realRoot = resolvePathForScopeCompare(containingRoot);
+      try {
+        realParent = resolvePathForScopeCompare(fs.realpathSync(nearestExistingParent));
+      } catch {
+        // keep normalized path
+      }
+      try {
+        realRoot = resolvePathForScopeCompare(fs.realpathSync(containingRoot));
+      } catch {
+        // keep normalized path
+      }
+
+      const parentRelative = path.relative(realRoot, realParent);
+      if (parentRelative && (parentRelative.startsWith("..") || path.isAbsolute(parentRelative))) {
+        return {
+          ok: false,
+          status: 403,
+          payload: { error: "project_path_outside_allowed_roots", allowed_roots: PROJECT_PATH_ALLOWED_ROOTS },
+        };
+      }
+    }
+
+    try {
+      const stat = fs.lstatSync(normalizedTarget);
+      if (!stat.isDirectory()) {
+        return { ok: false, status: 400, payload: { error: "project_path_not_directory" } };
+      }
+
+      if (fs.existsSync(path.join(normalizedTarget, ".git"))) {
+        return { ok: true, targetPath: normalizedTarget, alreadyExists: true };
+      }
+
+      const entries = listDirectoryEntries(normalizedTarget);
+      if (entries.length > 0) {
+        return { ok: false, status: 409, payload: { error: "target_path_not_empty", target_path: normalizedTarget } };
+      }
+    } catch {
+      // path does not exist yet, allowed
+    }
+
+    return { ok: true, targetPath: normalizedTarget, alreadyExists: false };
+  }
 
   app.get("/api/github/status", async (_req, res) => {
     const row = db
@@ -199,7 +391,10 @@ export function registerGitHubRoutes(deps: GitHubRouteDeps): void {
         default_branch: repoData?.default_branch ?? null,
       });
     } catch (err) {
-      res.status(502).json({ error: "github_fetch_failed", message: err instanceof Error ? err.message : String(err) });
+      res.status(502).json({
+        error: "github_fetch_failed",
+        message: summarizeGitFailure(err instanceof Error ? err.message : String(err), token, "GitHub fetch failed"),
+      });
     }
   });
 
@@ -211,26 +406,32 @@ export function registerGitHubRoutes(deps: GitHubRouteDeps): void {
     if (!owner || !repo) return res.status(400).json({ error: "owner_and_repo_required" });
 
     const repoFullName = `${owner}/${repo}`;
-    const defaultTarget = path.join(os.homedir(), "Projects", repo);
-    let targetPath = target_path?.trim() || defaultTarget;
-    if (targetPath === "~") targetPath = os.homedir();
-    else if (targetPath.startsWith("~/")) targetPath = path.join(os.homedir(), targetPath.slice(2));
+    const targetCheck = validateCloneTargetPath(target_path, repo);
+    if (!targetCheck.ok) {
+      return res.status(targetCheck.status).json(targetCheck.payload);
+    }
 
-    if (fs.existsSync(targetPath) && fs.existsSync(path.join(targetPath, ".git"))) {
+    const targetPath = targetCheck.targetPath;
+    if (targetCheck.alreadyExists) {
       return res.json({ clone_id: null, already_exists: true, target_path: targetPath });
     }
 
     const cloneId = randomUUID();
     activeClones.set(cloneId, { status: "cloning", progress: 0, targetPath, repoFullName });
 
-    const cloneUrl = `https://x-access-token:${token}@github.com/${owner}/${repo}.git`;
+    const cloneUrl = `https://github.com/${owner}/${repo}.git`;
     const args = ["clone", "--progress"];
     if (branch) {
       args.push("--branch", branch, "--single-branch");
     }
     args.push(cloneUrl, targetPath);
 
-    const child = spawn("git", args, { stdio: ["ignore", "pipe", "pipe"] });
+    const askpass = writeAskpassHelper(token);
+    const child = spawn("git", args, {
+      env: askpass.env,
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    });
     let stderrBuf = "";
 
     child.stderr?.on("data", (chunk: Buffer) => {
@@ -248,6 +449,7 @@ export function registerGitHubRoutes(deps: GitHubRouteDeps): void {
     });
 
     child.on("close", (code) => {
+      askpass.cleanup();
       const entry = activeClones.get(cloneId);
       if (entry) {
         if (code === 0) {
@@ -256,7 +458,11 @@ export function registerGitHubRoutes(deps: GitHubRouteDeps): void {
           broadcast("clone_progress", { clone_id: cloneId, progress: 100, status: "done" });
         } else {
           entry.status = "error";
-          entry.error = `git clone exited with code ${code}: ${stderrBuf.slice(-500)}`;
+          entry.error = summarizeGitFailure(
+            stderrBuf,
+            token,
+            `git clone failed (exit ${typeof code === "number" ? code : "unknown"})`,
+          );
           broadcast("clone_progress", {
             clone_id: cloneId,
             progress: entry.progress,
@@ -268,11 +474,12 @@ export function registerGitHubRoutes(deps: GitHubRouteDeps): void {
     });
 
     child.on("error", (err) => {
+      askpass.cleanup();
       const entry = activeClones.get(cloneId);
       if (entry) {
         entry.status = "error";
-        entry.error = err.message;
-        broadcast("clone_progress", { clone_id: cloneId, progress: 0, status: "error", error: err.message });
+        entry.error = summarizeGitFailure(err.message, token, "git clone failed");
+        broadcast("clone_progress", { clone_id: cloneId, progress: 0, status: "error", error: entry.error });
       }
     });
 

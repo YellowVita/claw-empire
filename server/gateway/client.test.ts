@@ -225,6 +225,60 @@ describe("gateway client", () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe("https://discord.com/api/v10/channels/123456/messages");
   });
 
+  it("messenger settings cache can be invalidated after token replacement", async () => {
+    const dbPath = createTestDb({
+      messengerChannels: {
+        discord: {
+          token: "discord-old-token",
+          sessions: [],
+        },
+      },
+    });
+
+    const fetchMock = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    const gateway = await importGatewayModule({
+      DB_PATH: dbPath,
+      OPENCLAW_CONFIG: undefined,
+    });
+
+    await gateway.sendMessengerMessage({
+      channel: "discord",
+      targetId: "123456",
+      text: "before",
+    });
+    expect((fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>)?.authorization).toBe(
+      "Bot discord-old-token",
+    );
+
+    const db = new DatabaseSync(dbPath);
+    try {
+      db.prepare("UPDATE settings SET value = ? WHERE key = ?").run(
+        JSON.stringify({
+          discord: {
+            token: "discord-new-token",
+            sessions: [],
+          },
+        }),
+        "messengerChannels",
+      );
+    } finally {
+      db.close();
+    }
+
+    gateway.invalidateMessengerConfigCache();
+
+    await gateway.sendMessengerMessage({
+      channel: "discord",
+      targetId: "123456",
+      text: "after",
+    });
+    expect((fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>)?.authorization).toBe(
+      "Bot discord-new-token",
+    );
+  });
+
   it("listDiscordChannelsByToken은 Bot 토큰으로 길드 채널 목록을 자동 조회한다", async () => {
     const dbPath = createTestDb();
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {

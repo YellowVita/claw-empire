@@ -213,6 +213,10 @@ function loadMessengerConfig(): MessengerRuntimeConfig {
   return merged;
 }
 
+export function invalidateMessengerConfigCache(): void {
+  cachedMessengerConfig = null;
+}
+
 function shouldSendWake(key: string, debounceMs: number): boolean {
   const now = Date.now();
   const last = wakeDebounce.get(key);
