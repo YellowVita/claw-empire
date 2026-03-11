@@ -8,6 +8,12 @@ import { createProjectRouteHelpers } from "./projects/helpers.ts";
 import { DEFAULT_WORKFLOW_PACK_KEY, isWorkflowPackKey } from "../../workflow/packs/definitions.ts";
 import { buildEffectiveWorkflowPack } from "../../workflow/packs/effective-pack.ts";
 import { readProjectWorkflowDefaultPackKeyCached } from "../../workflow/packs/project-config.ts";
+import { readDevelopmentHandoffFromTaskLike, type DevelopmentHandoffState } from "../../workflow/orchestration/development-handoff.ts";
+import {
+  buildSyntheticQueuedTaskRunSheet,
+  readTaskRunSheetForTask,
+  type TaskRunSheetStage,
+} from "../../workflow/orchestration/task-run-sheets.ts";
 
 type FirstQueryValue = (value: unknown) => string | undefined;
 type NormalizeTextField = (value: unknown) => string | null;
@@ -20,6 +26,280 @@ interface RegisterProjectRoutesOptions {
   normalizeTextField: NormalizeTextField;
   runInTransaction: RunInTransaction;
   nowMs: () => number;
+}
+
+type ProjectTaskWorkflowRow = {
+  id: string;
+  title: string;
+  status: string | null;
+  workflow_pack_key: string | null;
+  workflow_meta_json: string | null;
+  source_task_id: string | null;
+  started_at: number | null;
+  updated_at: number | null;
+};
+
+type DevelopmentWorkflowAttentionTask = {
+  task_id: string;
+  title: string;
+  status: string | null;
+  handoff_state: DevelopmentHandoffState | TaskRunSheetStage | null;
+  run_sheet_stage: TaskRunSheetStage | null;
+  pr_gate_status: "blocked" | "passed" | "skipped" | null;
+  pending_retry: boolean;
+  updated_at: number | null;
+};
+
+type DevelopmentWorkflowHealthSummary = {
+  contract_status: {
+    preview_pack_key: string | null;
+    source: "db" | "json_override" | "workflow_md_override" | "merged_file_override" | null;
+    override_applied: boolean;
+    last_known_good_applied: boolean;
+    last_known_good_cached_at: number | null;
+    warnings: string[];
+  };
+  coverage: {
+    root_task_total: number;
+    stored_run_sheet_count: number;
+    synthetic_queued_count: number;
+    missing_persisted_run_sheet_count: number;
+  };
+  handoff_states: Array<{
+    state: DevelopmentHandoffState | TaskRunSheetStage;
+    count: number;
+  }>;
+  pr_gate: {
+    blocked_count: number;
+    passed_count: number;
+    skipped_count: number;
+    never_checked_count: number;
+    ignored_optional_checks_total: number;
+  };
+  attention_tasks: DevelopmentWorkflowAttentionTask[];
+};
+
+const developmentWorkflowStateOrder: Array<DevelopmentHandoffState | TaskRunSheetStage> = [
+  "queued",
+  "in_progress",
+  "review_ready",
+  "human_review",
+  "merging",
+  "done",
+  "rework",
+];
+
+function normalizeNullableText(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function normalizeNullableNumber(value: unknown): number | null {
+  const numeric = typeof value === "number" ? value : Number(value ?? 0);
+  if (!Number.isFinite(numeric) || numeric <= 0) return null;
+  return Math.trunc(numeric);
+}
+
+function parseJsonObject(value: unknown): Record<string, unknown> | null {
+  if (!value) return null;
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+  if (typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return null;
+}
+
+function readLatestPrGateResult(
+  db: DatabaseSync,
+  taskId: string,
+): {
+  status: "blocked" | "passed" | "skipped" | null;
+  ignoredOptionalChecks: number;
+} {
+  try {
+    const row = db
+      .prepare(
+        `
+          SELECT status, metadata_json
+          FROM task_quality_runs
+          WHERE task_id = ?
+            AND name = 'github_pr_feedback_gate'
+          ORDER BY created_at DESC
+          LIMIT 1
+        `,
+      )
+      .get(taskId) as { status?: unknown; metadata_json?: unknown } | undefined;
+    if (!row) {
+      return { status: null, ignoredOptionalChecks: 0 };
+    }
+    const normalizedStatus =
+      row.status === "passed" || row.status === "skipped"
+        ? row.status
+        : row.status === "failed"
+          ? "blocked"
+          : null;
+    const metadata = parseJsonObject(row.metadata_json);
+    const ignoredOptionalChecks = metadata ? Number(metadata.ignored_check_count ?? 0) || 0 : 0;
+    return {
+      status: normalizedStatus,
+      ignoredOptionalChecks,
+    };
+  } catch {
+    return { status: null, ignoredOptionalChecks: 0 };
+  }
+}
+
+function buildDevelopmentWorkflowHealthSummary(params: {
+  db: DatabaseSync;
+  projectId: string;
+  projectPath: string | null;
+  workflowPackPreviewKey: string | null;
+}): DevelopmentWorkflowHealthSummary | null {
+  const { db, projectId, projectPath, workflowPackPreviewKey } = params;
+  let taskRows: ProjectTaskWorkflowRow[] = [];
+  try {
+    taskRows = db
+      .prepare(
+        `
+          SELECT
+            id,
+            title,
+            status,
+            workflow_pack_key,
+            workflow_meta_json,
+            source_task_id,
+            started_at,
+            updated_at
+          FROM tasks
+          WHERE project_id = ?
+            AND workflow_pack_key = 'development'
+            AND (source_task_id IS NULL OR TRIM(source_task_id) = '')
+          ORDER BY updated_at DESC, created_at DESC
+        `,
+      )
+      .all(projectId) as ProjectTaskWorkflowRow[];
+  } catch {
+    return null;
+  }
+
+  if (taskRows.length <= 0) return null;
+
+  const handoffStateCounts = new Map<DevelopmentHandoffState | TaskRunSheetStage, number>();
+  const attentionTasks: Array<DevelopmentWorkflowAttentionTask & { priority: number }> = [];
+  const prGateCounts = {
+    blocked_count: 0,
+    passed_count: 0,
+    skipped_count: 0,
+    never_checked_count: 0,
+    ignored_optional_checks_total: 0,
+  };
+  let storedRunSheetCount = 0;
+  let syntheticQueuedCount = 0;
+  let missingPersistedRunSheetCount = 0;
+
+  for (const task of taskRows) {
+    const handoff = readDevelopmentHandoffFromTaskLike(task);
+    const storedRunSheet = readTaskRunSheetForTask(db as any, task.id);
+    const syntheticRunSheet = storedRunSheet ? null : buildSyntheticQueuedTaskRunSheet(db as any, task.id);
+    const latestPrGate = readLatestPrGateResult(db, task.id);
+
+    if (storedRunSheet) storedRunSheetCount += 1;
+    if (!storedRunSheet && syntheticRunSheet?.synthetic) syntheticQueuedCount += 1;
+    if (!storedRunSheet && !syntheticRunSheet) missingPersistedRunSheetCount += 1;
+
+    const resolvedState = handoff?.state ?? storedRunSheet?.stage ?? syntheticRunSheet?.stage ?? null;
+    if (resolvedState) {
+      handoffStateCounts.set(resolvedState, (handoffStateCounts.get(resolvedState) ?? 0) + 1);
+    }
+
+    if (latestPrGate.status === "blocked") prGateCounts.blocked_count += 1;
+    else if (latestPrGate.status === "passed") prGateCounts.passed_count += 1;
+    else if (latestPrGate.status === "skipped") prGateCounts.skipped_count += 1;
+    else prGateCounts.never_checked_count += 1;
+    prGateCounts.ignored_optional_checks_total += latestPrGate.ignoredOptionalChecks;
+
+    const pendingRetry =
+      handoff?.pending_retry ??
+      storedRunSheet?.snapshot.review_checklist.pending_retry ??
+      storedRunSheet?.snapshot.validation.pending_retry ??
+      syntheticRunSheet?.snapshot.review_checklist.pending_retry ??
+      syntheticRunSheet?.snapshot.validation.pending_retry ??
+      false;
+    const priority =
+      latestPrGate.status === "blocked"
+        ? 0
+        : resolvedState === "rework"
+          ? 1
+          : resolvedState === "human_review"
+            ? 2
+            : pendingRetry
+              ? 3
+              : !storedRunSheet && !syntheticRunSheet
+                ? 4
+                : null;
+    if (priority != null) {
+      attentionTasks.push({
+        priority,
+        task_id: task.id,
+        title: task.title,
+        status: task.status,
+        handoff_state: resolvedState,
+        run_sheet_stage: storedRunSheet?.stage ?? syntheticRunSheet?.stage ?? null,
+        pr_gate_status: latestPrGate.status,
+        pending_retry: pendingRetry,
+        updated_at: normalizeNullableNumber(task.updated_at),
+      });
+    }
+  }
+
+  const contractPreview =
+    projectPath && workflowPackPreviewKey && isWorkflowPackKey(workflowPackPreviewKey)
+      ? buildEffectiveWorkflowPack({
+          db,
+          packKey: workflowPackPreviewKey,
+          projectPath,
+        })
+      : null;
+
+  return {
+    contract_status: {
+      preview_pack_key: workflowPackPreviewKey,
+      source: contractPreview?.source ?? null,
+      override_applied: contractPreview?.override_applied ?? false,
+      last_known_good_applied: contractPreview?.last_known_good_applied ?? false,
+      last_known_good_cached_at: contractPreview?.last_known_good_cached_at ?? null,
+      warnings: contractPreview?.warnings ?? [],
+    },
+    coverage: {
+      root_task_total: taskRows.length,
+      stored_run_sheet_count: storedRunSheetCount,
+      synthetic_queued_count: syntheticQueuedCount,
+      missing_persisted_run_sheet_count: missingPersistedRunSheetCount,
+    },
+    handoff_states: [...handoffStateCounts.entries()]
+      .map(([state, count]) => ({ state, count }))
+      .sort(
+        (left, right) =>
+          developmentWorkflowStateOrder.indexOf(left.state) - developmentWorkflowStateOrder.indexOf(right.state),
+      ),
+    pr_gate: prGateCounts,
+    attention_tasks: attentionTasks
+      .sort((left, right) => {
+        if (left.priority !== right.priority) return left.priority - right.priority;
+        return (right.updated_at ?? 0) - (left.updated_at ?? 0);
+      })
+      .slice(0, 10)
+      .map(({ priority: _priority, ...task }) => task),
+  };
 }
 
 export function registerProjectRoutes({
@@ -593,6 +873,12 @@ export function registerProjectRoutes({
       (project as Record<string, unknown>).project_path,
       (project as Record<string, unknown>).default_pack_key,
     );
+    const developmentWorkflowHealth = buildDevelopmentWorkflowHealthSummary({
+      db,
+      projectId: id,
+      projectPath: normalizeNullableText((project as Record<string, unknown>).project_path),
+      workflowPackPreviewKey: workflowPackDetection.workflow_pack_preview_key,
+    });
 
     res.json({
       project: { ...project, assigned_agent_ids: assignedAgentIds, ...workflowPackDetection },
@@ -600,6 +886,7 @@ export function registerProjectRoutes({
       tasks,
       reports,
       decision_events: decisionEvents,
+      development_workflow_health: developmentWorkflowHealth,
     });
   });
 }

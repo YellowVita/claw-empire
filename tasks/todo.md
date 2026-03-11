@@ -70,3 +70,10 @@
 - [x] Switch runtime callers to the cached project workflow config loader
 - [x] Show cache-applied state in Project Insights effective preview
 - [x] Add regression tests and run targeted server/UI verification plus build
+
+## 13. Development Workflow QA / Telemetry
+- [x] Add project-level development workflow health summary to project detail route
+- [x] Extend project detail API/types and Project Insights UI with workflow health telemetry
+- [x] Add project health aggregation regression tests plus Project Insights UI coverage
+- [x] Add operator QA checklist document for development workflow validation
+- [x] Run targeted server/UI verification plus build

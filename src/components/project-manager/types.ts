@@ -1,5 +1,6 @@
 import type { Agent, Department, Project, AssignmentMode } from "../../types";
 import type {
+  ProjectDevelopmentWorkflowHealth,
   ProjectDecisionEventItem,
   ProjectDetailResponse,
   ProjectReportHistoryItem,
@@ -78,4 +79,5 @@ export interface ProjectRenderState {
   sortedDecisionEvents: ProjectDecisionEventItem[];
   selectedProject: Project | null;
   viewedProject: Project | null;
+  developmentWorkflowHealth?: ProjectDevelopmentWorkflowHealth | null;
 }

@@ -388,12 +388,69 @@ export interface ProjectDecisionEventItem {
   created_at: number;
 }
 
+export interface ProjectDevelopmentWorkflowAttentionTask {
+  task_id: string;
+  title: string;
+  status: string;
+  handoff_state:
+    | "queued"
+    | "in_progress"
+    | "review_ready"
+    | "human_review"
+    | "merging"
+    | "done"
+    | "rework"
+    | null;
+  run_sheet_stage:
+    | "queued"
+    | "in_progress"
+    | "review_ready"
+    | "human_review"
+    | "merging"
+    | "done"
+    | "rework"
+    | null;
+  pr_gate_status: "passed" | "blocked" | "skipped" | null;
+  pending_retry: boolean;
+  updated_at: number | null;
+}
+
+export interface ProjectDevelopmentWorkflowHealth {
+  contract_status: {
+    preview_pack_key: WorkflowPackKey | null;
+    source: "db" | "json_override" | "workflow_md_override" | "merged_file_override" | null;
+    override_applied: boolean;
+    last_known_good_applied: boolean;
+    last_known_good_cached_at: number | null;
+    warnings: string[];
+  };
+  coverage: {
+    root_task_total: number;
+    stored_run_sheet_count: number;
+    synthetic_queued_count: number;
+    missing_persisted_run_sheet_count: number;
+  };
+  handoff_states: Array<{
+    state: ProjectDevelopmentWorkflowAttentionTask["handoff_state"];
+    count: number;
+  }>;
+  pr_gate: {
+    blocked_count: number;
+    passed_count: number;
+    skipped_count: number;
+    never_checked_count: number;
+    ignored_optional_checks_total: number;
+  };
+  attention_tasks: ProjectDevelopmentWorkflowAttentionTask[];
+}
+
 export interface ProjectDetailResponse {
   project: Project;
   assigned_agents?: Agent[];
   tasks: ProjectTaskHistoryItem[];
   reports: ProjectReportHistoryItem[];
   decision_events: ProjectDecisionEventItem[];
+  development_workflow_health?: ProjectDevelopmentWorkflowHealth | null;
 }
 
 export async function getProjects(params?: { page?: number; page_size?: number; search?: string }): Promise<{

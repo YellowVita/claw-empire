@@ -1,5 +1,11 @@
 import { useEffect, useState } from "react";
-import type { ProjectDecisionEventItem, ProjectReportHistoryItem, ProjectTaskHistoryItem, WorkflowPackEffectivePreview } from "../../api";
+import type {
+  ProjectDecisionEventItem,
+  ProjectDevelopmentWorkflowHealth,
+  ProjectReportHistoryItem,
+  ProjectTaskHistoryItem,
+  WorkflowPackEffectivePreview,
+} from "../../api";
 import type { Project, WorkflowPackKey } from "../../types";
 import type { GroupedProjectTaskCard, ProjectI18nTranslate } from "./types";
 import { fmtTime } from "./utils";
@@ -7,6 +13,7 @@ import { fmtTime } from "./utils";
 interface ProjectInsightsPanelProps {
   t: ProjectI18nTranslate;
   selectedProject: Project | null;
+  developmentWorkflowHealth: ProjectDevelopmentWorkflowHealth | null;
   loadingDetail: boolean;
   isCreating: boolean;
   groupedTaskCards: GroupedProjectTaskCard[];
@@ -20,6 +27,7 @@ interface ProjectInsightsPanelProps {
 export default function ProjectInsightsPanel({
   t,
   selectedProject,
+  developmentWorkflowHealth,
   loadingDetail,
   isCreating,
   groupedTaskCards,
@@ -38,6 +46,22 @@ export default function ProjectInsightsPanel({
     setPreviewLoading(false);
     setPreviewError(null);
   }, [selectedProject?.id]);
+
+  const handoffStateLabels: Record<string, string> = {
+    queued: t({ ko: "대기", en: "Queued", ja: "待機", zh: "排队" }),
+    in_progress: t({ ko: "진행 중", en: "In Progress", ja: "進行中", zh: "进行中" }),
+    review_ready: t({ ko: "리뷰 준비", en: "Review Ready", ja: "レビュー準備", zh: "待评审" }),
+    human_review: t({ ko: "사람 리뷰", en: "Human Review", ja: "人間レビュー", zh: "人工评审" }),
+    merging: t({ ko: "병합 중", en: "Merging", ja: "マージ中", zh: "合并中" }),
+    done: t({ ko: "완료", en: "Done", ja: "完了", zh: "完成" }),
+    rework: t({ ko: "재작업", en: "Rework", ja: "再作業", zh: "返工" }),
+  };
+  const prGateLabels: Record<string, string> = {
+    blocked: t({ ko: "차단", en: "Blocked", ja: "ブロック", zh: "阻止" }),
+    passed: t({ ko: "통과", en: "Passed", ja: "通過", zh: "通过" }),
+    skipped: t({ ko: "건너뜀", en: "Skipped", ja: "スキップ", zh: "跳过" }),
+  };
+  const healthWarnings = developmentWorkflowHealth?.contract_status.warnings.slice(0, 2) ?? [];
 
   return (
     <div className="min-w-0 space-y-4">
@@ -212,6 +236,197 @@ export default function ProjectInsightsPanel({
           </div>
         )}
       </div>
+
+      {selectedProject && developmentWorkflowHealth && (
+        <div className="min-w-0 rounded-xl border border-slate-700 bg-slate-800/40 p-4">
+          <h4 className="text-sm font-semibold text-white">
+            {t({
+              ko: "Development Workflow Health",
+              en: "Development Workflow Health",
+              ja: "Development Workflow Health",
+              zh: "Development Workflow Health",
+            })}
+          </h4>
+          <div className="mt-3 space-y-3 text-xs">
+            <div className="rounded-lg border border-slate-700/70 bg-slate-900/60 p-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-medium text-slate-200">
+                  {t({ ko: "Workflow Contract", en: "Workflow Contract", ja: "Workflow Contract", zh: "Workflow Contract" })}
+                </span>
+                <span className="rounded-full border border-slate-600 px-2 py-0.5 text-[10px] text-slate-300">
+                  {developmentWorkflowHealth.contract_status.preview_pack_key || "-"}
+                </span>
+                {developmentWorkflowHealth.contract_status.override_applied && (
+                  <span className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-300">
+                    {t({ ko: "override 적용", en: "override applied", ja: "override 適用", zh: "已应用 override" })}
+                  </span>
+                )}
+                {developmentWorkflowHealth.contract_status.last_known_good_applied && (
+                  <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] text-amber-300">
+                    {t({
+                      ko: "last-known-good 활성",
+                      en: "last-known-good active",
+                      ja: "last-known-good 有効",
+                      zh: "last-known-good 已启用",
+                    })}
+                  </span>
+                )}
+              </div>
+              <p className="mt-2 text-slate-400">
+                {t({ ko: "Source", en: "Source", ja: "Source", zh: "Source" })}:{" "}
+                {developmentWorkflowHealth.contract_status.source || "db"}
+              </p>
+              {developmentWorkflowHealth.contract_status.last_known_good_cached_at && (
+                <p className="mt-1 text-slate-400">
+                  {t({ ko: "Cached At", en: "Cached At", ja: "Cached At", zh: "Cached At" })}:{" "}
+                  {fmtTime(developmentWorkflowHealth.contract_status.last_known_good_cached_at)}
+                </p>
+              )}
+              <p className="mt-1 text-slate-400">
+                {t({ ko: "Warnings", en: "Warnings", ja: "Warnings", zh: "Warnings" })}:{" "}
+                {developmentWorkflowHealth.contract_status.warnings.length}
+              </p>
+              {healthWarnings.length > 0 && (
+                <div className="mt-2 space-y-1">
+                  {healthWarnings.map((warning) => (
+                    <p key={warning} className="text-[11px] text-amber-300">
+                      {warning}
+                    </p>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+              <div className="rounded-lg border border-slate-700/70 bg-slate-900/60 p-3">
+                <p className="font-medium text-slate-200">
+                  {t({ ko: "Coverage", en: "Coverage", ja: "Coverage", zh: "Coverage" })}
+                </p>
+                <div className="mt-2 space-y-1 text-slate-300">
+                  <p>
+                    {t({ ko: "Root Tasks", en: "Root Tasks", ja: "Root Tasks", zh: "Root Tasks" })}:{" "}
+                    {developmentWorkflowHealth.coverage.root_task_total}
+                  </p>
+                  <p>
+                    {t({ ko: "Stored Run Sheets", en: "Stored Run Sheets", ja: "Stored Run Sheets", zh: "Stored Run Sheets" })}:{" "}
+                    {developmentWorkflowHealth.coverage.stored_run_sheet_count}
+                  </p>
+                  <p>
+                    {t({ ko: "Synthetic Queued", en: "Synthetic Queued", ja: "Synthetic Queued", zh: "Synthetic Queued" })}:{" "}
+                    {developmentWorkflowHealth.coverage.synthetic_queued_count}
+                  </p>
+                  <p>
+                    {t({
+                      ko: "Missing Persisted",
+                      en: "Missing Persisted",
+                      ja: "Missing Persisted",
+                      zh: "Missing Persisted",
+                    })}
+                    : {developmentWorkflowHealth.coverage.missing_persisted_run_sheet_count}
+                  </p>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-slate-700/70 bg-slate-900/60 p-3">
+                <p className="font-medium text-slate-200">
+                  {t({ ko: "PR Gate", en: "PR Gate", ja: "PR Gate", zh: "PR Gate" })}
+                </p>
+                <div className="mt-2 space-y-1 text-slate-300">
+                  <p>
+                    {t({ ko: "Blocked", en: "Blocked", ja: "Blocked", zh: "Blocked" })}:{" "}
+                    {developmentWorkflowHealth.pr_gate.blocked_count}
+                  </p>
+                  <p>
+                    {t({ ko: "Passed", en: "Passed", ja: "Passed", zh: "Passed" })}:{" "}
+                    {developmentWorkflowHealth.pr_gate.passed_count}
+                  </p>
+                  <p>
+                    {t({ ko: "Skipped", en: "Skipped", ja: "Skipped", zh: "Skipped" })}:{" "}
+                    {developmentWorkflowHealth.pr_gate.skipped_count}
+                  </p>
+                  <p>
+                    {t({ ko: "Never Checked", en: "Never Checked", ja: "Never Checked", zh: "Never Checked" })}:{" "}
+                    {developmentWorkflowHealth.pr_gate.never_checked_count}
+                  </p>
+                  <p>
+                    {t({
+                      ko: "Ignored Optional Checks",
+                      en: "Ignored Optional Checks",
+                      ja: "Ignored Optional Checks",
+                      zh: "Ignored Optional Checks",
+                    })}
+                    : {developmentWorkflowHealth.pr_gate.ignored_optional_checks_total}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-slate-700/70 bg-slate-900/60 p-3">
+              <p className="font-medium text-slate-200">
+                {t({ ko: "Handoff States", en: "Handoff States", ja: "Handoff States", zh: "Handoff States" })}
+              </p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {developmentWorkflowHealth.handoff_states.map((entry) => (
+                  <span
+                    key={`${entry.state}-${entry.count}`}
+                    className="rounded-full border border-slate-600 px-2 py-0.5 text-[11px] text-slate-300"
+                  >
+                    {(entry.state && handoffStateLabels[entry.state]) || entry.state || "-"}: {entry.count}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-slate-700/70 bg-slate-900/60 p-3">
+              <div className="flex items-center justify-between gap-2">
+                <p className="font-medium text-slate-200">
+                  {t({ ko: "Attention Tasks", en: "Attention Tasks", ja: "Attention Tasks", zh: "Attention Tasks" })}
+                </p>
+                <span className="text-[11px] text-slate-500">{developmentWorkflowHealth.attention_tasks.length}</span>
+              </div>
+              {developmentWorkflowHealth.attention_tasks.length === 0 ? (
+                <p className="mt-2 text-[11px] text-slate-500">
+                  {t({
+                    ko: "주의가 필요한 development task가 없습니다",
+                    en: "No development workflow issues detected",
+                    ja: "注意が必要な development task はありません",
+                    zh: "没有需要关注的 development task",
+                  })}
+                </p>
+              ) : (
+                <div className="mt-2 space-y-2">
+                  {developmentWorkflowHealth.attention_tasks.map((task) => (
+                    <button
+                      key={task.task_id}
+                      type="button"
+                      onClick={() => void handleOpenTaskDetail(task.task_id)}
+                      className="w-full rounded-lg border border-slate-700/70 bg-slate-950/60 px-3 py-2 text-left transition hover:border-blue-500/70"
+                    >
+                      <p className="whitespace-pre-wrap break-all text-xs font-medium text-slate-100">{task.title}</p>
+                      <p className="mt-1 break-all text-[11px] text-slate-400">
+                        {t({ ko: "State", en: "State", ja: "State", zh: "State" })}:{" "}
+                        {(task.handoff_state && handoffStateLabels[task.handoff_state]) || task.handoff_state || "-"}
+                        {" · "}
+                        {t({ ko: "PR Gate", en: "PR Gate", ja: "PR Gate", zh: "PR Gate" })}:{" "}
+                        {(task.pr_gate_status && prGateLabels[task.pr_gate_status]) || "-"}
+                        {" · "}
+                        {task.pending_retry
+                          ? t({ ko: "Retry Pending", en: "Retry Pending", ja: "Retry Pending", zh: "Retry Pending" })
+                          : t({ ko: "No Retry", en: "No Retry", ja: "No Retry", zh: "No Retry" })}
+                      </p>
+                      {task.updated_at && (
+                        <p className="mt-1 text-[11px] text-slate-500">
+                          {t({ ko: "Updated", en: "Updated", ja: "Updated", zh: "Updated" })}: {fmtTime(task.updated_at)}
+                        </p>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="min-w-0 rounded-xl border border-slate-700 bg-slate-800/40 p-4">
         <h4 className="text-sm font-semibold text-white">

@@ -6,6 +6,7 @@ import {
   getProjectDetail,
   getProjects,
   getTaskReportDetail,
+  type ProjectDevelopmentWorkflowHealth,
   type ProjectDecisionEventItem,
   type ProjectDetailResponse,
   type ProjectReportHistoryItem,
@@ -435,6 +436,7 @@ export default function ProjectManagerModal({ agents, departments = [], onClose 
                 <ProjectInsightsPanel
                   t={t as ProjectI18nTranslate}
                   selectedProject={selectedProject}
+                  developmentWorkflowHealth={(detail?.development_workflow_health as ProjectDevelopmentWorkflowHealth | null) ?? null}
                   loadingDetail={loadingDetail}
                   isCreating={isCreating}
                   groupedTaskCards={groupedTaskCards}
