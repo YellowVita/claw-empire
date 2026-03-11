@@ -5,6 +5,10 @@ import {
   listTaskExecutionEventsForTask,
   summarizeTaskExecutionEvents,
 } from "../../../workflow/orchestration/task-execution-events.ts";
+import {
+  buildSyntheticQueuedTaskRunSheet,
+  readTaskRunSheetForTask,
+} from "../../../workflow/orchestration/task-run-sheets.ts";
 
 export function registerTaskReportRoutes(ctx: RuntimeContext): void {
   const { app, db, nowMs, archivePlanningConsolidatedReport } = ctx;
@@ -180,6 +184,8 @@ export function registerTaskReportRoutes(ctx: RuntimeContext): void {
       const quality = buildTaskQualityPayload(db as any, rootTaskId);
       const executionSummary = summarizeTaskExecutionEvents(db as any, rootTaskId);
       const executionEvents = listTaskExecutionEventsForTask(db as any, rootTaskId, 50);
+      const developmentRunSheet =
+        readTaskRunSheetForTask(db as any, rootTaskId) ?? buildSyntheticQueuedTaskRunSheet(db as any, rootTaskId);
 
       const archiveRow = db
         .prepare(
@@ -261,6 +267,7 @@ export function registerTaskReportRoutes(ctx: RuntimeContext): void {
           summary: executionSummary,
           events: executionEvents,
         },
+        development_run_sheet: developmentRunSheet,
         meeting_minutes: rootMinutes,
         planning_summary: planningSummary,
         team_reports: teamReports,

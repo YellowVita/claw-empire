@@ -10,6 +10,7 @@ import { resolveScopedTeamLeader } from "../packs/agent-scope.ts";
 import { readYoloModeEnabled } from "../../routes/ops/messages/decision-inbox/yolo-mode.ts";
 import { reconcileVideoRenderDelegationState } from "./video-render-delegation-state.ts";
 import { recordTaskArtifact, recordTaskQualityRun } from "./task-quality-evidence.ts";
+import { upsertTaskRunSheet } from "./task-run-sheets.ts";
 
 type CreateReviewFinalizeToolsDeps = Record<string, any>;
 
@@ -148,6 +149,11 @@ export function createReviewFinalizeTools(deps: CreateReviewFinalizeToolsDeps) {
         }
       | undefined;
     if (!currentTask || currentTask.status !== "review") return; // Already moved or cancelled
+    upsertTaskRunSheet(db as any, {
+      taskId,
+      stage: "human_review",
+      updatedAt: nowMs(),
+    });
 
     if (!options?.bypassProjectDecisionGate && !currentTask.source_task_id && currentTask.project_id) {
       const gateSnapshot = getProjectReviewGateSnapshot(currentTask.project_id);
@@ -618,9 +624,14 @@ export function createReviewFinalizeTools(deps: CreateReviewFinalizeToolsDeps) {
       const latestTask = db
         .prepare("SELECT status, department_id, project_id, workflow_pack_key FROM tasks WHERE id = ?")
         .get(taskId) as
-        | { status: string; department_id: string | null }
-        | undefined;
+          | { status: string; department_id: string | null }
+          | undefined;
       if (!latestTask || latestTask.status !== "review") return;
+      upsertTaskRunSheet(db as any, {
+        taskId,
+        stage: "merging",
+        updatedAt: t,
+      });
 
       // If task has a worktree, merge the branch back before marking done
       const wtInfo = taskWorktrees.get(taskId);
@@ -714,6 +725,11 @@ export function createReviewFinalizeTools(deps: CreateReviewFinalizeToolsDeps) {
 
       db.prepare("UPDATE tasks SET status = 'done', completed_at = ?, updated_at = ? WHERE id = ?").run(t, t, taskId);
       setTaskCreationAuditCompletion(taskId, true);
+      upsertTaskRunSheet(db as any, {
+        taskId,
+        stage: "done",
+        updatedAt: t,
+      });
 
       appendTaskLog(taskId, "system", "Status → done (all leaders approved)");
       endTaskExecutionSession(taskId, "task_done");

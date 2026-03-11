@@ -208,6 +208,75 @@ export interface TaskQualityPayload {
   artifacts: TaskArtifact[];
 }
 
+export interface TaskRunSheetSnapshot {
+  current_plan: {
+    title: string;
+    description: string | null;
+    latest_report: string | null;
+    project_path: string | null;
+  };
+  reproduction: {
+    status: "recorded" | "not_recorded";
+    evidence: string[];
+  };
+  implementation: {
+    result_summary: string | null;
+    latest_report: string | null;
+    diff_summary: string | null;
+    log_highlights: string[];
+  };
+  validation: {
+    required_total: number;
+    passed: number;
+    failed: number;
+    pending: number;
+    blocked_review: boolean;
+    pending_retry: boolean;
+    recent_runs: Array<{
+      name: string;
+      status: string;
+      summary: string | null;
+      created_at: number;
+    }>;
+    artifacts: Array<{
+      title: string;
+      kind: string;
+      path: string | null;
+      created_at: number;
+    }>;
+  };
+  review_checklist: {
+    entered_review: boolean;
+    blocked_review: boolean;
+    waiting_on_subtasks: boolean;
+    waiting_on_child_reviews: boolean;
+    pending_retry: boolean;
+    merge_status: "not_started" | "merged" | "failed";
+  };
+  handoff: {
+    status: string;
+    summary: string | null;
+  };
+  timeline: {
+    created_at: number | null;
+    started_at: number | null;
+    review_entered_at: number | null;
+    completed_at: number | null;
+    updated_at: number | null;
+  };
+}
+
+export interface TaskRunSheet {
+  task_id: string;
+  workflow_pack_key: string;
+  stage: "queued" | "in_progress" | "review_ready" | "human_review" | "merging" | "done" | "rework";
+  status: string;
+  summary_markdown: string;
+  snapshot: TaskRunSheetSnapshot;
+  updated_at: number;
+  synthetic: boolean;
+}
+
 export interface TaskReportTeamSection {
   id: string;
   task_id: string;
@@ -284,6 +353,7 @@ export interface TaskReportDetail {
     summary: TaskExecutionSummary;
     events: TaskExecutionEvent[];
   };
+  development_run_sheet?: TaskRunSheet | null;
   planning_summary?: {
     title: string;
     content: string;

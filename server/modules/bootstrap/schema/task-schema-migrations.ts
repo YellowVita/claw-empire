@@ -236,6 +236,25 @@ export function applyTaskSchemaMigrations(db: DbLike): void {
   }
   try {
     db.exec(`
+      CREATE TABLE IF NOT EXISTS task_run_sheets (
+        task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+        workflow_pack_key TEXT NOT NULL,
+        stage TEXT NOT NULL CHECK(stage IN ('queued','in_progress','review_ready','human_review','merging','done','rework')),
+        status TEXT NOT NULL,
+        summary_markdown TEXT NOT NULL,
+        snapshot_json TEXT NOT NULL,
+        created_at INTEGER DEFAULT (unixepoch()*1000),
+        updated_at INTEGER DEFAULT (unixepoch()*1000)
+      )
+    `);
+    db.exec(
+      "CREATE INDEX IF NOT EXISTS idx_task_run_sheets_pack_stage_updated ON task_run_sheets(workflow_pack_key, stage, updated_at DESC)",
+    );
+  } catch {
+    /* already exists */
+  }
+  try {
+    db.exec(`
       CREATE TABLE IF NOT EXISTS task_execution_events (
         id TEXT PRIMARY KEY,
         task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,

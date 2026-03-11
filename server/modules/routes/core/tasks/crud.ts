@@ -922,6 +922,7 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
     db.prepare("DELETE FROM task_quality_items WHERE task_id = ?").run(id);
     db.prepare("DELETE FROM task_quality_runs WHERE task_id = ?").run(id);
     db.prepare("DELETE FROM task_artifacts WHERE task_id = ?").run(id);
+    db.prepare("DELETE FROM task_run_sheets WHERE task_id = ?").run(id);
     db.prepare("DELETE FROM messages WHERE task_id = ?").run(id);
     db.prepare("DELETE FROM tasks WHERE id = ?").run(id);
 

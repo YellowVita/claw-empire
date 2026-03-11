@@ -13,6 +13,7 @@ import {
   loadPendingInterruptPrompts,
 } from "../core/interrupt-injection-tools.ts";
 import { deleteTaskRetryQueueRow, runTaskExecutionHooks } from "./task-execution-policy.ts";
+import { upsertTaskRunSheet } from "./task-run-sheets.ts";
 
 type CreateExecutionStartTaskToolsDeps = {
   nowMs: RuntimeContext["nowMs"];
@@ -348,6 +349,11 @@ export function createExecutionStartTaskTools(deps: CreateExecutionStartTaskTool
     }
 
     appendTaskLog(taskId, "system", `RUN start (agent=${execAgent.name}, provider=${provider})`);
+    upsertTaskRunSheet(db as any, {
+      taskId,
+      stage: "in_progress",
+      updatedAt: nowMs(),
+    });
     if (provider === "api") {
       const controller = new AbortController();
       const fakePid = getNextHttpAgentPid();

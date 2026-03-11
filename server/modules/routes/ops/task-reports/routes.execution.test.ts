@@ -39,11 +39,13 @@ function setupDb(): DatabaseSync {
       status TEXT,
       project_id TEXT,
       project_path TEXT,
+      workflow_pack_key TEXT NOT NULL DEFAULT 'development',
       result TEXT,
       source_task_id TEXT,
       created_at INTEGER,
       started_at INTEGER,
-      completed_at INTEGER
+      completed_at INTEGER,
+      updated_at INTEGER
     );
     CREATE TABLE agents (
       id TEXT PRIMARY KEY,
@@ -113,6 +115,16 @@ function setupDb(): DatabaseSync {
       source TEXT NOT NULL,
       metadata_json TEXT,
       created_at INTEGER NOT NULL
+    );
+    CREATE TABLE task_run_sheets (
+      task_id TEXT PRIMARY KEY,
+      workflow_pack_key TEXT NOT NULL,
+      stage TEXT NOT NULL,
+      status TEXT NOT NULL,
+      summary_markdown TEXT NOT NULL,
+      snapshot_json TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
     );
     CREATE TABLE meeting_minutes (
       id TEXT PRIMARY KEY,
@@ -202,7 +214,7 @@ function setupDb(): DatabaseSync {
     "Goal",
   );
   db.prepare(
-    "INSERT INTO tasks (id, title, description, department_id, assigned_agent_id, status, project_id, project_path, result, source_task_id, created_at, started_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO tasks (id, title, description, department_id, assigned_agent_id, status, project_id, project_path, workflow_pack_key, result, source_task_id, created_at, started_at, completed_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
   ).run(
     "task-1",
     "Ship feature",
@@ -212,10 +224,12 @@ function setupDb(): DatabaseSync {
     "done",
     "project-1",
     "/tmp/project",
+    "development",
     "done",
     null,
     1000,
     1100,
+    2000,
     2000,
   );
   db.prepare("INSERT INTO task_logs (task_id, kind, message, created_at) VALUES (?, ?, ?, ?)").run(
@@ -276,6 +290,42 @@ function setupDb(): DatabaseSync {
     '{"verified":true}',
     1960,
   );
+  db.prepare(
+    "INSERT INTO task_run_sheets (task_id, workflow_pack_key, stage, status, summary_markdown, snapshot_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+  ).run(
+    "task-1",
+    "development",
+    "done",
+    "done",
+    "# Development Run Sheet",
+    JSON.stringify({
+      current_plan: { title: "Ship feature", description: "Implement execution observability", latest_report: null, project_path: "/tmp/project" },
+      reproduction: { status: "not_recorded", evidence: [] },
+      implementation: { result_summary: null, latest_report: null, diff_summary: null, log_highlights: [] },
+      validation: {
+        required_total: 1,
+        passed: 1,
+        failed: 0,
+        pending: 0,
+        blocked_review: false,
+        pending_retry: true,
+        recent_runs: [],
+        artifacts: [],
+      },
+      review_checklist: {
+        entered_review: true,
+        blocked_review: false,
+        waiting_on_subtasks: false,
+        waiting_on_child_reviews: false,
+        pending_retry: true,
+        merge_status: "merged",
+      },
+      handoff: { status: "done", summary: "done" },
+      timeline: { created_at: 1000, started_at: 1100, review_entered_at: 1900, completed_at: 2000, updated_at: 2000 },
+    }),
+    1000,
+    2000,
+  );
 
   return db;
 }
@@ -325,6 +375,14 @@ describe("task report execution block", () => {
       });
       expect(payload.execution.events).toHaveLength(2);
       expect(payload.execution.events[0]?.id).toBe("event-2");
+      expect(payload.development_run_sheet).toEqual(
+        expect.objectContaining({
+          task_id: "task-1",
+          stage: "done",
+          synthetic: false,
+          summary_markdown: "# Development Run Sheet",
+        }),
+      );
       expect(payload.quality).toEqual({
         items: [
           expect.objectContaining({
@@ -352,6 +410,34 @@ describe("task report execution block", () => {
           }),
         ],
       });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("run sheet가 없고 development pending task면 synthetic queued run sheet를 응답한다", () => {
+    const db = setupDb();
+    try {
+      db.prepare("DELETE FROM task_run_sheets WHERE task_id = ?").run("task-1");
+      db.prepare("UPDATE tasks SET status = 'pending', started_at = NULL, completed_at = NULL WHERE id = ?").run("task-1");
+
+      const { getRoutes } = createHarness(db);
+      const handler = getRoutes.get("/api/task-reports/:taskId");
+      expect(handler).toBeTypeOf("function");
+
+      const res = createFakeResponse();
+      handler?.({ params: { taskId: "task-1" } }, res);
+
+      expect(res.statusCode).toBe(200);
+      const payload = res.payload as any;
+      expect(payload.development_run_sheet).toEqual(
+        expect.objectContaining({
+          task_id: "task-1",
+          stage: "queued",
+          status: "pending",
+          synthetic: true,
+        }),
+      );
     } finally {
       db.close();
     }

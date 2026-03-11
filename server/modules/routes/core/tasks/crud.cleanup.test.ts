@@ -137,6 +137,16 @@ function createHarness() {
       metadata_json TEXT,
       created_at INTEGER NOT NULL
     );
+    CREATE TABLE task_run_sheets (
+      task_id TEXT PRIMARY KEY,
+      workflow_pack_key TEXT NOT NULL,
+      stage TEXT NOT NULL,
+      status TEXT NOT NULL,
+      summary_markdown TEXT NOT NULL,
+      snapshot_json TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
     CREATE TABLE messages (
       id TEXT PRIMARY KEY,
       task_id TEXT,
@@ -333,6 +343,11 @@ describe("task CRUD cleanup paths", () => {
           "INSERT INTO task_artifacts (id, task_id, quality_item_id, kind, title, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
         )
         .run("artifact-1", "task-delete", null, "report_archive", "archive", "system", 1);
+      harness.db
+        .prepare(
+          "INSERT INTO task_run_sheets (task_id, workflow_pack_key, stage, status, summary_markdown, snapshot_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run("task-delete", "development", "review_ready", "review", "# Run Sheet", '{"current_plan":{"title":"Delete me"}}', 1, 1);
       harness.maps.taskWorktrees.set("task-delete", {
         worktreePath: "/tmp/task-delete",
         branchName: "climpire/task-delete",
@@ -352,6 +367,7 @@ describe("task CRUD cleanup paths", () => {
       expect(harness.db.prepare("SELECT * FROM tasks WHERE id = ?").get("task-delete")).toBeUndefined();
       expect(harness.db.prepare("SELECT * FROM task_quality_runs WHERE task_id = ?").get("task-delete")).toBeUndefined();
       expect(harness.db.prepare("SELECT * FROM task_artifacts WHERE task_id = ?").get("task-delete")).toBeUndefined();
+      expect(harness.db.prepare("SELECT * FROM task_run_sheets WHERE task_id = ?").get("task-delete")).toBeUndefined();
       expect(harness.db.prepare("SELECT status, current_task_id FROM agents WHERE id = ?").get("agent-1")).toEqual({
         status: "idle",
         current_task_id: null,

@@ -118,6 +118,62 @@ const baseReport = {
       },
     ],
   },
+  development_run_sheet: {
+    task_id: "task-1",
+    workflow_pack_key: "development",
+    stage: "done",
+    status: "done",
+    summary_markdown: "# Development Run Sheet\n\n- Stage: done",
+    snapshot: {
+      current_plan: {
+        title: "Ship feature",
+        description: "Implement execution observability",
+        latest_report: "Final report",
+        project_path: "/tmp/project",
+      },
+      reproduction: {
+        status: "not_recorded",
+        evidence: [],
+      },
+      implementation: {
+        result_summary: "Implemented",
+        latest_report: "Final report",
+        diff_summary: "M src/app.ts",
+        log_highlights: [],
+      },
+      validation: {
+        required_total: 1,
+        passed: 1,
+        failed: 0,
+        pending: 0,
+        blocked_review: false,
+        pending_retry: false,
+        recent_runs: [],
+        artifacts: [],
+      },
+      review_checklist: {
+        entered_review: true,
+        blocked_review: false,
+        waiting_on_subtasks: false,
+        waiting_on_child_reviews: false,
+        pending_retry: false,
+        merge_status: "merged",
+      },
+      handoff: {
+        status: "done",
+        summary: "Done",
+      },
+      timeline: {
+        created_at: 1000,
+        started_at: 1100,
+        review_entered_at: 1500,
+        completed_at: 2000,
+        updated_at: 2000,
+      },
+    },
+    updated_at: 2000,
+    synthetic: false,
+  },
   team_reports: [],
   project: {
     root_task_id: "task-1",
@@ -191,5 +247,23 @@ describe("TaskReportPopup", () => {
     expect(screen.getByText("Video artifact verified")).toBeInTheDocument();
     expect(screen.getByText("Captured Artifacts")).toBeInTheDocument();
     expect(screen.getByText("final.mp4")).toBeInTheDocument();
+  });
+
+  it("shows development run sheet when available", () => {
+    render(
+      <I18nProvider language="en">
+        <TaskReportPopup
+          report={baseReport as any}
+          agents={[{ id: "agent-1", name: "Ari", name_ko: "아리", avatar_emoji: "A" } as any]}
+          departments={[{ id: "planning", name: "Planning", name_ko: "기획팀", color: "#00aa88", icon: "P" } as any]}
+          uiLanguage="en"
+          onClose={() => {}}
+        />
+      </I18nProvider>,
+    );
+
+    expect(screen.getByText("Development Run Sheet")).toBeInTheDocument();
+    expect(screen.getByText("Stored canonical brief")).toBeInTheDocument();
+    expect(screen.getByText(/Stage: done/)).toBeInTheDocument();
   });
 });

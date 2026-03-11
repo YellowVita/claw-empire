@@ -212,6 +212,17 @@ CREATE TABLE IF NOT EXISTS task_artifacts (
   created_at INTEGER DEFAULT (unixepoch()*1000)
 );
 
+CREATE TABLE IF NOT EXISTS task_run_sheets (
+  task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+  workflow_pack_key TEXT NOT NULL,
+  stage TEXT NOT NULL CHECK(stage IN ('queued','in_progress','review_ready','human_review','merging','done','rework')),
+  status TEXT NOT NULL,
+  summary_markdown TEXT NOT NULL,
+  snapshot_json TEXT NOT NULL,
+  created_at INTEGER DEFAULT (unixepoch()*1000),
+  updated_at INTEGER DEFAULT (unixepoch()*1000)
+);
+
 CREATE TABLE IF NOT EXISTS task_execution_events (
   id TEXT PRIMARY KEY,
   task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -432,6 +443,8 @@ CREATE INDEX IF NOT EXISTS idx_task_execution_events_task_category_created ON ta
 CREATE INDEX IF NOT EXISTS idx_task_quality_items_task ON task_quality_items(task_id, sort_order ASC, created_at ASC);
 CREATE INDEX IF NOT EXISTS idx_task_quality_runs_task_created ON task_quality_runs(task_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_task_artifacts_task_created ON task_artifacts(task_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_task_run_sheets_pack_stage_updated
+  ON task_run_sheets(workflow_pack_key, stage, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_task_interrupt_injections_task
   ON task_interrupt_injections(task_id, session_id, consumed_at, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_receiver ON messages(receiver_type, receiver_id, created_at DESC);

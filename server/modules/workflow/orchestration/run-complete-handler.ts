@@ -24,6 +24,7 @@ import {
   type TaskRetryReason,
 } from "./task-execution-policy.ts";
 import { recordTaskExecutionEvent } from "./task-execution-events.ts";
+import { upsertTaskRunSheet } from "./task-run-sheets.ts";
 
 type CreateRunCompleteHandlerDeps = Record<string, any>;
 
@@ -705,6 +706,11 @@ export function createRunCompleteHandler(deps: CreateRunCompleteHandlerDeps) {
       if (qualitySummary.blocked_review) {
         db.prepare("UPDATE tasks SET status = 'pending', updated_at = ? WHERE id = ?").run(t, taskId);
         appendTaskLog(taskId, "system", "Status -> pending (quality gate blocked review entry)");
+        upsertTaskRunSheet(db as any, {
+          taskId,
+          stage: "rework",
+          updatedAt: t,
+        });
         const updatedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId);
         broadcast("task_update", updatedTask);
         notifyTaskStatus(taskId, task.title, "pending", resolveLang(task.description ?? task.title));
@@ -729,6 +735,11 @@ export function createRunCompleteHandler(deps: CreateRunCompleteHandlerDeps) {
       db.prepare("UPDATE tasks SET status = 'review', updated_at = ? WHERE id = ?").run(t, taskId);
 
       appendTaskLog(taskId, "system", "Status → review (team leader review pending)");
+      upsertTaskRunSheet(db as any, {
+        taskId,
+        stage: "review_ready",
+        updatedAt: t,
+      });
 
       const updatedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId);
       broadcast("task_update", updatedTask);
@@ -910,6 +921,11 @@ export function createRunCompleteHandler(deps: CreateRunCompleteHandlerDeps) {
       if (task && retryReason) {
         const retryOutcome = scheduleAutomaticRetry({ id: taskId, title: task.title, description: task.description }, retryReason);
         if (retryOutcome === "scheduled" || retryOutcome === "exhausted") {
+          upsertTaskRunSheet(db as any, {
+            taskId,
+            stage: retryOutcome === "scheduled" ? "in_progress" : "rework",
+            updatedAt: nowMs(),
+          });
           const updatedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId);
           broadcast("task_update", updatedTask);
           const failWtInfo = taskWorktrees.get(taskId);
@@ -924,6 +940,11 @@ export function createRunCompleteHandler(deps: CreateRunCompleteHandlerDeps) {
       // ── FAILURE: Reset to inbox, team leader reports failure ──
       db.prepare("UPDATE tasks SET status = 'inbox', updated_at = ? WHERE id = ?").run(t, taskId);
       deleteTaskRetryQueueRow(db as any, taskId);
+      upsertTaskRunSheet(db as any, {
+        taskId,
+        stage: "rework",
+        updatedAt: t,
+      });
 
       if (task?.source_task_id) {
         reconcileDelegatedSubtasksAfterRun(taskId, finalExitCode);
