@@ -23,6 +23,10 @@ function writeWorkflowConfig(projectPath: string, raw: string | Record<string, u
   fs.writeFileSync(path.join(projectPath, ".claw-workflow.json"), content, "utf8");
 }
 
+function writeWorkflowContract(projectPath: string, content: string): void {
+  fs.writeFileSync(path.join(projectPath, "WORKFLOW.md"), content, "utf8");
+}
+
 function setupDb(): DatabaseSync {
   const db = new DatabaseSync(":memory:");
   db.exec(`
@@ -129,6 +133,36 @@ describe("task-pack-resolver", () => {
     writeWorkflowConfig(projectPath, { defaultWorkflowPackKey: "report" });
     try {
       db.prepare("INSERT INTO projects (id, default_pack_key) VALUES (?, ?)").run("project-1", "novel");
+      const resolved = resolveTaskWorkflowPackSelection({
+        db,
+        projectId: "project-1",
+        projectPath,
+      });
+      expect(resolved).toEqual({
+        packKey: "report",
+        source: "file_default",
+        warnings: [],
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("WORKFLOW.md default pack이 JSON/project default보다 우선한다", () => {
+    const db = setupDb();
+    const projectPath = createTempDir("claw-pack-workflow-md-default-");
+    writeWorkflowConfig(projectPath, { defaultWorkflowPackKey: "novel" });
+    writeWorkflowContract(
+      projectPath,
+      `---
+defaultWorkflowPackKey: report
+---
+
+Project policy
+`,
+    );
+    try {
+      db.prepare("INSERT INTO projects (id, default_pack_key) VALUES (?, ?)").run("project-1", "roleplay");
       const resolved = resolveTaskWorkflowPackSelection({
         db,
         projectId: "project-1",

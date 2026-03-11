@@ -162,4 +162,21 @@ describe("runtime-effective-pack", () => {
     expect(prompt).toContain("[Workflow Pack Effective Configuration]");
     expect(prompt).toContain("follow this block");
   });
+
+  it("development pack에서만 project workflow policy block을 포함한다", () => {
+    const developmentSections = buildRuntimeWorkflowPackPromptSections({
+      db,
+      workflowPackKey: "development",
+      projectWorkflowPolicyMarkdown: "# Repo Policy\n\n- Run tests first.",
+    });
+    const reportSections = buildRuntimeWorkflowPackPromptSections({
+      db,
+      workflowPackKey: "report",
+      projectWorkflowPolicyMarkdown: "# Repo Policy\n\n- Run tests first.",
+    });
+
+    expect(developmentSections.join("\n")).toContain("[Project Workflow Policy]");
+    expect(developmentSections.join("\n")).toContain("Run tests first.");
+    expect(reportSections.join("\n")).not.toContain("[Project Workflow Policy]");
+  });
 });

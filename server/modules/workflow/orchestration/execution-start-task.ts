@@ -3,6 +3,7 @@ import type { RuntimeContext } from "../../../types/runtime-context.ts";
 import { getDepartmentPromptForPack } from "../packs/department-scope.ts";
 import { ensureVideoPreprodRemotionBestPracticesSkill } from "../core/video-skill-bootstrap.ts";
 import { buildWorkflowPackExecutionGuidance } from "../packs/execution-guidance.ts";
+import { readProjectWorkflowConfig } from "../packs/project-config.ts";
 import { buildRuntimeWorkflowPackPromptSections } from "../packs/runtime-effective-pack.ts";
 import { resolveVideoArtifactSpecForTask } from "../packs/video-artifact.ts";
 import { getTaskShortId } from "../core/worktree/lifecycle.ts";
@@ -163,12 +164,6 @@ export function createExecutionStartTaskTools(deps: CreateExecutionStartTaskTool
     const workflowPackGuidance = buildWorkflowPackExecutionGuidance(taskData.workflow_pack_key, taskLang, {
       videoArtifactRelativePath: videoArtifactSpec?.relativePath,
     });
-    const workflowPackPromptSections = buildRuntimeWorkflowPackPromptSections({
-      db: db as any,
-      workflowPackKey: taskData.workflow_pack_key,
-      workflowMetaJson: taskData.workflow_meta_json,
-      workflowPackGuidance,
-    });
     notifyTaskStatus(taskId, taskData.title, "in_progress", taskLang);
 
     const projPath = projectPath;
@@ -266,6 +261,14 @@ export function createExecutionStartTaskTools(deps: CreateExecutionStartTaskTool
     const deptPromptRaw = deptId ? getDepartmentPromptForPack(db as any, taskData.workflow_pack_key, deptId) : null;
     const deptPrompt = typeof deptPromptRaw === "string" ? deptPromptRaw.trim() : "";
     const deptPromptBlock = deptPrompt ? `[Department Shared Prompt]\n${deptPrompt}` : "";
+    const projectWorkflowConfig = readProjectWorkflowConfig(worktreePath);
+    const workflowPackPromptSections = buildRuntimeWorkflowPackPromptSections({
+      db: db as any,
+      workflowPackKey: taskData.workflow_pack_key,
+      workflowMetaJson: taskData.workflow_meta_json,
+      workflowPackGuidance,
+      projectWorkflowPolicyMarkdown: projectWorkflowConfig?.policyMarkdown ?? null,
+    });
     const conversationCtx = getRecentConversationContext(execAgent.id);
     const continuationCtx = getTaskContinuationContext(taskId);
     const recentChanges = getRecentChanges(projPath, taskId);

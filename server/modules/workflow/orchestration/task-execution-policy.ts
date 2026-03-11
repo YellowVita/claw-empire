@@ -1,7 +1,7 @@
 import { exec } from "node:child_process";
 import type { DatabaseSync } from "node:sqlite";
 import { recordTaskExecutionEvent } from "./task-execution-events.ts";
-import { readProjectWorkflowConfig } from "../packs/project-config.ts";
+import { describeProjectWorkflowConfigSource, readProjectWorkflowConfig } from "../packs/project-config.ts";
 
 type DbLike = Pick<DatabaseSync, "prepare">;
 
@@ -186,13 +186,14 @@ export function readProjectTaskExecutionHooks(worktreePath: string): ProjectTask
     };
   }
 
+  const sourceLabel = describeProjectWorkflowConfigSource(config);
   const taskExecutionHooksValue = config.raw.taskExecutionHooks;
   const rawHooks = asObject(taskExecutionHooksValue);
   if (!rawHooks) {
     return {
       hooks: DEFAULT_TASK_EXECUTION_HOOKS,
       stagePresence: { ...EMPTY_TASK_EXECUTION_HOOK_STAGE_PRESENCE },
-      warnings: [".claw-workflow.json missing taskExecutionHooks object, falling back to global"],
+      warnings: [`${sourceLabel} missing taskExecutionHooks object, falling back to global`],
       valid: false,
     };
   }
@@ -210,7 +211,7 @@ export function readProjectTaskExecutionHooks(worktreePath: string): ProjectTask
     return {
       hooks: DEFAULT_TASK_EXECUTION_HOOKS,
       stagePresence: { ...EMPTY_TASK_EXECUTION_HOOK_STAGE_PRESENCE },
-      warnings: [".claw-workflow.json invalid hook schema, falling back to global"],
+      warnings: [`${sourceLabel} invalid hook schema, falling back to global`],
       valid: false,
     };
   }

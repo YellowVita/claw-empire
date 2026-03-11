@@ -441,17 +441,61 @@ describe("workflow pack import/export routes", () => {
       expect(res.payload).toMatchObject({
         override_applied: true,
         override_fields: ["prompt_preset", "routing_keywords"],
-        source: "file_override",
+        source: "json_override",
         pack: {
           key: "development",
           prompt_preset: { mode: "project-engineering" },
           routing_keywords: ["project-only"],
           qa_rules: { requireTestEvidence: true },
         },
+        project_policy_markdown: null,
+        policy_applied: false,
+        config_sources: ["claw_workflow_json"],
       });
       expect((res.payload as any).warnings).toEqual([
         ".claw-workflow.json unsupported packOverrides.development.enabled, ignoring",
       ]);
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+      harness.db.close();
+    }
+  });
+
+  it("effective preview는 WORKFLOW.md policy와 override source를 함께 반환한다", () => {
+    const harness = createHarness();
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "claw-effective-workflow-md-"));
+    try {
+      fs.writeFileSync(
+        path.join(projectDir, "WORKFLOW.md"),
+        `---
+packOverrides:
+  development:
+    prompt_preset:
+      mode: workflow-engineering
+---
+
+Repository-owned workflow policy.
+`,
+        "utf8",
+      );
+
+      const handler = harness.getRoutes.get("/api/workflow-packs/:key/effective");
+      const res = createFakeResponse();
+      handler?.({ params: { key: "development" }, query: { projectPath: projectDir } }, res);
+
+      expect(res.statusCode).toBe(200);
+      expect(res.payload).toMatchObject({
+        override_applied: true,
+        override_fields: ["prompt_preset"],
+        source: "workflow_md_override",
+        project_policy_markdown: "Repository-owned workflow policy.",
+        policy_applied: true,
+        config_sources: ["workflow_md"],
+        pack: {
+          key: "development",
+          prompt_preset: { mode: "workflow-engineering" },
+        },
+      });
     } finally {
       fs.rmSync(projectDir, { recursive: true, force: true });
       harness.db.close();

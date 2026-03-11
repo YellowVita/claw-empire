@@ -2,7 +2,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { readProjectWorkflowPackOverride } from "./project-config.ts";
+import {
+  readProjectWorkflowConfig,
+  readProjectWorkflowDefaultPackKey,
+  readProjectWorkflowPackOverride,
+} from "./project-config.ts";
 
 const tempDirs: string[] = [];
 
@@ -20,7 +24,7 @@ afterEach(() => {
   }
 });
 
-describe("project workflow pack overrides", () => {
+describe("project workflow config", () => {
   it("valid override fields만 읽고 unsupported key는 warning으로 무시한다", () => {
     const projectDir = createTempDir("claw-pack-config-");
     fs.writeFileSync(
@@ -50,6 +54,8 @@ describe("project workflow pack overrides", () => {
     expect(result.warnings).toEqual([
       ".claw-workflow.json unsupported packOverrides.report.enabled, ignoring",
     ]);
+    expect(result.policyMarkdown).toBeNull();
+    expect(result.configSources).toEqual(["claw_workflow_json"]);
   });
 
   it("invalid field는 해당 필드만 fallback 한다", () => {
@@ -79,5 +85,118 @@ describe("project workflow pack overrides", () => {
     expect(result.warnings).toEqual([
       ".claw-workflow.json invalid packOverrides.development.qa_rules, keeping DB value",
     ]);
+  });
+
+  it("WORKFLOW.md front matter와 body를 읽어 policyMarkdown과 source를 반환한다", () => {
+    const projectDir = createTempDir("claw-workflow-md-");
+    fs.writeFileSync(
+      path.join(projectDir, "WORKFLOW.md"),
+      `---
+defaultWorkflowPackKey: report
+packOverrides:
+  report:
+    prompt_preset:
+      mode: workflow-report
+---
+
+# Repo policy
+
+- Run the required validation commands before handoff.
+`,
+      "utf8",
+    );
+
+    const result = readProjectWorkflowConfig(projectDir);
+    expect(result).toMatchObject({
+      raw: {
+        defaultWorkflowPackKey: "report",
+        packOverrides: {
+          report: {
+            prompt_preset: {
+              mode: "workflow-report",
+            },
+          },
+        },
+      },
+      policyMarkdown: "# Repo policy\n\n- Run the required validation commands before handoff.",
+      sources: ["workflow_md"],
+      warnings: [],
+    });
+  });
+
+  it("WORKFLOW.md가 .claw-workflow.json보다 우선하고 body는 policyMarkdown으로 유지한다", () => {
+    const projectDir = createTempDir("claw-workflow-merge-");
+    fs.writeFileSync(
+      path.join(projectDir, ".claw-workflow.json"),
+      JSON.stringify(
+        {
+          defaultWorkflowPackKey: "novel",
+          packOverrides: {
+            development: {
+              prompt_preset: { mode: "json-mode", audience: "team" },
+              qa_rules: { requireTestEvidence: true },
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+    fs.writeFileSync(
+      path.join(projectDir, "WORKFLOW.md"),
+      `---
+defaultWorkflowPackKey: report
+packOverrides:
+  development:
+    prompt_preset:
+      mode: workflow-mode
+    routing_keywords:
+      - workflow-only
+---
+
+Prefer repository-owned workflow policy over ad-hoc notes.
+`,
+      "utf8",
+    );
+
+    const defaultPack = readProjectWorkflowDefaultPackKey(projectDir);
+    expect(defaultPack).toEqual({
+      packKey: "report",
+      warnings: [],
+    });
+
+    const override = readProjectWorkflowPackOverride(projectDir, "development");
+    expect(override.override).toEqual({
+      prompt_preset: { mode: "workflow-mode" },
+      qa_rules: { requireTestEvidence: true },
+      routing_keywords: ["workflow-only"],
+    });
+    expect(override.overrideFields).toEqual(["prompt_preset", "qa_rules", "routing_keywords"]);
+    expect(override.policyMarkdown).toBe("Prefer repository-owned workflow policy over ad-hoc notes.");
+    expect(override.configSources).toEqual(["workflow_md", "claw_workflow_json"]);
+  });
+
+  it("invalid WORKFLOW.md는 warning 후 JSON fallback 한다", () => {
+    const projectDir = createTempDir("claw-workflow-invalid-md-");
+    fs.writeFileSync(
+      path.join(projectDir, ".claw-workflow.json"),
+      JSON.stringify({ defaultWorkflowPackKey: "report" }, null, 2),
+      "utf8",
+    );
+    fs.writeFileSync(
+      path.join(projectDir, "WORKFLOW.md"),
+      `---
+defaultWorkflowPackKey: [broken
+---
+`,
+      "utf8",
+    );
+
+    const defaultPack = readProjectWorkflowDefaultPackKey(projectDir);
+    expect(defaultPack).toEqual({
+      packKey: "report",
+      warnings: ["WORKFLOW.md parse failed, falling back to .claw-workflow.json/global"],
+    });
   });
 });

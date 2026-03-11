@@ -25,7 +25,10 @@ describe("ProjectInsightsPanel", () => {
       },
       override_applied: true,
       override_fields: ["prompt_preset", "routing_keywords"],
-      source: "file_override",
+      source: "json_override",
+      project_policy_markdown: null,
+      policy_applied: false,
+      config_sources: ["claw_workflow_json"],
       warnings: [],
     };
     const project: Project = {

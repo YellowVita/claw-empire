@@ -302,7 +302,10 @@ export interface WorkflowPackEffectivePreview {
   pack: WorkflowPackConfig;
   override_applied: boolean;
   override_fields: string[];
-  source: "db" | "file_override";
+  source: "db" | "json_override" | "workflow_md_override" | "merged_file_override";
+  project_policy_markdown: string | null;
+  policy_applied: boolean;
+  config_sources: Array<"workflow_md" | "claw_workflow_json">;
   warnings: string[];
 }
 

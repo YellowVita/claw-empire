@@ -31,6 +31,10 @@ function writeWorkflowConfig(
   fs.writeFileSync(filePath, content, "utf8");
 }
 
+function writeWorkflowContract(worktreePath: string, content: string): void {
+  fs.writeFileSync(path.join(worktreePath, "WORKFLOW.md"), content, "utf8");
+}
+
 function createDbWithGlobalHooks(partial: Partial<TaskExecutionHooks> = {}): DatabaseSync {
   const db = new DatabaseSync(":memory:");
   db.exec(`
@@ -92,6 +96,54 @@ describe("task execution policy project hook overrides", () => {
       valid: false,
       warnings: [".claw-workflow.json missing taskExecutionHooks object, falling back to global"],
     });
+  });
+
+  it("WORKFLOW.md taskExecutionHooks는 JSON/global보다 우선한다", () => {
+    const db = createDbWithGlobalHooks({
+      before_run: [
+        {
+          id: "global-before",
+          label: "Global Before",
+          command: 'node -e "process.exit(0)"',
+          timeout_ms: 300000,
+          continue_on_error: false,
+        },
+      ],
+    });
+    const worktreePath = createTempDir("claw-hooks-workflow-md-");
+    writeWorkflowConfig(worktreePath, {
+      taskExecutionHooks: {
+        before_run: [
+          {
+            id: "json-before",
+            label: "Json Before",
+            command: 'node -e "process.exit(0)"',
+          },
+        ],
+      },
+    });
+    writeWorkflowContract(
+      worktreePath,
+      `---
+taskExecutionHooks:
+  before_run:
+    - id: workflow-before
+      label: Workflow Before
+      command: node -e "process.exit(0)"
+---
+
+Repo policy
+`,
+    );
+
+    try {
+      const resolved = resolveTaskExecutionHooksForStage(db as any, worktreePath, "before_run");
+      expect(resolved.source).toBe("project");
+      expect(resolved.hooks).toHaveLength(1);
+      expect(resolved.hooks[0]?.id).toBe("workflow-before");
+    } finally {
+      db.close();
+    }
   });
 
   it("stage key가 없으면 글로벌을 유지하고 빈 배열은 명시적 override로 처리한다", () => {
@@ -373,5 +425,24 @@ describe("task execution policy project hook overrides", () => {
     } finally {
       db.close();
     }
+  });
+
+  it("WORKFLOW.md에 taskExecutionHooks가 없으면 source에 맞는 warning으로 fallback 한다", () => {
+    const worktreePath = createTempDir("claw-hooks-workflow-md-missing-");
+    writeWorkflowContract(
+      worktreePath,
+      `---
+defaultWorkflowPackKey: development
+---
+
+Policy only
+`,
+    );
+
+    const config = readProjectTaskExecutionHooks(worktreePath);
+    expect(config).toMatchObject({
+      valid: false,
+      warnings: ["WORKFLOW.md missing taskExecutionHooks object, falling back to global"],
+    });
   });
 });

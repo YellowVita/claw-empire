@@ -199,6 +199,9 @@ export function registerWorkflowPackRoutes(
       override_applied: effective.override_applied,
       override_fields: effective.override_fields,
       source: effective.source,
+      project_policy_markdown: effective.project_policy_markdown,
+      policy_applied: effective.policy_applied,
+      config_sources: effective.config_sources,
       warnings: effective.warnings,
     });
   });

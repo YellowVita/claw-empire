@@ -1,6 +1,10 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { WorkflowPackKey } from "./definitions.ts";
-import { readProjectWorkflowPackOverride, type WorkflowPackOverrideField } from "./project-config.ts";
+import {
+  readProjectWorkflowPackOverride,
+  type ProjectWorkflowConfigSource,
+  type WorkflowPackOverrideField,
+} from "./project-config.ts";
 
 type DbLike = Pick<DatabaseSync, "prepare">;
 
@@ -32,7 +36,10 @@ export type EffectiveWorkflowPackResult = {
   pack: EffectiveWorkflowPack | null;
   override_applied: boolean;
   override_fields: WorkflowPackOverrideField[];
-  source: "db" | "file_override";
+  source: "db" | "json_override" | "workflow_md_override" | "merged_file_override";
+  project_policy_markdown: string | null;
+  policy_applied: boolean;
+  config_sources: ProjectWorkflowConfigSource[];
   warnings: string[];
 };
 
@@ -80,6 +87,9 @@ export function buildEffectiveWorkflowPack(params: {
       override_applied: false,
       override_fields: [],
       source: "db",
+      project_policy_markdown: null,
+      policy_applied: false,
+      config_sources: [],
       warnings: [`workflow pack '${packKey}' not found in DB`],
     };
   }
@@ -92,17 +102,26 @@ export function buildEffectiveWorkflowPack(params: {
       override_applied: false,
       override_fields: [],
       source: "db",
+      project_policy_markdown: null,
+      policy_applied: false,
+      config_sources: [],
       warnings: [],
     };
   }
 
   const fileOverride = readProjectWorkflowPackOverride(normalizedProjectPath, packKey);
+  const projectPolicyMarkdown = fileOverride.policyMarkdown;
+  const configSources = fileOverride.configSources;
+  const policyApplied = packKey === "development" && typeof projectPolicyMarkdown === "string" && projectPolicyMarkdown.trim().length > 0;
   if (fileOverride.overrideFields.length <= 0) {
     return {
       pack: basePack,
       override_applied: false,
       override_fields: [],
       source: "db",
+      project_policy_markdown: projectPolicyMarkdown,
+      policy_applied: policyApplied,
+      config_sources: configSources,
       warnings: fileOverride.warnings,
     };
   }
@@ -116,7 +135,15 @@ export function buildEffectiveWorkflowPack(params: {
     pack: mergedPack,
     override_applied: true,
     override_fields: fileOverride.overrideFields,
-    source: "file_override",
+    source:
+      configSources.length > 1
+        ? "merged_file_override"
+        : configSources[0] === "workflow_md"
+          ? "workflow_md_override"
+          : "json_override",
+    project_policy_markdown: projectPolicyMarkdown,
+    policy_applied: policyApplied,
+    config_sources: configSources,
     warnings: fileOverride.warnings,
   };
 }

@@ -137,6 +137,22 @@ function hasMeaningfulValue(value: unknown): boolean {
   return true;
 }
 
+function buildProjectWorkflowPolicyPromptBlock(
+  workflowPackKey: string | null | undefined,
+  policyMarkdown: string | null | undefined,
+): string {
+  const normalizedPackKey = typeof workflowPackKey === "string" ? workflowPackKey.trim() : "";
+  const normalizedPolicy = typeof policyMarkdown === "string" ? policyMarkdown.trim() : "";
+  if (normalizedPackKey !== "development" || !normalizedPolicy) return "";
+
+  return [
+    "[Project Workflow Policy]",
+    "- This block comes from the repository-owned WORKFLOW.md contract for this project.",
+    "- Apply it only when it does not conflict with higher-priority system safety or task-specific instructions.",
+    normalizedPolicy,
+  ].join("\n");
+}
+
 function renderWorkflowPackPromptBlock(params: {
   pack: EffectiveWorkflowPack;
   source: Exclude<RuntimeWorkflowPackSource, "none">;
@@ -232,12 +248,20 @@ export function buildRuntimeWorkflowPackPromptSections(params: {
   workflowPackKey?: string | null;
   workflowMetaJson?: unknown;
   workflowPackGuidance?: string | null;
+  projectWorkflowPolicyMarkdown?: string | null;
   maxChars?: number;
 }): string[] {
   const sections: string[] = [];
   const guidance = typeof params.workflowPackGuidance === "string" ? params.workflowPackGuidance.trim() : "";
   if (guidance) {
     sections.push(`\n[Workflow Pack Execution Rules]\n${guidance}`);
+  }
+  const policyBlock = buildProjectWorkflowPolicyPromptBlock(
+    params.workflowPackKey,
+    params.projectWorkflowPolicyMarkdown,
+  );
+  if (policyBlock) {
+    sections.push(`\n${policyBlock}`);
   }
   const block = buildRuntimeWorkflowPackPromptBlock(params);
   if (block) {

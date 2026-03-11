@@ -86,6 +86,10 @@ describe("effective workflow pack", () => {
       const result = buildEffectiveWorkflowPack({ db: db as any, packKey: "report", projectPath: projectDir });
       expect(result.override_applied).toBe(true);
       expect(result.override_fields).toEqual(["prompt_preset", "routing_keywords"]);
+      expect(result.source).toBe("json_override");
+      expect(result.project_policy_markdown).toBeNull();
+      expect(result.policy_applied).toBe(false);
+      expect(result.config_sources).toEqual(["claw_workflow_json"]);
       expect(result.pack).toMatchObject({
         key: "report",
         prompt_preset: { mode: "project-report" },
@@ -104,9 +108,45 @@ describe("effective workflow pack", () => {
       expect(result.override_applied).toBe(false);
       expect(result.override_fields).toEqual([]);
       expect(result.source).toBe("db");
+      expect(result.project_policy_markdown).toBeNull();
+      expect(result.policy_applied).toBe(false);
+      expect(result.config_sources).toEqual([]);
       expect(result.pack).toMatchObject({
         key: "report",
         prompt_preset: { mode: "reporting", audience: "exec" },
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("WORKFLOW.md override와 policyMarkdown 정보를 함께 반환한다", () => {
+    const db = createDb();
+    const projectDir = createTempDir("claw-effective-pack-workflow-md-");
+    try {
+      fs.writeFileSync(
+        path.join(projectDir, "WORKFLOW.md"),
+        `---
+packOverrides:
+  report:
+    prompt_preset:
+      mode: workflow-report
+---
+
+Repository policy for development only.
+`,
+        "utf8",
+      );
+
+      const result = buildEffectiveWorkflowPack({ db: db as any, packKey: "report", projectPath: projectDir });
+      expect(result.override_applied).toBe(true);
+      expect(result.source).toBe("workflow_md_override");
+      expect(result.project_policy_markdown).toBe("Repository policy for development only.");
+      expect(result.policy_applied).toBe(false);
+      expect(result.config_sources).toEqual(["workflow_md"]);
+      expect(result.pack).toMatchObject({
+        key: "report",
+        prompt_preset: { mode: "workflow-report" },
       });
     } finally {
       db.close();
