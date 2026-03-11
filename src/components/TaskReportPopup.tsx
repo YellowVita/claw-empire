@@ -6,6 +6,7 @@ import type { UiLanguage } from "../i18n";
 import { pickLang } from "../i18n";
 import AgentAvatar from "./AgentAvatar";
 import { resolveReportAgent } from "./task-report-agent";
+import { developmentHandoffBadgeClass, developmentHandoffLabel } from "./taskboard/constants";
 
 interface TaskReportPopupProps {
   report: TaskReportDetail;
@@ -68,6 +69,8 @@ export default function TaskReportPopup({ report, agents, departments, uiLanguag
   const execution = currentReport.execution;
   const quality = currentReport.quality;
   const developmentRunSheet = currentReport.development_run_sheet;
+  const developmentHandoff =
+    currentReport.task.workflow_pack_key === "development" ? currentReport.task.development_handoff ?? null : null;
   const prFeedbackGate = developmentRunSheet?.snapshot.review_checklist.pr_feedback_gate ?? null;
   const branchVerificationLogs = useMemo(
     () =>
@@ -333,6 +336,75 @@ export default function TaskReportPopup({ report, agents, departments, uiLanguag
                 <p className="mt-1 text-[11px] text-slate-300">{event.message}</p>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+      {developmentHandoff && (
+        <div className="mb-3 rounded-lg border border-sky-500/20 bg-sky-500/10 p-3">
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <div>
+              <p className="text-xs font-semibold text-sky-200">
+                {t({
+                  ko: "개발 인수인계",
+                  en: "Development Handoff",
+                  ja: "開発ハンドオフ",
+                  zh: "开发交接",
+                })}
+              </p>
+              <p className="text-[11px] text-sky-300/70">
+                {t({
+                  ko: "task-level 현재 인계 상태",
+                  en: "Task-level handoff summary",
+                  ja: "task-level 引き継ぎサマリー",
+                  zh: "任务级交接摘要",
+                })}
+              </p>
+            </div>
+            <div className="text-right">
+              <span className={`rounded px-2 py-1 text-[11px] font-semibold ${developmentHandoffBadgeClass(developmentHandoff)}`}>
+                {developmentHandoffLabel(developmentHandoff.state, t)}
+              </span>
+              <p className="mt-1 text-[11px] text-sky-300/70">{fmtTime(developmentHandoff.updated_at)}</p>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
+            <div className="rounded-md border border-sky-500/20 bg-slate-950/30 px-3 py-2">
+              <p className="text-[11px] text-slate-400">{t({ ko: "상태", en: "State", ja: "状態", zh: "状态" })}</p>
+              <p className="text-sm font-semibold text-slate-100">{developmentHandoffLabel(developmentHandoff.state, t)}</p>
+            </div>
+            <div className="rounded-md border border-sky-500/20 bg-slate-950/30 px-3 py-2">
+              <p className="text-[11px] text-slate-400">
+                {t({ ko: "Task 상태", en: "Task Status", ja: "タスク状態", zh: "任务状态" })}
+              </p>
+              <p className="text-sm font-semibold text-slate-100">{developmentHandoff.status_snapshot || "-"}</p>
+            </div>
+            <div className="rounded-md border border-sky-500/20 bg-slate-950/30 px-3 py-2">
+              <p className="text-[11px] text-slate-400">
+                {t({ ko: "대기 재시도", en: "Pending Retry", ja: "保留中の再試行", zh: "待处理重试" })}
+              </p>
+              <p className="text-sm font-semibold text-slate-100">
+                {developmentHandoff.pending_retry
+                  ? t({ ko: "예", en: "Yes", ja: "はい", zh: "是" })
+                  : t({ ko: "아니오", en: "No", ja: "いいえ", zh: "否" })}
+              </p>
+            </div>
+            <div className="rounded-md border border-sky-500/20 bg-slate-950/30 px-3 py-2">
+              <p className="text-[11px] text-slate-400">{t({ ko: "PR Gate", en: "PR Gate", ja: "PR Gate", zh: "PR Gate" })}</p>
+              <p className="text-sm font-semibold text-slate-100">{developmentHandoff.pr_gate_status || "-"}</p>
+            </div>
+            <div className="rounded-md border border-sky-500/20 bg-slate-950/30 px-3 py-2">
+              <p className="text-[11px] text-slate-400">{t({ ko: "PR URL", en: "PR URL", ja: "PR URL", zh: "PR URL" })}</p>
+              <p className="truncate text-sm font-semibold text-slate-100">{developmentHandoff.pr_url || "-"}</p>
+            </div>
+          </div>
+          <div className="mt-3 rounded-md border border-slate-700/50 bg-slate-950/30 px-3 py-2 text-[11px] text-slate-200">
+            {developmentHandoff.summary ||
+              t({
+                ko: "개발 인수인계 요약이 없습니다",
+                en: "No development handoff summary",
+                ja: "開発ハンドオフサマリーなし",
+                zh: "暂无开发交接摘要",
+              })}
           </div>
         </div>
       )}

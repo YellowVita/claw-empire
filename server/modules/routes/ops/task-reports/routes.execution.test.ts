@@ -40,6 +40,7 @@ function setupDb(): DatabaseSync {
       project_id TEXT,
       project_path TEXT,
       workflow_pack_key TEXT NOT NULL DEFAULT 'development',
+      workflow_meta_json TEXT,
       result TEXT,
       source_task_id TEXT,
       created_at INTEGER,
@@ -214,7 +215,7 @@ function setupDb(): DatabaseSync {
     "Goal",
   );
   db.prepare(
-    "INSERT INTO tasks (id, title, description, department_id, assigned_agent_id, status, project_id, project_path, workflow_pack_key, result, source_task_id, created_at, started_at, completed_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO tasks (id, title, description, department_id, assigned_agent_id, status, project_id, project_path, workflow_pack_key, workflow_meta_json, result, source_task_id, created_at, started_at, completed_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
   ).run(
     "task-1",
     "Ship feature",
@@ -225,6 +226,17 @@ function setupDb(): DatabaseSync {
     "project-1",
     "/tmp/project",
     "development",
+    JSON.stringify({
+      development_handoff: {
+        state: "done",
+        updated_at: 2000,
+        status_snapshot: "done",
+        pending_retry: true,
+        pr_gate_status: "passed",
+        pr_url: "https://github.com/acme/repo/pull/12",
+        summary: "Completed and handed off",
+      },
+    }),
     "done",
     null,
     1000,
@@ -402,6 +414,12 @@ describe("task report execution block", () => {
           pr_url: "https://github.com/acme/repo/pull/12",
           ignored_check_count: 2,
           ignored_check_names: ["optional / preview", "optional / smoke"],
+        }),
+      );
+      expect(payload.task.development_handoff).toEqual(
+        expect.objectContaining({
+          state: "done",
+          pr_gate_status: "passed",
         }),
       );
       expect(payload.quality).toEqual({

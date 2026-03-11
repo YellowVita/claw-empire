@@ -17,6 +17,7 @@ function setupDb(): DatabaseSync {
       description TEXT,
       status TEXT NOT NULL,
       workflow_pack_key TEXT NOT NULL DEFAULT 'development',
+      workflow_meta_json TEXT,
       project_path TEXT,
       result TEXT,
       source_task_id TEXT,
@@ -202,6 +203,10 @@ describe("task run sheets", () => {
       });
 
       const row = readTaskRunSheetForTask(db as any, "task-1");
+      const taskRow = db.prepare("SELECT workflow_meta_json FROM tasks WHERE id = ?").get("task-1") as {
+        workflow_meta_json: string | null;
+      };
+      const workflowMeta = JSON.parse(taskRow.workflow_meta_json ?? "{}");
       expect(row).toEqual(
         expect.objectContaining({
           task_id: "task-1",
@@ -242,6 +247,13 @@ describe("task run sheets", () => {
       expect(row?.summary_markdown).toContain("PR Feedback Gate: blocked");
       expect(row?.summary_markdown).toContain("Ignored Optional Checks: 2");
       expect(row?.summary_markdown).toContain("Ignored Check: optional / preview");
+      expect(workflowMeta.development_handoff).toEqual(
+        expect.objectContaining({
+          state: "review_ready",
+          pr_gate_status: "blocked",
+          status_snapshot: "review",
+        }),
+      );
     } finally {
       db.close();
     }

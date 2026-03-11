@@ -1,5 +1,6 @@
 import type { TaskStatus, TaskType } from "../../types";
 import type { UiLanguage } from "../../i18n";
+import type { DevelopmentHandoff, DevelopmentHandoffState } from "../../types";
 
 export type Locale = UiLanguage;
 export type TFunction = (messages: Record<Locale, string>) => string;
@@ -225,6 +226,50 @@ export function taskTypeLabel(type: TaskType, t: TFunction) {
       return t({ ko: "문서화", en: "Documentation", ja: "文書化", zh: "文档" });
     default:
       return type;
+  }
+}
+
+export function developmentHandoffLabel(state: DevelopmentHandoffState, t: TFunction): string {
+  switch (state) {
+    case "queued":
+      return t({ ko: "대기", en: "Queued", ja: "待機", zh: "排队中" });
+    case "in_progress":
+      return t({ ko: "구현 중", en: "In Progress", ja: "実装中", zh: "实现中" });
+    case "review_ready":
+      return t({ ko: "리뷰 준비", en: "Review Ready", ja: "レビュー準備", zh: "待审核" });
+    case "human_review":
+      return t({ ko: "사람 검토", en: "Human Review", ja: "人手レビュー", zh: "人工审核" });
+    case "merging":
+      return t({ ko: "병합 중", en: "Merging", ja: "マージ中", zh: "合并中" });
+    case "done":
+      return t({ ko: "인계 완료", en: "Done", ja: "引き継ぎ完了", zh: "已交接" });
+    case "rework":
+      return t({ ko: "재작업", en: "Rework", ja: "再作業", zh: "返工" });
+    default:
+      return state;
+  }
+}
+
+export function developmentHandoffBadgeClass(handoff: DevelopmentHandoff): string {
+  if (handoff.pending_retry) return "bg-amber-500/15 text-amber-200 border border-amber-500/20";
+  if (handoff.pr_gate_status === "blocked") return "bg-rose-500/15 text-rose-200 border border-rose-500/20";
+  switch (handoff.state) {
+    case "queued":
+      return "bg-slate-700/70 text-slate-200 border border-slate-600/60";
+    case "in_progress":
+      return "bg-amber-500/15 text-amber-200 border border-amber-500/20";
+    case "review_ready":
+      return "bg-sky-500/15 text-sky-200 border border-sky-500/20";
+    case "human_review":
+      return "bg-violet-500/15 text-violet-200 border border-violet-500/20";
+    case "merging":
+      return "bg-fuchsia-500/15 text-fuchsia-200 border border-fuchsia-500/20";
+    case "done":
+      return "bg-emerald-500/15 text-emerald-200 border border-emerald-500/20";
+    case "rework":
+      return "bg-rose-500/15 text-rose-200 border border-rose-500/20";
+    default:
+      return "bg-slate-700/70 text-slate-200 border border-slate-600/60";
   }
 }
 

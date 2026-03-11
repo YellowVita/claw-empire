@@ -1,4 +1,5 @@
 import { del, post, put, request } from "./core";
+import type { DevelopmentHandoff, WorkflowPackKey } from "../types";
 
 // API Providers (direct API key-based LLM access)
 export type ApiProviderType =
@@ -99,6 +100,8 @@ export interface TaskReportSummary {
   status: string;
   project_id?: string | null;
   project_path: string | null;
+  workflow_pack_key?: WorkflowPackKey | null;
+  development_handoff?: DevelopmentHandoff | null;
   source_task_id?: string | null;
   created_at: number;
   completed_at: number | null;

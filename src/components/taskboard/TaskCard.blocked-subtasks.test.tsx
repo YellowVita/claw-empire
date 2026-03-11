@@ -20,6 +20,15 @@ const baseTask: Task = {
   task_type: "general",
   hidden: 0,
   workflow_pack_key: "development",
+  development_handoff: {
+    state: "human_review",
+    updated_at: 1,
+    status_snapshot: "review",
+    pending_retry: false,
+    pr_gate_status: "blocked",
+    pr_url: "https://github.com/acme/repo/pull/7",
+    summary: "Blocked by PR feedback gate",
+  },
   source_task_id: null,
   result: null,
   project_id: null,
@@ -101,6 +110,32 @@ const blockedSubtask: SubTask = {
 };
 
 describe("TaskCard blocked subtask actions", () => {
+  it("renders development handoff summary for development tasks", () => {
+    render(
+      <I18nProvider language="en">
+        <TaskCard
+          task={baseTask}
+          agents={agents}
+          departments={departments}
+          taskSubtasks={[]}
+          onUpdateTask={vi.fn()}
+          onDeleteTask={vi.fn()}
+          onAssignTask={vi.fn()}
+          onRunTask={vi.fn()}
+          onStopTask={vi.fn()}
+          onPauseTask={vi.fn()}
+          onResumeTask={vi.fn()}
+          onOpenTerminal={vi.fn()}
+          onOpenMeetingMinutes={vi.fn()}
+          onRunSubtaskAction={vi.fn()}
+        />
+      </I18nProvider>,
+    );
+
+    expect(screen.getByText("Human Review")).toBeInTheDocument();
+    expect(screen.getByText("Blocked by PR feedback gate")).toBeInTheDocument();
+  });
+
   it("renders blocked subtask action buttons and calls the handler", async () => {
     const onRunSubtaskAction = vi.fn().mockResolvedValue(undefined);
 

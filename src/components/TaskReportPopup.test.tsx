@@ -12,6 +12,16 @@ const baseReport = {
     assigned_agent_id: "agent-1",
     status: "done",
     project_path: "/tmp/project",
+    workflow_pack_key: "development",
+    development_handoff: {
+      state: "done",
+      updated_at: 2000,
+      status_snapshot: "done",
+      pending_retry: false,
+      pr_gate_status: "blocked",
+      pr_url: "https://github.com/acme/repo/pull/12",
+      summary: "Blocked by PR feedback gate",
+    },
     created_at: 1000,
     completed_at: 2000,
     agent_name: "Ari",
@@ -276,10 +286,12 @@ describe("TaskReportPopup", () => {
     );
 
     expect(screen.getByText("Development Run Sheet")).toBeInTheDocument();
+    expect(screen.getByText("Development Handoff")).toBeInTheDocument();
+    expect(screen.getByText("Blocked by PR feedback gate")).toBeInTheDocument();
     expect(screen.getByText("Stored canonical brief")).toBeInTheDocument();
     expect(screen.getByText(/Stage: done/)).toBeInTheDocument();
     expect(screen.getAllByText("blocked").length).toBeGreaterThan(0);
-    expect(screen.getByText("https://github.com/acme/repo/pull/12")).toBeInTheDocument();
+    expect(screen.getAllByText("https://github.com/acme/repo/pull/12").length).toBeGreaterThan(0);
     expect(screen.getByText(/Unresolved review threads: 2/)).toBeInTheDocument();
     expect(screen.getByText("Ignored Checks")).toBeInTheDocument();
     expect(screen.getByText("optional / preview | optional / smoke")).toBeInTheDocument();

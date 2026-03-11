@@ -13,6 +13,12 @@ import {
   seedTaskQualityItemsFromWorkflowMeta,
 } from "./quality.ts";
 import { deleteTaskRetryQueueRow } from "../../../workflow/orchestration/task-execution-policy.ts";
+import {
+  clearDevelopmentHandoffMetadata,
+  decorateTaskWithDevelopmentHandoff,
+  readDevelopmentHandoffFromTaskLike,
+  upsertDevelopmentHandoffMetadata,
+} from "../../../workflow/orchestration/development-handoff.ts";
 
 export type TaskCrudRouteDeps = Pick<
   RuntimeContext,
@@ -371,7 +377,7 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
         .all(...(params as SQLInputValue[]));
     }
 
-    res.json({ tasks });
+    res.json({ tasks: tasks.map((task) => decorateTaskWithDevelopmentHandoff(task as Record<string, unknown>)) });
   });
 
   app.post("/api/tasks", (req, res) => {
@@ -486,6 +492,13 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
       workflowMetaJson,
       t,
     );
+    if (workflowPackSelection.packKey === "development") {
+      upsertDevelopmentHandoffMetadata(db as any, {
+        taskId: id,
+        state: "queued",
+        updatedAt: t,
+      });
+    }
     recordTaskCreationAudit({
       taskId: id,
       taskTitle: title,
@@ -507,7 +520,9 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
 
     appendTaskLog(id, "system", `Task created: ${title}`);
 
-    const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id);
+    const task = decorateTaskWithDevelopmentHandoff(
+      (db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) ?? {}) as Record<string, unknown>,
+    );
     broadcast("task_update", task);
     res.json({ id, task });
   });
@@ -599,7 +614,16 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
     const subtasks = db.prepare("SELECT * FROM subtasks WHERE task_id = ? ORDER BY created_at").all(id);
     const quality = buildTaskQualityPayload(db as any, id);
 
-    res.json({ task: { ...(task as Record<string, unknown>), quality_summary: quality.summary }, logs, subtasks });
+    res.json({
+      task: decorateTaskWithDevelopmentHandoff(
+        {
+          ...(task as Record<string, unknown>),
+          quality_summary: quality.summary,
+        } as Record<string, unknown>,
+      ),
+      logs,
+      subtasks,
+    });
   });
 
   app.get("/api/tasks/:id/quality", (req, res) => {
@@ -807,6 +831,7 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
       }
     }
 
+    let resolvedWorkflowPackKey = existing.workflow_pack_key ?? null;
     if (shouldResolveWorkflowPack) {
       const selection =
         explicitWorkflowPackKey && isWorkflowPackKey(explicitWorkflowPackKey)
@@ -821,6 +846,7 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
               projectPath: nextProjectPath,
             });
       logWorkflowPackSelectionWarnings(selection.warnings, "task-patch");
+      resolvedWorkflowPackKey = selection.packKey;
       updates.push("workflow_pack_key = ?");
       params.push(selection.packKey);
       updates.push("workflow_pack_source = ?");
@@ -848,6 +874,19 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
 
     params.push(id);
     db.prepare(`UPDATE tasks SET ${updates.join(", ")} WHERE id = ?`).run(...(params as SQLInputValue[]));
+    const updatedRow = (db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) ?? {}) as Record<string, unknown>;
+    if (resolvedWorkflowPackKey === "development" && !readDevelopmentHandoffFromTaskLike(updatedRow)) {
+      upsertDevelopmentHandoffMetadata(db as any, {
+        taskId: id,
+        state: "queued",
+        updatedAt: updateTs,
+      });
+    } else if (shouldResolveWorkflowPack) {
+      clearDevelopmentHandoffMetadata(db as any, {
+        taskId: id,
+        updatedAt: updateTs,
+      });
+    }
     if (touchedProjectId) {
       db.prepare("UPDATE projects SET last_used_at = ?, updated_at = ? WHERE id = ?").run(
         updateTs,
@@ -884,7 +923,7 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
 
     appendTaskLog(id, "system", `Task updated: ${Object.keys(body as object).join(", ")}`);
 
-    const updated = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id);
+    const updated = decorateTaskWithDevelopmentHandoff(updatedRow);
     broadcast("task_update", updated);
     res.json({ ok: true, task: updated });
   });
