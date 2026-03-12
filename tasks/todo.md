@@ -28,3 +28,25 @@
   - `AGENTS.md` Git Safety Rule 예외 문구 갱신
   - server workflow/task-report tests 통과
   - TaskReportPopup component tests 통과
+
+# Phase 3 Plan Execution: CI fast/full gate 분리
+
+- [x] workflow 분리
+  - `.github/workflows/ci-fast.yml`
+  - `.github/workflows/ci-full.yml`
+  - 기존 단일 `ci.yml` 제거
+- [x] `package.json` 스크립트 계층화
+  - `typecheck`, `ci:fast`, `ci:full` 추가
+  - `test:ci`를 `ci:full` alias로 유지
+  - `openapi:check` 중복 제거
+- [x] 문서/운영 가이드 정리
+  - `README.md` CI 설명 및 badge 갱신
+  - `.github/pull_request_template.md` 체크리스트 갱신
+  - `CONTRIBUTING.md` branch protection guidance 갱신
+- [x] 검증
+  - `pnpm run ci:fast`
+  - 스크립트/문서/워크플로 정합성 확인
+  - `ci:fast`는 기존 저장소 전반의 Prettier 불일치(92 files) 때문에 `format:check`에서 중단됨
+  - `pnpm run typecheck` 통과
+  - `pnpm run build` 통과
+  - 변경 파일 대상 `prettier --check` 통과

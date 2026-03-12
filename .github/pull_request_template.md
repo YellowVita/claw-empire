@@ -25,10 +25,8 @@
 
 - [ ] Base branch is `dev` (or emergency hotfix to `main` with rationale below)
 - [ ] Linked issue or context is included
-- [ ] `pnpm run format:check` passes
-- [ ] `pnpm run lint` passes
-- [ ] `pnpm run build` passes
-- [ ] `pnpm run test:ci` passes (or reason provided if skipped)
+- [ ] `pnpm run ci:fast` passes
+- [ ] `pnpm run ci:full` passes or is intentionally skipped with reason
 - [ ] Docs/README were updated if behavior or setup changed
 
 ## Hotfix Rationale (required only when base is `main`)

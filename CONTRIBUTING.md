@@ -39,6 +39,11 @@ Configure both `main` and `dev`:
 - `Require status checks to pass before merging`
 - `Restrict direct pushes`
 
+Recommended required checks:
+
+- `dev` PRs: `ci / fast`
+- `main` stability verification: `ci / full`
+
 ## Quick Commands
 
 Create a working branch:
@@ -56,6 +61,18 @@ git push origin feature/my-change
 gh pr create --base dev --fill
 ```
 
+Recommended PR validation:
+
+```bash
+pnpm run ci:fast
+```
+
+Full validation before release-sensitive changes:
+
+```bash
+pnpm run ci:full
+```
+
 Hotfix back-merge (`main -> dev`):
 
 ```bash
@@ -64,4 +81,3 @@ git pull origin dev
 git merge origin/main
 git push origin dev
 ```
-
