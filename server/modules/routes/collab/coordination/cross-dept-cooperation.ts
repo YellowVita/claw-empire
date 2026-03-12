@@ -612,10 +612,10 @@ export function createCrossDeptCooperationTools(deps: CrossDeptCooperationDeps) 
               execProvider,
               sessionPrompt,
               projPath,
-                logFilePath,
-                crossModel,
-                crossReasoningLevel,
-              );
+              logFilePath,
+              crossModel,
+              crossReasoningLevel,
+            );
             child.on("close", (code: number | null) => finalizeCrossDeptRun(code ?? 1));
           }
 
