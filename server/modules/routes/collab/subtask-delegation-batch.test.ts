@@ -4,6 +4,45 @@ import { describe, expect, it, vi } from "vitest";
 import { createSubtaskDelegationBatch } from "./subtask-delegation-batch.ts";
 
 describe("createSubtaskDelegationBatch", () => {
+  it("fails fast when a required delegation dependency is missing", () => {
+    const db = new DatabaseSync(":memory:");
+
+    expect(() =>
+      createSubtaskDelegationBatch({
+        db,
+        l: (ko, en, ja = en, zh = en) => ({ ko, en, ja, zh }),
+        pickL: (pool, lang) => pool[lang]?.[0] ?? pool.ko[0],
+        resolveLang: () => "ko",
+        getDeptName: () => "QA팀",
+        getAgentDisplayName: () => "Agent",
+        findTeamLeader: undefined as any,
+        findBestSubordinate: () => null,
+        nowMs: () => 100,
+        broadcast: vi.fn(),
+        notifyCeo: vi.fn(),
+        sendAgentMessage: vi.fn(),
+        appendTaskLog: vi.fn(),
+        recordTaskCreationAudit: vi.fn(),
+        resolveProjectPath: () => "C:/workspace/project",
+        createWorktree: vi.fn(),
+        logsDir: "C:/logs",
+        ensureTaskExecutionSession: () => ({ sessionId: "s1", agentId: "a1", provider: "codex" }),
+        ensureClaudeMd: vi.fn(),
+        getProviderModelConfig: () => ({}),
+        spawnCliAgent: vi.fn(),
+        getNextHttpAgentPid: () => 1,
+        launchApiProviderAgent: vi.fn(),
+        launchHttpAgent: vi.fn(),
+        startProgressTimer: vi.fn(),
+        subtaskDelegationCallbacks: new Map(),
+        delegatedTaskToSubtask: new Map(),
+        maybeNotifyAllSubtasksComplete: vi.fn(),
+        finalizeDelegatedSubtasks: vi.fn(),
+        buildSubtaskDelegationPrompt: () => "prompt",
+      }),
+    ).toThrow("subtask_delegation_dependency_missing: findTeamLeader");
+  });
+
   it("marks foreign subtasks blocked when no scoped team leader exists", () => {
     const db = new DatabaseSync(":memory:");
     db.exec(`

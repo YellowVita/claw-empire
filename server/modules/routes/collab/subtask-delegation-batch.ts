@@ -118,6 +118,12 @@ interface BatchDeps {
   ) => string;
 }
 
+function assertDelegationFunctionDep(name: string, value: unknown): asserts value is (...args: any[]) => any {
+  if (typeof value !== "function") {
+    throw new Error(`subtask_delegation_dependency_missing: ${name}`);
+  }
+}
+
 export function createSubtaskDelegationBatch(deps: BatchDeps) {
   const {
     db,
@@ -151,6 +157,12 @@ export function createSubtaskDelegationBatch(deps: BatchDeps) {
     finalizeDelegatedSubtasks,
     buildSubtaskDelegationPrompt,
   } = deps;
+
+  assertDelegationFunctionDep("findTeamLeader", findTeamLeader);
+  assertDelegationFunctionDep("findBestSubordinate", findBestSubordinate);
+  assertDelegationFunctionDep("appendTaskLog", appendTaskLog);
+  assertDelegationFunctionDep("notifyCeo", notifyCeo);
+  assertDelegationFunctionDep("sendAgentMessage", sendAgentMessage);
 
   function getConstrainedAgentIds(parentTask: ParentTaskRow, targetDeptId: string | null): string[] | null {
     return resolveConstrainedAgentScopeForTask(db as any, {
