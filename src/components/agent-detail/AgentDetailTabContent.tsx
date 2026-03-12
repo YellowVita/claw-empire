@@ -1,6 +1,7 @@
 import { localeName, type UiLanguage } from "../../i18n";
 import type { Agent, Department, SubAgent, SubTask, Task } from "../../types";
 import { getSubAgentSpriteNum, SUBTASK_STATUS_ICON, taskStatusLabel, taskTypeLabel, type TFunction } from "./constants";
+import { getSubtaskDisplayState, type BlockedSubtaskDisplayState } from "../taskboard/subtask-display";
 
 interface AgentDetailTabContentProps {
   tab: "info" | "tasks" | "alba";
@@ -16,6 +17,20 @@ interface AgentDetailTabContentProps {
   onChat: (agent: Agent) => void;
   onAssignTask: (agentId: string) => void;
   onOpenTerminal?: (taskId: string) => void;
+}
+
+function blockedSubtaskLabel(kind: BlockedSubtaskDisplayState, t: TFunction): string {
+  if (kind === "owner_gate_waiting") return t({ ko: "원부서 정리 대기", en: "Waiting on owner team", ja: "元部門待ち", zh: "等待原部门" });
+  if (kind === "collaboration_waiting") return t({ ko: "협업 대기", en: "Waiting for collaboration", ja: "協業待ち", zh: "等待协作" });
+  if (kind === "delegation_retry_needed") return t({ ko: "위임 재시도 필요", en: "Delegation retry needed", ja: "委任再試行必要", zh: "需要重新委派" });
+  return t({ ko: "차단", en: "Blocked", ja: "ブロック", zh: "阻止" });
+}
+
+function blockedSubtaskBadgeClass(kind: BlockedSubtaskDisplayState): string {
+  if (kind === "owner_gate_waiting") return "border border-amber-500/30 bg-amber-500/10 text-amber-200";
+  if (kind === "collaboration_waiting") return "border border-sky-500/30 bg-sky-500/10 text-sky-200";
+  if (kind === "delegation_retry_needed") return "border border-rose-500/30 bg-rose-500/10 text-rose-200";
+  return "border border-red-500/30 bg-red-500/10 text-red-200";
 }
 
 export default function AgentDetailTabContent({
@@ -153,6 +168,7 @@ export default function AgentDetailTabContent({
                       const targetDepartment = subtask.target_department_id
                         ? departments.find((department) => department.id === subtask.target_department_id)
                         : null;
+                      const displayState = getSubtaskDisplayState(subtask, taskItem, taskSubtasks);
                       return (
                         <div key={subtask.id} className="flex items-center gap-1.5 text-xs">
                           <span>{SUBTASK_STATUS_ICON[subtask.status] || "\u23F3"}</span>
@@ -178,12 +194,24 @@ export default function AgentDetailTabContent({
                             </span>
                           )}
                           {subtask.status === "blocked" && subtask.blocked_reason && (
-                            <span
-                              className="text-red-400 text-[10px] truncate max-w-[80px]"
-                              title={subtask.blocked_reason}
-                            >
-                              {subtask.blocked_reason}
-                            </span>
+                            <div className="flex min-w-0 items-center gap-1.5">
+                              <span
+                                className={`shrink-0 rounded-full px-1 py-0.5 text-[10px] font-medium ${blockedSubtaskBadgeClass(
+                                  displayState.kind === "default" ? "generic_blocked" : displayState.kind,
+                                )}`}
+                              >
+                                {blockedSubtaskLabel(
+                                  displayState.kind === "default" ? "generic_blocked" : displayState.kind,
+                                  t,
+                                )}
+                              </span>
+                              <span
+                                className={`truncate text-[10px] ${displayState.isWaiting ? "text-slate-400" : "text-red-300"}`}
+                                title={subtask.blocked_reason}
+                              >
+                                {subtask.blocked_reason}
+                              </span>
+                            </div>
                           )}
                         </div>
                       );

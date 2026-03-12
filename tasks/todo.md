@@ -93,3 +93,9 @@
 - [x] Define real-project smoke validation scope and pass/fail criteria
 - [x] Add an operator-facing smoke validation plan under `docs/plans`
 - [x] Record the smoke validation planning completion in this checklist
+
+## 17. Subtask Blocked UX Patch
+- [x] Add a shared frontend subtask display-state interpreter for waiting vs blocked states
+- [x] Update `TaskCard` and `AgentDetail` to render waiting-oriented badges and summaries
+- [x] Improve decision blocked alerts with actionable guidance from existing reason codes
+- [x] Add regression tests and run targeted UI verification plus build

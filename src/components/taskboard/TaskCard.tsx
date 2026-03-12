@@ -15,6 +15,7 @@ import {
   taskStatusLabel,
   timeAgo,
 } from "./constants";
+import { getSubtaskDisplayState, summarizeBlockedSubtasks, type BlockedSubtaskDisplayState } from "./subtask-display";
 
 interface TaskCardProps {
   task: Task;
@@ -44,6 +45,20 @@ const SUBTASK_STATUS_ICON: Record<string, string> = {
   done: "\u2705",
   blocked: "\uD83D\uDEAB",
 };
+
+function blockedSubtaskLabel(kind: BlockedSubtaskDisplayState, t: ReturnType<typeof useI18n>["t"]): string {
+  if (kind === "owner_gate_waiting") return t({ ko: "원부서 정리 대기", en: "Waiting on owner team", ja: "元部門待ち", zh: "等待原部门" });
+  if (kind === "collaboration_waiting") return t({ ko: "협업 대기", en: "Waiting for collaboration", ja: "協業待ち", zh: "等待协作" });
+  if (kind === "delegation_retry_needed") return t({ ko: "위임 재시도 필요", en: "Delegation retry needed", ja: "委任再試行必要", zh: "需要重新委派" });
+  return t({ ko: "차단", en: "Blocked", ja: "ブロック", zh: "阻止" });
+}
+
+function blockedSubtaskBadgeClass(kind: BlockedSubtaskDisplayState): string {
+  if (kind === "owner_gate_waiting") return "border border-amber-500/30 bg-amber-500/10 text-amber-200";
+  if (kind === "collaboration_waiting") return "border border-sky-500/30 bg-sky-500/10 text-sky-200";
+  if (kind === "delegation_retry_needed") return "border border-rose-500/30 bg-rose-500/10 text-rose-200";
+  return "border border-red-500/30 bg-red-500/10 text-red-200";
+}
 
 export default function TaskCard({
   task,
@@ -92,6 +107,41 @@ export default function TaskCard({
   const canResume = (task.status === "pending" || task.status === "cancelled") && !!onResumeTask;
   const canDelete = task.status !== "in_progress";
   const canHideTask = isHideableStatus(task.status);
+  const blockedSummary = summarizeBlockedSubtasks(task, taskSubtasks);
+  const blockedSummaryItems = [
+    blockedSummary.ownerGateWaiting > 0
+      ? {
+          key: "owner",
+          label: blockedSubtaskLabel("owner_gate_waiting", t),
+          count: blockedSummary.ownerGateWaiting,
+          className: blockedSubtaskBadgeClass("owner_gate_waiting"),
+        }
+      : null,
+    blockedSummary.collaborationWaiting > 0
+      ? {
+          key: "collab",
+          label: blockedSubtaskLabel("collaboration_waiting", t),
+          count: blockedSummary.collaborationWaiting,
+          className: blockedSubtaskBadgeClass("collaboration_waiting"),
+        }
+      : null,
+    blockedSummary.delegationRetryNeeded > 0
+      ? {
+          key: "retry",
+          label: blockedSubtaskLabel("delegation_retry_needed", t),
+          count: blockedSummary.delegationRetryNeeded,
+          className: blockedSubtaskBadgeClass("delegation_retry_needed"),
+        }
+      : null,
+    blockedSummary.genericBlocked > 0
+      ? {
+          key: "blocked",
+          label: blockedSubtaskLabel("generic_blocked", t),
+          count: blockedSummary.genericBlocked,
+          className: blockedSubtaskBadgeClass("generic_blocked"),
+        }
+      : null,
+  ].filter(Boolean) as Array<{ key: string; label: string; count: number; className: string }>;
 
   return (
     <div
@@ -251,12 +301,48 @@ export default function TaskCard({
             </span>
             <span className="text-xs text-slate-500">{showSubtasks ? "▲" : "▼"}</span>
           </button>
+          {blockedSummaryItems.length > 0 && (
+            <div className="mb-2 flex flex-wrap items-center gap-1.5">
+              {blockedSummaryItems.map((item) => (
+                <span key={item.key} className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${item.className}`}>
+                  {item.label} {item.count}
+                </span>
+              ))}
+            </div>
+          )}
           {showSubtasks && taskSubtasks.length > 0 && (
             <div className="space-y-1 pl-1">
+              {blockedSummary.ownerGateWaiting > 0 && (
+                <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2.5 py-2 text-[11px] text-amber-100">
+                  {t({
+                    ko: "외부 부서 서브태스크는 원부서 선행 작업 완료 후 자동 위임됩니다.",
+                    en: "External subtasks will be delegated automatically after owner-team prep is finished.",
+                    ja: "外部部門サブタスクは元部門の先行作業完了後に自動委任されます。",
+                    zh: "外部部门子任务会在原部门先行工作完成后自动委派。",
+                  })}
+                </div>
+              )}
               {taskSubtasks.map((subtask) => {
                 const targetDepartment = subtask.target_department_id
                   ? departments.find((departmentItem) => departmentItem.id === subtask.target_department_id)
                   : null;
+                const displayState = getSubtaskDisplayState(subtask, task, taskSubtasks);
+                const waitingHint =
+                  displayState.kind === "collaboration_waiting"
+                    ? t({
+                        ko: "자동 위임 예정",
+                        en: "Auto delegation pending",
+                        ja: "自動委任予定",
+                        zh: "等待自动委派",
+                      })
+                    : displayState.kind === "owner_gate_waiting"
+                      ? t({
+                          ko: "원부서 선행 작업 대기",
+                          en: "Waiting on owner-team prep",
+                          ja: "元部門の先行作業待ち",
+                          zh: "等待原部门先行处理",
+                        })
+                      : null;
                 return (
                   <div key={subtask.id} className="rounded-md border border-slate-700/70 bg-slate-900/60 px-2 py-1.5">
                     <div className="flex items-center gap-1.5 text-xs">
@@ -285,7 +371,25 @@ export default function TaskCard({
                     </div>
                     {subtask.status === "blocked" && subtask.blocked_reason && (
                       <div className="mt-1 flex flex-col gap-1">
-                        <span className="text-red-400 text-[10px]" title={subtask.blocked_reason}>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span
+                            className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${blockedSubtaskBadgeClass(
+                              displayState.kind === "default" ? "generic_blocked" : displayState.kind,
+                            )}`}
+                          >
+                            {blockedSubtaskLabel(
+                              displayState.kind === "default" ? "generic_blocked" : displayState.kind,
+                              t,
+                            )}
+                          </span>
+                          {waitingHint && <span className="text-[10px] text-slate-400">{waitingHint}</span>}
+                        </div>
+                        <span
+                          className={`text-[10px] ${
+                            displayState.isWaiting ? "text-slate-400" : "text-red-300"
+                          }`}
+                          title={subtask.blocked_reason}
+                        >
                           {subtask.blocked_reason}
                         </span>
                         <div className="flex flex-wrap gap-1">

@@ -109,6 +109,21 @@ const blockedSubtask: SubTask = {
   completed_at: null,
 };
 
+const ownerPrepSubtask: SubTask = {
+  id: "sub-owner",
+  task_id: "task-1",
+  title: "기획 정리",
+  description: null,
+  status: "pending",
+  assigned_agent_id: null,
+  blocked_reason: null,
+  cli_tool_use_id: null,
+  target_department_id: "dev",
+  delegated_task_id: null,
+  created_at: 1,
+  completed_at: null,
+};
+
 describe("TaskCard blocked subtask actions", () => {
   it("renders development handoff summary for development tasks", () => {
     render(
@@ -170,5 +185,38 @@ describe("TaskCard blocked subtask actions", () => {
     expect(onRunSubtaskAction).toHaveBeenCalledWith("sub-1", "retry");
     expect(screen.getByRole("button", { name: "원부서 처리" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "완료 처리" })).toBeInTheDocument();
+  });
+
+  it("shows waiting summaries and owner-team guidance for blocked collaboration subtasks", async () => {
+    render(
+      <I18nProvider language="ko">
+        <TaskCard
+          task={{ ...baseTask, subtask_total: 2, subtask_done: 0 }}
+          agents={agents}
+          departments={departments}
+          taskSubtasks={[ownerPrepSubtask, blockedSubtask]}
+          onUpdateTask={vi.fn()}
+          onDeleteTask={vi.fn()}
+          onAssignTask={vi.fn()}
+          onRunTask={vi.fn()}
+          onStopTask={vi.fn()}
+          onPauseTask={vi.fn()}
+          onResumeTask={vi.fn()}
+          onOpenTerminal={vi.fn()}
+          onOpenMeetingMinutes={vi.fn()}
+          onRunSubtaskAction={vi.fn()}
+        />
+      </I18nProvider>,
+    );
+
+    expect(screen.getByText("원부서 정리 대기 1")).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "0/2 ▼" }));
+    });
+
+    expect(screen.getByText("외부 부서 서브태스크는 원부서 선행 작업 완료 후 자동 위임됩니다.")).toBeInTheDocument();
+    expect(screen.getByText("원부서 정리 대기")).toBeInTheDocument();
+    expect(screen.getByText("원부서 선행 작업 대기")).toBeInTheDocument();
   });
 });

@@ -18,6 +18,50 @@ interface UseDecisionActionsParams {
   setDecisionReplyBusyKey: Dispatch<SetStateAction<string | null>>;
 }
 
+function formatBlockedTaskGuidance(
+  locale: ReturnType<typeof normalizeLanguage>,
+  blockedTask: { title?: string; reason?: string },
+): string {
+  const reason = String(blockedTask.reason ?? "").trim();
+  const title = String(blockedTask.title ?? "").trim() || pickLang(locale, {
+    ko: "이름 없는 태스크",
+    en: "Unnamed task",
+    ja: "名称未設定タスク",
+    zh: "未命名任务",
+  });
+
+  const guidance =
+    reason === "unfinished_subtasks"
+      ? pickLang(locale, {
+          ko: "업무 보드에서 서브태스크를 펼쳐 남은 항목을 먼저 처리하세요",
+          en: "Expand the subtasks on the task board and finish the remaining items first",
+          ja: "タスクボードでサブタスクを展開し、残り項目を先に処理してください",
+          zh: "请在任务看板中展开子任务，先处理剩余项",
+        })
+      : reason === "collaboration_children_pending"
+        ? pickLang(locale, {
+            ko: "외부 협업 하위 작업이 아직 진행 중입니다",
+            en: "External collaboration child tasks are still in progress",
+            ja: "外部協業の子タスクがまだ進行中です",
+            zh: "外部协作子任务仍在进行中",
+          })
+        : reason === "video_artifact_missing"
+          ? pickLang(locale, {
+              ko: "영상 산출물이 아직 준비되지 않았습니다",
+              en: "The required video artifact is not ready yet",
+              ja: "必要な動画成果物がまだ用意されていません",
+              zh: "所需的视频产物尚未准备好",
+            })
+          : pickLang(locale, {
+              ko: "세부 게이트를 먼저 확인해 주세요",
+              en: "Check the remaining gate details first",
+              ja: "残っているゲート内容を先に確認してください",
+              zh: "请先检查剩余门禁详情",
+            });
+
+  return `- ${title}: ${guidance}`;
+}
+
 export function useDecisionActions({
   agents,
   language,
@@ -107,9 +151,7 @@ export function useDecisionActions({
           }
           const replyResult = await api.replyDecisionInbox(item.id, optionNumber, payload);
           if (replyResult.action === "start_project_review_blocked") {
-            const blockedLines = (replyResult.blocked_tasks ?? [])
-              .slice(0, 3)
-              .map((entry) => `- ${entry.title} (${entry.reason})`);
+            const blockedLines = (replyResult.blocked_tasks ?? []).slice(0, 3).map((entry) => formatBlockedTaskGuidance(locale, entry));
             const blockedSummary =
               blockedLines.length > 0
                 ? `\n\n${blockedLines.join("\n")}`
@@ -121,10 +163,10 @@ export function useDecisionActions({
                   });
             window.alert(
               pickLang(locale, {
-                ko: `팀장 회의 시작이 보류되었습니다. 필요한 게이트를 먼저 해소해 주세요.${blockedSummary}`,
-                en: `Team-lead meeting start is on hold. Resolve required gates first.${blockedSummary}`,
-                ja: `チームリーダー会議の開始は保留です。先に必要なゲートを解消してください。${blockedSummary}`,
-                zh: `组长评审会议暂缓启动。请先解决必要门禁。${blockedSummary}`,
+                ko: `팀장 회의 시작이 보류되었습니다. 아래 작업부터 확인해 주세요.${blockedSummary}`,
+                en: `Team-lead meeting start is on hold. Start with the items below.${blockedSummary}`,
+                ja: `チームリーダー会議の開始は保留です。まず以下の項目を確認してください。${blockedSummary}`,
+                zh: `组长评审会议暂缓启动。请先处理下面这些项目。${blockedSummary}`,
               }),
             );
           }

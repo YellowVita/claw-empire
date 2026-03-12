@@ -344,4 +344,40 @@ describe("useAppActions", () => {
     expect(latest?.scheduleLiveSync).toHaveBeenCalledWith(40);
     expect(api.getDecisionInbox).toHaveBeenCalled();
   });
+
+  it("shows actionable guidance when project review start is blocked by unfinished subtasks", async () => {
+    vi.mocked(api.replyDecisionInbox).mockResolvedValue({
+      ok: true,
+      resolved: false,
+      kind: "project_review_ready",
+      action: "start_project_review_blocked",
+      blocked_tasks: [
+        { id: "task-1", title: "사장의 생각", reason: "unfinished_subtasks", detail: "waiting for unfinished subtasks" },
+      ],
+    });
+    vi.mocked(api.getMessages).mockResolvedValue([]);
+    vi.mocked(api.getDecisionInbox).mockResolvedValue([]);
+
+    const state = renderProbe();
+    const item: DecisionInboxItem = {
+      id: "workflow-2",
+      kind: "project_review_ready",
+      agentId: null,
+      agentName: "Planning Lead",
+      agentNameKo: "Planning Lead",
+      requestContent: "Ready",
+      options: [{ number: 1, label: "Start", action: "start_project_review" }],
+      createdAt: 100,
+      taskId: "task-1",
+    };
+
+    await act(async () => {
+      await state.actions.handleReplyDecisionOption(item, 1);
+      await flushMicrotasks();
+    });
+
+    expect(window.alert).toHaveBeenCalledWith(
+      expect.stringContaining("Expand the subtasks on the task board and finish the remaining items first"),
+    );
+  });
 });
