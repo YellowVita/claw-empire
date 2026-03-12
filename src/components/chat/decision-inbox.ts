@@ -5,6 +5,7 @@ import type { DecisionOption } from "./decision-request";
 export interface DecisionInboxItem {
   id: string;
   kind: "agent_request" | "project_review_ready" | "task_timeout_resume" | "review_round_pick";
+  decisionStatus?: "collecting" | "ready" | "blocked";
   agentId: string | null;
   agentName: string;
   agentNameKo: string;

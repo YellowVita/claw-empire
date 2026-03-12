@@ -475,6 +475,8 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
     const lang = resolveLang(parentTask.description ?? parentTask.title);
     const isV2 = isTaskOrchestrationV2(parentTask);
     const orchestrationStage = getTaskOrchestrationStage(parentTask);
+    const usesForeignCollabDelegationMode =
+      isV2 && (orchestrationStage === "foreign_collab" || orchestrationStage === "review");
 
     if (isV2 && orchestrationStage === "owner_integrate") {
       clearDelegationRetry(taskId);
@@ -492,7 +494,7 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
       ? foreignSubtasksAll.filter((subtask) => {
           const phase = inferOrchestrationPhaseFromSubtask(subtask);
           if (orchestrationStage === "finalize") return phase === "finalize";
-          if (orchestrationStage === "foreign_collab") return phase === "foreign_collab";
+          if (usesForeignCollabDelegationMode) return phase === "foreign_collab";
           return false;
         })
       : foreignSubtasksAll;
@@ -516,10 +518,16 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
 
     if (eligible.length === 0) {
       clearDelegationRetry(taskId);
-      if (isV2 && orchestrationStage === "foreign_collab") {
+      if (usesForeignCollabDelegationMode) {
         const unresolvedForeign = incompleteForeign.filter((subtask) => subtask.status !== "blocked");
         if (unresolvedForeign.length === 0) {
-          appendTaskLog(taskId, "system", "V2 orchestration: foreign collaboration remains blocked; owner integration will not start");
+          appendTaskLog(
+            taskId,
+            "system",
+            orchestrationStage === "review"
+              ? "V2 orchestration: review remediation remains blocked; project review will stay on hold"
+              : "V2 orchestration: foreign collaboration remains blocked; owner integration will not start",
+          );
         }
       }
       return;
@@ -557,22 +565,22 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
       pickL(
         l(
           [
-            isV2 && orchestrationStage === "foreign_collab"
+            usesForeignCollabDelegationMode
               ? `'${parentTask.title}' 의 foreign_collab 서브태스크 ${eligible.length}건을 최대 ${ORCHESTRATION_V2_FOREIGN_PARALLELISM}개 부서까지 제한 병렬로 위임합니다.`
               : `'${parentTask.title}' 의 외부 부서 서브태스크 ${eligible.length}건을 부서별 배치로 순차 위임합니다.`,
           ],
           [
-            isV2 && orchestrationStage === "foreign_collab"
+            usesForeignCollabDelegationMode
               ? `Delegating ${eligible.length} foreign_collab subtasks for '${parentTask.title}' with capped parallelism (${ORCHESTRATION_V2_FOREIGN_PARALLELISM} departments max).`
               : `Delegating ${eligible.length} external-department subtasks for '${parentTask.title}' sequentially by department, one batched request at a time.`,
           ],
           [
-            isV2 && orchestrationStage === "foreign_collab"
+            usesForeignCollabDelegationMode
               ? `'${parentTask.title}' の foreign_collab サブタスク${eligible.length}件を、最大${ORCHESTRATION_V2_FOREIGN_PARALLELISM}部門まで制限並列で委任します。`
               : `'${parentTask.title}' の他部門サブタスク${eligible.length}件を、部門ごとにバッチ化して順次委任します。`,
           ],
           [
-            isV2 && orchestrationStage === "foreign_collab"
+            usesForeignCollabDelegationMode
               ? `将把'${parentTask.title}'的 ${eligible.length} 个 foreign_collab 子任务以最多 ${ORCHESTRATION_V2_FOREIGN_PARALLELISM} 个部门的限制并行方式委派。`
               : `将把'${parentTask.title}'的${eligible.length}个外部门 SubTask 按部门批量后顺序委派。`,
           ],
@@ -584,7 +592,7 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
     appendTaskLog(
       taskId,
       "system",
-      isV2 && orchestrationStage === "foreign_collab"
+      usesForeignCollabDelegationMode
         ? `Subtask delegation mode: capped_parallel_by_department_batched (parallelism=${ORCHESTRATION_V2_FOREIGN_PARALLELISM}, queues=${deptCount}, items=${eligible.length})`
         : `Subtask delegation mode: sequential_by_department_batched (queues=${deptCount}, items=${eligible.length})`,
     );
@@ -607,7 +615,7 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
       maybeNotifyAllSubtasksComplete(parentTask.id);
     };
 
-    if (!isV2 || orchestrationStage !== "foreign_collab") {
+    if (!usesForeignCollabDelegationMode) {
       const runQueue = (index: number) => {
         if (index >= queues.length) {
           subtaskDelegationDispatchInFlight.delete(taskId);

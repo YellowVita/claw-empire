@@ -38,6 +38,7 @@ export type DecisionInboxRouteItem = {
   kind: "project_review_ready" | "task_timeout_resume" | "review_round_pick";
   created_at: number;
   summary: string;
+  decision_status?: "collecting" | "ready" | "blocked";
   agent_id?: string | null;
   agent_name?: string | null;
   agent_name_ko?: string | null;

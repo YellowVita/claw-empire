@@ -64,6 +64,56 @@ export function createProjectAndTimeoutDecisionItems(
     }));
   }
 
+  function getLatestProjectReviewDecisionEvent(
+    projectId: string,
+    snapshotHash: string,
+    eventType: "planning_summary" | "start_review_meeting_blocked",
+  ): { summary: string | null; note: string | null } | null {
+    try {
+      return (
+        (db
+          .prepare(
+            `
+          SELECT summary, note
+          FROM project_review_decision_events
+          WHERE project_id = ?
+            AND snapshot_hash = ?
+            AND event_type = ?
+          ORDER BY created_at DESC, id DESC
+          LIMIT 1
+        `,
+          )
+          .get(projectId, snapshotHash, eventType) as { summary: string | null; note: string | null } | undefined) ??
+        null
+      );
+    } catch {
+      return null;
+    }
+  }
+
+  function countBlockedReviewRemediationSubtasks(projectId: string): number {
+    try {
+      const row = db
+        .prepare(
+          `
+        SELECT COUNT(*) AS cnt
+        FROM subtasks s
+        JOIN tasks t ON t.id = s.task_id
+        WHERE t.project_id = ?
+          AND t.status = 'review'
+          AND t.source_task_id IS NULL
+          AND s.status NOT IN ('done', 'cancelled')
+          AND s.target_department_id IS NOT NULL
+          AND s.orchestration_phase = 'foreign_collab'
+      `,
+        )
+        .get(projectId) as { cnt: number } | undefined;
+      return row?.cnt ?? 0;
+    } catch {
+      return 0;
+    }
+  }
+
   function buildProjectReviewDecisionItems(): ProjectReviewDecisionItem[] {
     const lang = getPreferredLanguage();
     const t = (ko: string, en: string, ja: string, zh: string) => pickL(l([ko], [en], [ja], [zh]), lang);
@@ -273,7 +323,27 @@ export function createProjectAndTimeoutDecisionItems(
       const useCollectingFallback = Boolean(
         decisionState && decisionState.status === "collecting" && collectingElapsedMs >= DECISION_COLLECTING_STALE_MS,
       );
-      if (!decisionState || (decisionState.status !== "ready" && !useCollectingFallback)) {
+      const latestPlanningSummaryEvent = getLatestProjectReviewDecisionEvent(
+        row.project_id,
+        snapshotHash,
+        "planning_summary",
+      );
+      const latestReviewBlockedEvent = getLatestProjectReviewDecisionEvent(
+        row.project_id,
+        snapshotHash,
+        "start_review_meeting_blocked",
+      );
+      const plannerSummary = formatPlannerSummaryForDisplay(
+        String(decisionState?.planner_summary ?? latestPlanningSummaryEvent?.summary ?? "").trim(),
+      );
+      const hasPlannerSummary = plannerSummary.length > 0;
+      const blockedRemediationCount = countBlockedReviewRemediationSubtasks(row.project_id);
+      const isReviewMeetingBlocked =
+        pendingChoices.length === 0 &&
+        hasPlannerSummary &&
+        (blockedRemediationCount > 0 || Boolean(latestReviewBlockedEvent));
+
+      if (!decisionState || (!hasPlannerSummary && decisionState.status !== "ready" && !useCollectingFallback)) {
         queueProjectReviewPlanningConsolidation(row.project_id, projectName, row.project_path, snapshotHash, lang);
         const collectingSummary = t(
           `프로젝트 '${projectName}'의 활성 항목 ${activeTotal}건이 모두 Review 상태입니다.\n기획팀장 의견 취합중...\n취합 완료 후 대표 선택지와 회의 진행 선택지가 나타납니다.`,
@@ -295,29 +365,46 @@ export function createProjectAndTimeoutDecisionItems(
           project_path: row.project_path,
           task_id: null,
           task_title: null,
+          decision_status: "collecting",
           options: [],
         });
         continue;
       }
 
-      const plannerHeader = useCollectingFallback
-        ? t(
-            "기획팀장 취합 지연 - 기본 선택지로 진행",
-            "Planning consolidation delayed - proceeding with baseline options",
-            "企画リード集約遅延 - 基本選択肢で進行",
-            "规划汇总延迟 - 以基础选项继续",
-          )
-        : t(
-            "기획팀장 의견 취합 완료",
-            "Planning consolidation complete",
-            "企画リード意見集約完了",
-            "规划负责人意见汇总完成",
-          );
-      const plannerSummary = useCollectingFallback
-        ? ""
-        : formatPlannerSummaryForDisplay(String(decisionState?.planner_summary ?? "").trim());
+      const decisionStatus = isReviewMeetingBlocked ? "blocked" : "ready";
+      const plannerHeader =
+        useCollectingFallback && !hasPlannerSummary
+          ? t(
+              "기획팀장 취합 지연 - 기본 선택지로 진행",
+              "Planning consolidation delayed - proceeding with baseline options",
+              "企画リード集約遅延 - 基本選択肢で進行",
+              "规划汇总延迟 - 以基础选项继续",
+            )
+          : t(
+              "기획팀장 의견 취합 완료",
+              "Planning consolidation complete",
+              "企画リード意見集約完了",
+              "规划负责人意见汇总完成",
+            );
+      const blockedReason =
+        blockedRemediationCount > 0
+          ? t(
+              `다만 미완료 검토보완 서브태스크 ${blockedRemediationCount}건 때문에 회의 시작이 보류됨`,
+              `However, meeting start is on hold because ${blockedRemediationCount} review-remediation subtasks are still unfinished.`,
+              `ただし、未完了のレビュー補完サブタスク${blockedRemediationCount}件のため会議開始は保留中です。`,
+              `但是由于仍有 ${blockedRemediationCount} 个评审补充子任务未完成，会议启动已被保留。`,
+            )
+          : String(latestReviewBlockedEvent?.note ?? latestReviewBlockedEvent?.summary ?? "").trim() ||
+            t(
+              "다만 회의 시작 조건이 아직 충족되지 않아 보류 중입니다.",
+              "However, the meeting is still on hold because the start conditions are not yet satisfied.",
+              "ただし、会議開始条件をまだ満たしていないため保留中です。",
+              "但是由于会议启动条件尚未满足，当前仍处于保留状态。",
+            );
       const optionGuide =
-        pendingChoices.length <= 0 ? readyOptions.map((option) => `${option.number}. ${option.label}`).join("\n") : "";
+        pendingChoices.length <= 0 && !isReviewMeetingBlocked
+          ? readyOptions.map((option) => `${option.number}. ${option.label}`).join("\n")
+          : "";
       const optionGuideBlock = optionGuide
         ? t(
             `현재 선택 가능한 항목:\n${optionGuide}`,
@@ -326,9 +413,13 @@ export function createProjectAndTimeoutDecisionItems(
             `当前可选项:\n${optionGuide}`,
           )
         : "";
-      const combinedSummaryBase = plannerSummary
-        ? `${plannerHeader}\n${plannerSummary}\n\n${summary}`
-        : `${plannerHeader}\n\n${summary}`;
+      const combinedSummaryBase = isReviewMeetingBlocked
+        ? plannerSummary
+          ? `${plannerHeader}\n${plannerSummary}\n\n${blockedReason}`
+          : `${plannerHeader}\n\n${blockedReason}`
+        : plannerSummary
+          ? `${plannerHeader}\n${plannerSummary}\n\n${summary}`
+          : `${plannerHeader}\n\n${summary}`;
       const combinedSummary = optionGuideBlock ? `${combinedSummaryBase}\n\n${optionGuideBlock}` : combinedSummaryBase;
 
       out.push({
@@ -336,6 +427,7 @@ export function createProjectAndTimeoutDecisionItems(
         kind: "project_review_ready",
         created_at: row.updated_at ?? now,
         summary: combinedSummary,
+        decision_status: decisionStatus,
         agent_id: planningLeadMeta.agent_id,
         agent_name: planningLeadMeta.agent_name,
         agent_name_ko: planningLeadMeta.agent_name_ko,
@@ -345,7 +437,7 @@ export function createProjectAndTimeoutDecisionItems(
         project_path: row.project_path,
         task_id: null,
         task_title: null,
-        options: readyOptions,
+        options: isReviewMeetingBlocked ? [] : readyOptions,
       });
     }
 

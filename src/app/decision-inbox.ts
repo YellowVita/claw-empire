@@ -6,6 +6,7 @@ function baseWorkflowDecisionItem(item: DecisionInboxRouteItem): Omit<DecisionIn
   return {
     id: item.id,
     kind: item.kind,
+    decisionStatus: item.decision_status,
     agentId: item.agent_id ?? null,
     agentName:
       item.agent_name ||

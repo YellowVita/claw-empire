@@ -210,6 +210,39 @@ export default function DecisionInboxModal({
     return "🤖";
   };
 
+  const getEmptyStateLabel = (item: DecisionInboxItem) => {
+    if (item.kind === "project_review_ready") {
+      if (item.decisionStatus === "blocked") {
+        return t({
+          ko: "기획팀장 의견 취합은 완료됐지만, 미완료 검토보완 작업 때문에 회의 시작이 보류되어 있습니다.",
+          en: "Planning consolidation is complete, but the meeting is on hold until the review remediation work finishes.",
+          ja: "企画リードの集約は完了しましたが、未完了のレビュー補完作業のため会議開始は保留中です。",
+          zh: "规划汇总已完成，但由于评审补充工作尚未结束，会议启动仍处于保留状态。",
+        });
+      }
+      if (item.decisionStatus === "ready") {
+        return t({
+          ko: "선택지 동기화 중입니다. 잠시 후 다시 열어 주세요.",
+          en: "Options are syncing. Reopen this inbox in a moment.",
+          ja: "選択肢を同期中です。しばらくしてから再度開いてください。",
+          zh: "选项正在同步，请稍后重新打开此收件箱。",
+        });
+      }
+      return t({
+        ko: "기획팀장 의견 취합중...",
+        en: "Planning lead is consolidating opinions...",
+        ja: "企画リードが意見を集約中...",
+        zh: "规划负责人正在汇总意见...",
+      });
+    }
+    return t({
+      ko: "선택지 준비 중...",
+      en: "Options are being prepared...",
+      ja: "選択肢を準備中...",
+      zh: "正在准备选项...",
+    });
+  };
+
   if (!open) return null;
 
   return (
@@ -417,19 +450,7 @@ export default function DecisionInboxModal({
                       })
                     ) : (
                       <p className="rounded-md border border-slate-700/70 bg-slate-900/50 px-2.5 py-2 text-xs text-slate-400">
-                        {item.kind === "project_review_ready"
-                          ? t({
-                              ko: "기획팀장 의견 취합중...",
-                              en: "Planning lead is consolidating opinions...",
-                              ja: "企画リードが意見を集約中...",
-                              zh: "规划负责人正在汇总意见...",
-                            })
-                          : t({
-                              ko: "선택지 준비 중...",
-                              en: "Options are being prepared...",
-                              ja: "選択肢を準備中...",
-                              zh: "正在准备选项...",
-                            })}
+                        {getEmptyStateLabel(item)}
                       </p>
                     )}
                   </div>

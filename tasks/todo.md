@@ -110,3 +110,9 @@
 - [x] Treat `collaborating` parent tasks as active during foreign delegation batch ack
 - [x] Add regression coverage for delegating from `collaborating` parent tasks
 - [x] Run targeted server test verification
+
+## 20. Review Remediation Delegation + Decision Inbox Status Fix
+- [x] Allow `review`-stage foreign remediation subtasks to delegate under V2 slot limits
+- [x] Add `decision_status` hint for project review cards and blocked copy on the server
+- [x] Propagate `decision_status` through frontend mapping and Decision Inbox fallback rendering
+- [x] Add regression tests and run targeted server/web verification
