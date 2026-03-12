@@ -52,10 +52,10 @@ const SUBTASK_STATUS_ICON: Record<string, string> = {
 };
 
 function blockedSubtaskLabel(kind: BlockedSubtaskDisplayState, t: any): string {
-  if (kind === "owner_gate_waiting") return t({ ko: "원부서 정리 대기", en: "Waiting on owner team" });
-  if (kind === "collaboration_waiting") return t({ ko: "협업 대기", en: "Waiting for collaboration" });
-  if (kind === "delegation_retry_needed") return t({ ko: "위임 재시도 필요", en: "Delegation retry needed" });
-  return t({ ko: "차단", en: "Blocked" });
+  if (kind === "owner_gate_waiting") return t({ ko: "원부서 정리 대기", en: "Waiting on owner team", ja: "元部門待ち", zh: "等待原部门" });
+  if (kind === "collaboration_waiting") return t({ ko: "협업 대기", en: "Waiting for collaboration", ja: "協業待ち", zh: "等待协作" });
+  if (kind === "delegation_retry_needed") return t({ ko: "위임 재시도 필요", en: "Delegation retry needed", ja: "委任再試行必要", zh: "需要重新委派" });
+  return t({ ko: "차단", en: "Blocked", ja: "ブロック", zh: "阻止" });
 }
 
 function blockedSubtaskBadgeClass(kind: BlockedSubtaskDisplayState): string {
@@ -166,7 +166,7 @@ export default function TaskCard({
           </div>
         ) : <div />}
         
-        {new Date().getTime() - new Date(task.updated_at).getTime() < 5 * 60 * 1000 && (
+        {task.status === "in_progress" && new Date().getTime() - new Date(task.updated_at).getTime() < 5 * 60 * 1000 && (
           <div className="flex items-center gap-1.5">
             <span className="relative flex h-2 w-2">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
@@ -187,7 +187,7 @@ export default function TaskCard({
           </button>
           <span
             className="flex-shrink-0 text-base"
-            title={`${t({ ko: "우선순위", en: "Priority" })}: ${priorityLabel(task.priority, t)}`}
+            title={`${t({ ko: "우선순위", en: "Priority", ja: "優先度", zh: "优先级" })}: ${priorityLabel(task.priority, t)}`}
           >
             {priorityIcon(task.priority)}
           </span>
@@ -203,7 +203,7 @@ export default function TaskCard({
           <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${typeBadge.color}`}>{typeBadge.label}</span>
           {isHiddenTask && (
             <span className="rounded-full bg-cyan-900/60 px-2 py-0.5 text-xs text-cyan-200">
-              🙈 {t({ ko: "숨김", en: "Hidden" })}
+              🙈 {t({ ko: "숨김", en: "Hidden", ja: "非表示", zh: "隐藏" })}
             </span>
           )}
           {department && (
@@ -222,7 +222,7 @@ export default function TaskCard({
           <div className="rounded-lg border border-slate-700/60 bg-slate-900/60 px-3 py-2">
             <div className="flex items-center justify-between gap-2">
               <p className="truncate text-[11px] font-medium text-slate-200">
-                {developmentHandoff.summary || t({ ko: "개발 인수인계 상태가 갱신되었습니다", en: "Development handoff updated" })}
+                {developmentHandoff.summary || t({ ko: "개발 인수인계 상태가 갱신되었습니다", en: "Development handoff updated", ja: "開発ハンドオフが更新されました", zh: "开发交接状态已更新" })}
               </p>
               <span className="shrink-0 text-[10px] uppercase tracking-wide text-slate-500">
                 {developmentHandoff.pr_gate_status === "blocked" ? "pr blocked" : developmentHandoff.pending_retry ? "retry" : ""}
@@ -255,7 +255,7 @@ export default function TaskCard({
             ) : assignedLabel ? (
               <span className="text-xs text-slate-300">{assignedLabel}</span>
             ) : (
-              <span className="text-xs text-slate-500">{t({ ko: "미배정", en: "Unassigned" })}</span>
+              <span className="text-xs text-slate-500">{t({ ko: "미배정", en: "Unassigned", ja: "未割り当て", zh: "未分配" })}</span>
             )}
           </div>
           <span className="text-xs text-slate-500">{timeAgo(task.created_at, localeTag)}</span>
@@ -314,9 +314,9 @@ export default function TaskCard({
                   const displayState = getSubtaskDisplayState(subtask, task, taskSubtasks);
                   const waitingHint =
                     displayState.kind === "collaboration_waiting"
-                      ? t({ ko: "자동 위임 예정", en: "Auto delegation pending" })
+                      ? t({ ko: "자동 위임 예정", en: "Auto delegation pending", ja: "自動委任予定", zh: "等待自动委派" })
                       : displayState.kind === "owner_gate_waiting"
-                        ? t({ ko: "원부서 선행 작업 대기", en: "Waiting on owner-team prep" })
+                        ? t({ ko: "원부서 선행 작업 대기", en: "Waiting on owner-team prep", ja: "元部門の先行作業待ち", zh: "等待原部门先行处理" })
                         : null;
                   return (
                     <div key={subtask.id} className="rounded-md border border-slate-700/70 bg-slate-900/60 px-2 py-1.5">
@@ -334,7 +334,7 @@ export default function TaskCard({
                           </span>
                         )}
                         {subtask.delegated_task_id && subtask.status !== "done" && (
-                          <span className="text-blue-400 shrink-0" title={t({ ko: "위임됨", en: "Delegated" }) ?? undefined}>
+                          <span className="text-blue-400 shrink-0" title={t({ ko: "위임됨", en: "Delegated", ja: "委任済み", zh: "已委派" }) ?? undefined}>
                             🔗
                           </span>
                         )}
@@ -363,7 +363,7 @@ export default function TaskCard({
                               }}
                               className="rounded border border-amber-500/50 px-1.5 py-0.5 text-[10px] text-amber-200 hover:bg-amber-500/10"
                             >
-                              {t({ ko: "재시도", en: "Retry" })}
+                              {t({ ko: "재시도", en: "Retry", ja: "再試行", zh: "重试" })}
                             </button>
                             <button
                                 disabled={subtaskActionBusyId === subtask.id}
@@ -377,7 +377,7 @@ export default function TaskCard({
                                 }}
                                 className="rounded border border-cyan-500/50 px-1.5 py-0.5 text-[10px] text-cyan-200 hover:bg-cyan-500/10"
                               >
-                                {t({ ko: "원부서 처리", en: "Move to Owner" })}
+                                {t({ ko: "원부서 처리", en: "Move to Owner", ja: "元部門へ戻す", zh: "转回原部门" })}
                               </button>
                             <button
                               disabled={subtaskActionBusyId === subtask.id}
@@ -391,7 +391,7 @@ export default function TaskCard({
                               }}
                               className="rounded border border-emerald-500/50 px-1.5 py-0.5 text-[10px] text-emerald-200 hover:bg-emerald-500/10"
                             >
-                              {t({ ko: "완료 처리", en: "Mark Done" })}
+                              {t({ ko: "완료 처리", en: "Mark Done", ja: "完了処理", zh: "标记完成" })}
                             </button>
                           </div>
                         </div>
@@ -419,17 +419,26 @@ export default function TaskCard({
                 }}
                 className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-500 shadow-sm"
               >
-                <span>▶️</span> {t({ ko: "시작", en: "Run" })}
+                <span>▶️</span> {t({ ko: "시작", en: "Run", ja: "開始", zh: "开始" })}
+              </button>
+            )}
+            {canPause && (
+              <button
+                onClick={() => onPauseTask!(task.id)}
+                className="flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-500 shadow-sm"
+                title={t({ ko: "일시 중지", en: "Pause", ja: "一時停止", zh: "暂停" })}
+              >
+                <span>⏸️</span> {t({ ko: "일시 중지", en: "Pause", ja: "一時停止", zh: "暂停" })}
               </button>
             )}
             {canStop && (
               <button
                 onClick={() => {
-                  if (confirm(t({ ko: "작업을 중지할까요?", en: "Stop task?" }))) onStopTask(task.id);
+                  if (confirm(t({ ko: "작업을 중지할까요?", en: "Stop task?", ja: "停止しますか？", zh: "要停止吗？" }))) onStopTask(task.id);
                 }}
                 className="flex items-center gap-1.5 rounded-lg bg-red-600/90 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-500 shadow-sm"
               >
-                <span>⏹️</span> {t({ ko: "중지", en: "Stop" })}
+                <span>⏹️</span> {t({ ko: "중지", en: "Stop", ja: "停止", zh: "停止" })}
               </button>
             )}
             {canResume && (
@@ -437,7 +446,7 @@ export default function TaskCard({
                 onClick={() => onResumeTask!(task.id)}
                 className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-500 shadow-sm"
               >
-                <span>⏯️</span> {t({ ko: "재개", en: "Resume" })}
+                <span>⏯️</span> {t({ ko: "재개", en: "Resume", ja: "再開", zh: "恢复" })}
               </button>
             )}
             {onOpenTerminal && (
@@ -445,7 +454,7 @@ export default function TaskCard({
                 onClick={() => onOpenTerminal(task.id)}
                 className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-700"
               >
-                <span>💻</span> {t({ ko: "터미널", en: "Terminal" })}
+                <span>💻</span> {t({ ko: "터미널", en: "Terminal", ja: "ターミナル", zh: "终端" })}
               </button>
             )}
           </div>
@@ -455,7 +464,7 @@ export default function TaskCard({
               <button
                 onClick={() => onOpenMeetingMinutes(task.id)}
                 className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-700 bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200"
-                title={t({ ko: "회의록", en: "Minutes" })}
+                title={t({ ko: "회의록", en: "Minutes", ja: "議事録", zh: "会议记录" })}
               >
                 <span>📝</span>
               </button>
@@ -464,7 +473,7 @@ export default function TaskCard({
               <button
                 onClick={() => setShowDiff(true)}
                 className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-700 bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200"
-                title={t({ ko: "변경 사항", en: "Diff" })}
+                title={t({ ko: "변경 사항", en: "Diff", ja: "変更点", zh: "变更点" })}
               >
                 <span>🔍</span>
               </button>
@@ -473,7 +482,7 @@ export default function TaskCard({
               <button
                 onClick={() => (isHiddenTask ? onUnhideTask?.(task.id) : onHideTask(task.id))}
                 className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-700 bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200"
-                title={isHiddenTask ? "Show" : "Hide"}
+                title={isHiddenTask ? t({ ko: "표시", en: "Show", ja: "表示", zh: "显示" }) : t({ ko: "숨김", en: "Hide", ja: "非表示", zh: "隐藏" })}
               >
                 <span>{isHiddenTask ? "👁️" : "🙈"}</span>
               </button>
@@ -481,10 +490,10 @@ export default function TaskCard({
             {canDelete && (
               <button
                 onClick={() => {
-                  if (confirm(t({ ko: "삭제할까요?", en: "Delete?" }))) onDeleteTask(task.id);
+                  if (confirm(t({ ko: "삭제할까요?", en: "Delete?", ja: "削除しますか？", zh: "要删除吗？" }))) onDeleteTask(task.id);
                 }}
                 className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-700 bg-slate-800 text-slate-400 hover:bg-rose-900/30 hover:text-rose-400"
-                title={t({ ko: "삭제", en: "Delete" })}
+                title={t({ ko: "삭제", en: "Delete", ja: "削除", zh: "删除" })}
               >
                 <span>🗑️</span>
               </button>
