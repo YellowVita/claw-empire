@@ -168,6 +168,17 @@ const baseReport = {
         waiting_on_child_reviews: false,
         pending_retry: false,
         merge_status: "merged",
+        approval_audit: {
+          approved_at: 1985,
+          approval_source: "review_consensus",
+          updated_at: 2000,
+        },
+        merge_audit: {
+          auto_commit_sha: "abcdef1234567890",
+          post_merge_head_sha: "fedcba0987654321",
+          target_branch: "dev",
+          updated_at: 2000,
+        },
         pr_feedback_gate: {
           applicable: true,
           status: "blocked",
@@ -295,5 +306,25 @@ describe("TaskReportPopup", () => {
     expect(screen.getByText(/Unresolved review threads: 2/)).toBeInTheDocument();
     expect(screen.getByText("Ignored Checks")).toBeInTheDocument();
     expect(screen.getByText("optional / preview | optional / smoke")).toBeInTheDocument();
+  });
+
+  it("shows approval and merge audit details when present", () => {
+    render(
+      <I18nProvider language="en">
+        <TaskReportPopup
+          report={baseReport as any}
+          agents={[{ id: "agent-1", name: "Ari", name_ko: "아리", avatar_emoji: "A" } as any]}
+          departments={[{ id: "planning", name: "Planning", name_ko: "기획팀", color: "#00aa88", icon: "P" } as any]}
+          uiLanguage="en"
+          onClose={() => {}}
+        />
+      </I18nProvider>,
+    );
+
+    expect(screen.getByText("Approval and Merge Audit")).toBeInTheDocument();
+    expect(screen.getByText("review_consensus")).toBeInTheDocument();
+    expect(screen.getByText("abcdef123456")).toBeInTheDocument();
+    expect(screen.getByText("fedcba098765")).toBeInTheDocument();
+    expect(screen.getByText("dev")).toBeInTheDocument();
   });
 });

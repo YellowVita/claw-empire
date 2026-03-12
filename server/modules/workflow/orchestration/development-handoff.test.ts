@@ -5,6 +5,8 @@ import {
   buildDevelopmentHandoffSummary,
   clearDevelopmentHandoffMetadata,
   decorateTaskWithDevelopmentHandoff,
+  normalizeDevelopmentReviewAuditMetadata,
+  upsertDevelopmentReviewAuditMetadata,
   upsertDevelopmentHandoffMetadata,
 } from "./development-handoff.ts";
 
@@ -116,5 +118,66 @@ describe("development handoff metadata", () => {
         mergeStatus: "failed",
       }),
     ).toBe("Merge failed; manual resolution required");
+  });
+
+  it("preserves existing development_handoff while patching development_review_audit", () => {
+    const db = createDb();
+    try {
+      db.prepare("INSERT INTO tasks (id, workflow_pack_key, workflow_meta_json, status, updated_at) VALUES (?, ?, ?, ?, ?)")
+        .run(
+          "task-3",
+          "development",
+          JSON.stringify({
+            development_handoff: {
+              state: "human_review",
+              updated_at: 10,
+              status_snapshot: "review",
+              pending_retry: false,
+              pr_gate_status: "passed",
+              pr_url: "https://example.com/pr/1",
+              summary: "Waiting for human review",
+            },
+            custom: "keep",
+          }),
+          "review",
+          10,
+        );
+
+      upsertDevelopmentReviewAuditMetadata(db as any, {
+        taskId: "task-3",
+        approvedAt: 30,
+        approvalSource: "review_consensus",
+        autoCommitSha: "abc123",
+        postMergeHeadSha: "def456",
+        targetBranch: "dev",
+        updatedAt: 40,
+      });
+
+      const row = db.prepare("SELECT workflow_meta_json FROM tasks WHERE id = ?").get("task-3") as {
+        workflow_meta_json: string;
+      };
+      const meta = JSON.parse(row.workflow_meta_json);
+      expect(meta.custom).toBe("keep");
+      expect(meta.development_handoff).toEqual(
+        expect.objectContaining({
+          state: "human_review",
+          pr_gate_status: "passed",
+        }),
+      );
+      expect(
+        normalizeDevelopmentReviewAuditMetadata(meta.development_review_audit),
+      ).toEqual(
+        expect.objectContaining({
+          approved_at: 30,
+          approval_source: "review_consensus",
+          auto_commit_sha: "abc123",
+          post_merge_head_sha: "def456",
+          target_branch: "dev",
+          updated_at: 40,
+        }),
+      );
+    } finally {
+      db.close();
+    }
   });
 });

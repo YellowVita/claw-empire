@@ -255,6 +255,17 @@ export interface TaskRunSheetSnapshot {
     waiting_on_child_reviews: boolean;
     pending_retry: boolean;
     merge_status: "not_started" | "merged" | "failed";
+    approval_audit?: {
+      approved_at: number | null;
+      approval_source: "review_consensus" | "delegated_review_finalize" | null;
+      updated_at: number | null;
+    } | null;
+    merge_audit?: {
+      auto_commit_sha: string | null;
+      post_merge_head_sha: string | null;
+      target_branch: "main" | "dev" | null;
+      updated_at: number | null;
+    } | null;
     pr_feedback_gate: null | {
       applicable: boolean;
       status: "passed" | "blocked" | "skipped";

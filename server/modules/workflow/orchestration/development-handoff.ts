@@ -13,6 +13,7 @@ export type DevelopmentHandoffState =
   | "rework";
 
 export type DevelopmentHandoffGateStatus = "passed" | "blocked" | "skipped" | null;
+export type DevelopmentReviewApprovalSource = "review_consensus" | "delegated_review_finalize";
 
 export type DevelopmentHandoffMetadata = {
   state: DevelopmentHandoffState;
@@ -22,6 +23,15 @@ export type DevelopmentHandoffMetadata = {
   pr_gate_status: DevelopmentHandoffGateStatus;
   pr_url: string | null;
   summary: string | null;
+};
+
+export type DevelopmentReviewAuditMetadata = {
+  approved_at: number | null;
+  approval_source: DevelopmentReviewApprovalSource | null;
+  auto_commit_sha: string | null;
+  post_merge_head_sha: string | null;
+  target_branch: "main" | "dev" | null;
+  updated_at: number;
 };
 
 type TaskMetaRow = {
@@ -113,6 +123,26 @@ export function normalizeDevelopmentHandoffMetadata(raw: unknown): DevelopmentHa
       prGateStatus === "passed" || prGateStatus === "blocked" || prGateStatus === "skipped" ? prGateStatus : null,
     pr_url: normalizeText(source.pr_url),
     summary: normalizeText(source.summary),
+  };
+}
+
+export function normalizeDevelopmentReviewAuditMetadata(raw: unknown): DevelopmentReviewAuditMetadata | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const source = raw as Record<string, unknown>;
+  const approvalSource = normalizeText(source.approval_source);
+  const targetBranch = normalizeText(source.target_branch);
+  const approvedAtValue =
+    typeof source.approved_at === "number" ? source.approved_at : Number(source.approved_at ?? 0);
+  const updatedAtValue =
+    typeof source.updated_at === "number" ? source.updated_at : Number(source.updated_at ?? 0);
+  return {
+    approved_at: Number.isFinite(approvedAtValue) && approvedAtValue > 0 ? Math.trunc(approvedAtValue) : null,
+    approval_source:
+      approvalSource === "review_consensus" || approvalSource === "delegated_review_finalize" ? approvalSource : null,
+    auto_commit_sha: normalizeText(source.auto_commit_sha),
+    post_merge_head_sha: normalizeText(source.post_merge_head_sha),
+    target_branch: targetBranch === "main" || targetBranch === "dev" ? targetBranch : null,
+    updated_at: Number.isFinite(updatedAtValue) && updatedAtValue > 0 ? Math.trunc(updatedAtValue) : 0,
   };
 }
 
@@ -229,6 +259,54 @@ export function clearDevelopmentHandoffMetadata(db: DbLike, input: {
         WHERE id = ?
       `,
     ).run(updatedAt, input.taskId);
+  } catch {
+    // Legacy harnesses may not define workflow_meta_json yet.
+  }
+}
+
+export function upsertDevelopmentReviewAuditMetadata(db: DbLike, input: {
+  taskId: string;
+  approvedAt?: number | null;
+  approvalSource?: DevelopmentReviewApprovalSource | null;
+  autoCommitSha?: string | null;
+  postMergeHeadSha?: string | null;
+  targetBranch?: "main" | "dev" | null;
+  updatedAt?: number;
+}): void {
+  const task = readTaskMetaRow(db, input.taskId);
+  if (!task || normalizeText(task.workflow_pack_key) !== "development") return;
+
+  const workflowMeta = parseWorkflowMetaObject(task.workflow_meta_json);
+  const existing = normalizeDevelopmentReviewAuditMetadata(workflowMeta.development_review_audit);
+  const updatedAt = input.updatedAt ?? Date.now();
+  const next: DevelopmentReviewAuditMetadata = {
+    approved_at: input.approvedAt !== undefined ? input.approvedAt : existing?.approved_at ?? null,
+    approval_source:
+      input.approvalSource !== undefined ? input.approvalSource : existing?.approval_source ?? null,
+    auto_commit_sha: input.autoCommitSha !== undefined ? input.autoCommitSha : existing?.auto_commit_sha ?? null,
+    post_merge_head_sha:
+      input.postMergeHeadSha !== undefined ? input.postMergeHeadSha : existing?.post_merge_head_sha ?? null,
+    target_branch: input.targetBranch !== undefined ? input.targetBranch : existing?.target_branch ?? null,
+    updated_at: updatedAt,
+  };
+
+  try {
+    db.prepare(
+      `
+        UPDATE tasks
+        SET workflow_meta_json = json_set(
+              CASE
+                WHEN json_valid(workflow_meta_json) THEN workflow_meta_json
+                ELSE '{}'
+              END,
+              '$.development_review_audit',
+              json(?)
+            ),
+            updated_at = ?
+        WHERE id = ?
+          AND workflow_pack_key = 'development'
+      `,
+    ).run(JSON.stringify(next), updatedAt, input.taskId);
   } catch {
     // Legacy harnesses may not define workflow_meta_json yet.
   }

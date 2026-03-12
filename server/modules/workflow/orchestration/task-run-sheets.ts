@@ -3,6 +3,7 @@ import { buildTaskQualityPayload } from "../../routes/core/tasks/quality.ts";
 import type { TaskQualityRun } from "./task-quality-evidence.ts";
 import { summarizeTaskExecutionEvents } from "./task-execution-events.ts";
 import { syncDevelopmentHandoffFromRunSheet } from "./development-handoff.ts";
+import { normalizeDevelopmentReviewAuditMetadata } from "./development-handoff.ts";
 
 type DbLike = Pick<DatabaseSync, "prepare">;
 
@@ -29,6 +30,19 @@ export type TaskRunSheetPrFeedbackGate = {
   ignored_check_names: string[];
   blocking_reasons: string[];
   checked_at: number | null;
+};
+
+export type TaskRunSheetApprovalAudit = {
+  approved_at: number | null;
+  approval_source: "review_consensus" | "delegated_review_finalize" | null;
+  updated_at: number | null;
+};
+
+export type TaskRunSheetMergeAudit = {
+  auto_commit_sha: string | null;
+  post_merge_head_sha: string | null;
+  target_branch: "main" | "dev" | null;
+  updated_at: number | null;
 };
 
 export type TaskRunSheetSnapshot = {
@@ -76,6 +90,8 @@ export type TaskRunSheetSnapshot = {
     pending_retry: boolean;
     merge_status: "not_started" | "merged" | "failed";
     pr_feedback_gate: TaskRunSheetPrFeedbackGate | null;
+    approval_audit?: TaskRunSheetApprovalAudit | null;
+    merge_audit?: TaskRunSheetMergeAudit | null;
   };
   handoff: {
     status: string;
@@ -110,6 +126,7 @@ type TaskRow = {
   workflow_pack_key: string | null;
   project_path: string | null;
   result: string | null;
+  workflow_meta_json: string | null;
   source_task_id: string | null;
   created_at: number | null;
   started_at: number | null;
@@ -190,6 +207,8 @@ function buildEmptySnapshot(): TaskRunSheetSnapshot {
       pending_retry: false,
       merge_status: "not_started",
       pr_feedback_gate: null,
+      approval_audit: null,
+      merge_audit: null,
     },
     handoff: {
       status: "",
@@ -214,6 +233,7 @@ function loadTaskRow(db: DbLike, taskId: string): TaskRow | null {
     workflow_pack_key: normalizeText(row.workflow_pack_key),
     project_path: normalizeText(row.project_path),
     result: normalizeText(row.result),
+    workflow_meta_json: normalizeText(row.workflow_meta_json),
     source_task_id: normalizeText(row.source_task_id),
     created_at: typeof row.created_at === "number" ? row.created_at : Number(row.created_at ?? 0) || null,
     started_at: typeof row.started_at === "number" ? row.started_at : Number(row.started_at ?? 0) || null,
@@ -232,6 +252,7 @@ function loadTaskRow(db: DbLike, taskId: string): TaskRow | null {
             workflow_pack_key,
             project_path,
             result,
+            workflow_meta_json,
             source_task_id,
             created_at,
             started_at,
@@ -257,6 +278,7 @@ function loadTaskRow(db: DbLike, taskId: string): TaskRow | null {
               workflow_pack_key,
               project_path,
               result,
+              NULL AS workflow_meta_json,
               source_task_id,
               created_at,
               started_at,
@@ -423,6 +445,38 @@ function extractGithubPrFeedbackGate(runs: TaskQualityRun[]): TaskRunSheetPrFeed
   };
 }
 
+function extractDevelopmentReviewAudit(
+  workflowMetaJson: string | null,
+): { approvalAudit: TaskRunSheetApprovalAudit | null; mergeAudit: TaskRunSheetMergeAudit | null } {
+  if (!workflowMetaJson) {
+    return { approvalAudit: null, mergeAudit: null };
+  }
+  try {
+    const parsed = JSON.parse(workflowMetaJson);
+    const audit = normalizeDevelopmentReviewAuditMetadata(
+      parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed.development_review_audit : null,
+    );
+    if (!audit) {
+      return { approvalAudit: null, mergeAudit: null };
+    }
+    return {
+      approvalAudit: {
+        approved_at: audit.approved_at,
+        approval_source: audit.approval_source,
+        updated_at: audit.updated_at || null,
+      },
+      mergeAudit: {
+        auto_commit_sha: audit.auto_commit_sha,
+        post_merge_head_sha: audit.post_merge_head_sha,
+        target_branch: audit.target_branch,
+        updated_at: audit.updated_at || null,
+      },
+    };
+  } catch {
+    return { approvalAudit: null, mergeAudit: null };
+  }
+}
+
 function countUnfinishedSubtasks(db: DbLike, taskId: string): number {
   try {
     const row = db
@@ -529,6 +583,11 @@ export function renderTaskRunSheetMarkdown(input: {
     `- Failing Checks: ${snapshot.review_checklist.pr_feedback_gate?.failing_check_count ?? "-"}`,
     `- Pending Checks: ${snapshot.review_checklist.pr_feedback_gate?.pending_check_count ?? "-"}`,
     `- Ignored Optional Checks: ${snapshot.review_checklist.pr_feedback_gate?.ignored_check_count ?? "-"}`,
+    `- Approval Source: ${snapshot.review_checklist.approval_audit?.approval_source ?? "-"}`,
+    `- Approved At: ${snapshot.review_checklist.approval_audit?.approved_at ?? "-"}`,
+    `- Auto-Commit SHA: ${snapshot.review_checklist.merge_audit?.auto_commit_sha ?? "-"}`,
+    `- Post-Merge HEAD SHA: ${snapshot.review_checklist.merge_audit?.post_merge_head_sha ?? "-"}`,
+    `- Target Branch: ${snapshot.review_checklist.merge_audit?.target_branch ?? "-"}`,
     ...(
       snapshot.review_checklist.pr_feedback_gate?.ignored_check_names?.length
         ? snapshot.review_checklist.pr_feedback_gate.ignored_check_names.map((name) => `- Ignored Check: ${name}`)
@@ -574,6 +633,7 @@ export function buildTaskRunSheetSnapshot(db: DbLike, params: {
   const diffSummary = extractDiffSummary(logs);
   const implementationHighlights = extractImplementationHighlights(logs);
   const reproductionEvidence = extractReproductionEvidence(task, latestReport, logs);
+  const reviewAudit = extractDevelopmentReviewAudit(task.workflow_meta_json);
   const handoffSummary =
     clipText(latestReport, 320) ??
     resultSummary ??
@@ -624,6 +684,8 @@ export function buildTaskRunSheetSnapshot(db: DbLike, params: {
       pending_retry: executionSummary.pending_retry,
       merge_status: extractMergeStatus(logs),
       pr_feedback_gate: prFeedbackGate,
+      approval_audit: reviewAudit.approvalAudit,
+      merge_audit: reviewAudit.mergeAudit,
     },
     handoff: {
       status: task.status,

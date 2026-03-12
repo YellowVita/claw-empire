@@ -396,6 +396,8 @@ Agents must NOT create commits by default.
 - Agents may stage changes, run tests, and prepare a commit message
 - **Never commit until tests have been run**
 - **Only commit after the user explicitly approves**
+- Exception: after review approval, the workflow engine may create a system auto-commit immediately before merge.
+- When the workflow engine creates that auto-commit, it must record structured audit metadata for approval, auto-commit SHA, and post-merge target HEAD SHA.
 
 ---
 
@@ -480,4 +482,3 @@ When processing `$` or `#` commands, the response to the user must be **minimal 
 ---
 
 <!-- END claw-empire orchestration rules -->
-

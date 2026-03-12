@@ -34,6 +34,11 @@ function elapsed(start: number | null | undefined, end: number | null | undefine
   return `${(ms / 3_600_000).toFixed(1)}h`;
 }
 
+function shortSha(sha: string | null | undefined): string {
+  if (!sha) return "-";
+  return sha.slice(0, 12);
+}
+
 function projectNameFromPath(projectPath: string | null | undefined): string {
   if (!projectPath) return "General";
   const trimmed = projectPath.replace(/[\\/]+$/, "");
@@ -72,6 +77,8 @@ export default function TaskReportPopup({ report, agents, departments, uiLanguag
   const developmentHandoff =
     currentReport.task.workflow_pack_key === "development" ? currentReport.task.development_handoff ?? null : null;
   const prFeedbackGate = developmentRunSheet?.snapshot.review_checklist.pr_feedback_gate ?? null;
+  const approvalAudit = developmentRunSheet?.snapshot.review_checklist.approval_audit ?? null;
+  const mergeAudit = developmentRunSheet?.snapshot.review_checklist.merge_audit ?? null;
   const branchVerificationLogs = useMemo(
     () =>
       (currentReport.logs ?? []).filter(
@@ -481,6 +488,40 @@ export default function TaskReportPopup({ report, agents, departments, uiLanguag
               <p className="text-sm font-semibold text-slate-100">{prFeedbackGate?.status || "-"}</p>
             </div>
           </div>
+          {(approvalAudit || mergeAudit) && (
+            <div className="mb-3 rounded-md border border-fuchsia-500/20 bg-slate-950/30 p-3">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-fuchsia-200">
+                  {t({ ko: "승인 및 병합 감사", en: "Approval and Merge Audit", ja: "承認/マージ監査", zh: "审批与合并审计" })}
+                </p>
+                <span className="text-[11px] text-fuchsia-300/70">
+                  {fmtTime(mergeAudit?.updated_at ?? approvalAudit?.updated_at)}
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
+                <div className="rounded-md border border-slate-700/50 bg-black/20 px-3 py-2">
+                  <p className="text-[11px] text-slate-400">{t({ ko: "승인 출처", en: "Approval Source", ja: "承認ソース", zh: "审批来源" })}</p>
+                  <p className="text-sm font-semibold text-slate-100">{approvalAudit?.approval_source || "-"}</p>
+                </div>
+                <div className="rounded-md border border-slate-700/50 bg-black/20 px-3 py-2">
+                  <p className="text-[11px] text-slate-400">{t({ ko: "승인 시각", en: "Approved At", ja: "承認時刻", zh: "审批时间" })}</p>
+                  <p className="text-sm font-semibold text-slate-100">{fmtTime(approvalAudit?.approved_at)}</p>
+                </div>
+                <div className="rounded-md border border-slate-700/50 bg-black/20 px-3 py-2">
+                  <p className="text-[11px] text-slate-400">{t({ ko: "자동 커밋", en: "Auto-Commit", ja: "自動コミット", zh: "自动提交" })}</p>
+                  <p className="text-sm font-semibold text-slate-100">{shortSha(mergeAudit?.auto_commit_sha)}</p>
+                </div>
+                <div className="rounded-md border border-slate-700/50 bg-black/20 px-3 py-2">
+                  <p className="text-[11px] text-slate-400">{t({ ko: "병합 HEAD", en: "Post-Merge HEAD", ja: "マージ後HEAD", zh: "合并后 HEAD" })}</p>
+                  <p className="text-sm font-semibold text-slate-100">{shortSha(mergeAudit?.post_merge_head_sha)}</p>
+                </div>
+                <div className="rounded-md border border-slate-700/50 bg-black/20 px-3 py-2">
+                  <p className="text-[11px] text-slate-400">{t({ ko: "대상 브랜치", en: "Target Branch", ja: "対象ブランチ", zh: "目标分支" })}</p>
+                  <p className="text-sm font-semibold text-slate-100">{mergeAudit?.target_branch || "-"}</p>
+                </div>
+              </div>
+            </div>
+          )}
           {prFeedbackGate && (
             <div className="mb-3 rounded-md border border-fuchsia-500/20 bg-slate-950/30 p-3">
               <div className="mb-2 flex items-center justify-between gap-2">

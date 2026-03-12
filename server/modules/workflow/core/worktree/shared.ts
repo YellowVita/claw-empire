@@ -113,6 +113,20 @@ export function readWorktreeStatusShort(worktreePath: string): string {
   }
 }
 
+function readGitHeadSha(worktreePath: string): string | null {
+  try {
+    return execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: worktreePath,
+      stdio: "pipe",
+      timeout: 5000,
+    })
+      .toString()
+      .trim();
+  } catch {
+    return null;
+  }
+}
+
 function readGitNullSeparated(worktreePath: string, args: string[]): string[] {
   try {
     const out = execFileSync("git", args, {
@@ -220,6 +234,7 @@ export function autoCommitWorktreePendingChanges(
   error: string | null;
   errorKind: "restricted_untracked" | "git_error" | null;
   restrictedUntrackedCount: number;
+  commitSha?: string;
 } {
   const statusBefore = readWorktreeStatusShort(info.worktreePath);
   if (!statusBefore) {
@@ -276,11 +291,13 @@ export function autoCommitWorktreePendingChanges(
       },
     );
     appendTaskLog(taskId, "system", `Worktree auto-commit created on ${info.branchName} before merge`);
+    const commitSha = readGitHeadSha(info.worktreePath);
     return {
       committed: true,
       error: null,
       errorKind: null,
       restrictedUntrackedCount: 0,
+      commitSha: commitSha ?? undefined,
     };
   } catch (err: unknown) {
     const statusAfter = readWorktreeStatusShort(info.worktreePath);

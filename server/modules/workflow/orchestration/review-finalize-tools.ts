@@ -16,6 +16,7 @@ import {
 } from "./github-pr-feedback-gate.ts";
 import { recordTaskArtifact, recordTaskQualityRun } from "./task-quality-evidence.ts";
 import { upsertTaskRunSheet } from "./task-run-sheets.ts";
+import { upsertDevelopmentReviewAuditMetadata } from "./development-handoff.ts";
 
 type CreateReviewFinalizeToolsDeps = Record<string, any>;
 
@@ -641,6 +642,13 @@ export function createReviewFinalizeTools(deps: CreateReviewFinalizeToolsDeps) {
             | undefined;
         if (!latestTask || latestTask.status !== "review") return;
 
+        upsertDevelopmentReviewAuditMetadata(db as any, {
+          taskId,
+          approvedAt: t,
+          approvalSource: currentTask.source_task_id ? "delegated_review_finalize" : "review_consensus",
+          updatedAt: t,
+        });
+
         // If task has a worktree, merge the branch back before marking done
         const wtInfo = taskWorktrees.get(taskId);
         let mergeNote = "";
@@ -752,7 +760,22 @@ export function createReviewFinalizeTools(deps: CreateReviewFinalizeToolsDeps) {
             ? mergeToDevAndCreatePR(wtInfo.projectPath, taskId, githubRepo)
             : mergeWorktree(wtInfo.projectPath, taskId);
 
+          if (mergeResult.autoCommitSha) {
+            upsertDevelopmentReviewAuditMetadata(db as any, {
+              taskId,
+              autoCommitSha: mergeResult.autoCommitSha,
+              updatedAt: t,
+            });
+          }
+
           if (mergeResult.success) {
+            upsertDevelopmentReviewAuditMetadata(db as any, {
+              taskId,
+              ...(mergeResult.autoCommitSha !== undefined ? { autoCommitSha: mergeResult.autoCommitSha } : {}),
+              postMergeHeadSha: mergeResult.postMergeHeadSha ?? null,
+              targetBranch: mergeResult.targetBranch ?? null,
+              updatedAt: t,
+            });
             appendTaskLog(taskId, "system", `Git merge completed: ${mergeResult.message}`);
             cleanupWorktree(wtInfo.projectPath, taskId);
             appendTaskLog(taskId, "system", "Worktree cleaned up after successful merge");

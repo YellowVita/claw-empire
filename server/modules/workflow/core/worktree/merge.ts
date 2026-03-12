@@ -25,13 +25,34 @@ type CreateWorktreeMergeToolsDeps = {
   pickL: (...args: any[]) => string;
 };
 
+function readHeadSha(projectPath: string): string | null {
+  try {
+    return execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: projectPath,
+      stdio: "pipe",
+      timeout: 5000,
+    })
+      .toString()
+      .trim();
+  } catch {
+    return null;
+  }
+}
+
 export function createWorktreeMergeTools(deps: CreateWorktreeMergeToolsDeps) {
   const { db, taskWorktrees, appendTaskLog, cleanupWorktree, resolveLang, l, pickL } = deps;
 
   function mergeWorktree(
     projectPath: string,
     taskId: string,
-  ): { success: boolean; message: string; conflicts?: string[] } {
+  ): {
+    success: boolean;
+    message: string;
+    conflicts?: string[];
+    autoCommitSha?: string;
+    postMergeHeadSha?: string;
+    targetBranch?: "main" | "dev";
+  } {
     const info = taskWorktrees.get(taskId);
     if (!info) return { success: false, message: "No worktree found for this task" };
     const taskRow = db.prepare("SELECT title, description FROM tasks WHERE id = ?").get(taskId) as
@@ -42,13 +63,16 @@ export function createWorktreeMergeTools(deps: CreateWorktreeMergeToolsDeps) {
       | undefined;
     const lang = resolveLang(taskRow?.description ?? taskRow?.title ?? "");
     const taskShortId = getTaskShortId(taskId);
+    let autoCommitSha: string | undefined;
 
     try {
       const autoCommit = autoCommitWorktreePendingChanges(taskId, info, appendTaskLog);
+      autoCommitSha = autoCommit.commitSha;
       if (autoCommit.error) {
         if (autoCommit.errorKind === "restricted_untracked") {
           return {
             success: false,
+            autoCommitSha,
             message: pickL(
               l(
                 [
@@ -70,6 +94,7 @@ export function createWorktreeMergeTools(deps: CreateWorktreeMergeToolsDeps) {
         }
         return {
           success: false,
+          autoCommitSha,
           message: pickL(
             l(
               [`병합 전 변경사항 자동 커밋에 실패했습니다: ${autoCommit.error}`],
@@ -99,8 +124,12 @@ export function createWorktreeMergeTools(deps: CreateWorktreeMergeToolsDeps) {
           .toString()
           .trim();
         if (!diffCheck) {
+          const postMergeHeadSha = readHeadSha(projectPath);
           return {
             success: true,
+            autoCommitSha,
+            postMergeHeadSha: postMergeHeadSha ?? undefined,
+            targetBranch: currentBranch === "dev" ? "dev" : "main",
             message: pickL(
               l(
                 ["변경사항이 없어 병합이 필요하지 않습니다."],
@@ -125,6 +154,9 @@ export function createWorktreeMergeTools(deps: CreateWorktreeMergeToolsDeps) {
 
       return {
         success: true,
+        autoCommitSha,
+        postMergeHeadSha: readHeadSha(projectPath) ?? undefined,
+        targetBranch: currentBranch === "dev" ? "dev" : "main",
         message: pickL(
           l(
             [`병합 완료: ${info.branchName} → ${currentBranch}`],
@@ -155,6 +187,7 @@ export function createWorktreeMergeTools(deps: CreateWorktreeMergeToolsDeps) {
 
           return {
             success: false,
+            autoCommitSha,
             message: pickL(
               l(
                 [`병합 충돌 발생: ${conflicts.length}개 파일에서 충돌이 있습니다. 수동 해결이 필요합니다.`],
@@ -180,6 +213,7 @@ export function createWorktreeMergeTools(deps: CreateWorktreeMergeToolsDeps) {
       const msg = err instanceof Error ? err.message : String(err);
       return {
         success: false,
+        autoCommitSha,
         message: pickL(
           l([`병합 실패: ${msg}`], [`Merge failed: ${msg}`], [`マージ失敗: ${msg}`], [`合并失败: ${msg}`]),
           lang,
@@ -192,23 +226,34 @@ export function createWorktreeMergeTools(deps: CreateWorktreeMergeToolsDeps) {
     projectPath: string,
     taskId: string,
     githubRepo: string,
-  ): { success: boolean; message: string; conflicts?: string[]; prUrl?: string } {
+  ): {
+    success: boolean;
+    message: string;
+    conflicts?: string[];
+    prUrl?: string;
+    autoCommitSha?: string;
+    postMergeHeadSha?: string;
+    targetBranch?: "main" | "dev";
+  } {
     const info = taskWorktrees.get(taskId);
     if (!info) return { success: false, message: "No worktree found for this task" };
     const taskRow = db.prepare("SELECT title FROM tasks WHERE id = ?").get(taskId) as { title: string } | undefined;
     const taskShortId = getTaskShortId(taskId);
     const taskTitle = taskRow?.title ?? taskShortId;
+    let autoCommitSha: string | undefined;
 
     try {
       const autoCommit = autoCommitWorktreePendingChanges(taskId, info, appendTaskLog);
+      autoCommitSha = autoCommit.commitSha;
       if (autoCommit.error) {
         if (autoCommit.errorKind === "restricted_untracked") {
           return {
             success: false,
+            autoCommitSha,
             message: `Pre-merge auto-commit blocked by restricted untracked files (${autoCommit.restrictedUntrackedCount}). Remove or handle restricted files and retry.`,
           };
         }
-        return { success: false, message: `Pre-merge auto-commit failed: ${autoCommit.error}` };
+        return { success: false, autoCommitSha, message: `Pre-merge auto-commit failed: ${autoCommit.error}` };
       }
 
       try {
@@ -310,6 +355,8 @@ export function createWorktreeMergeTools(deps: CreateWorktreeMergeToolsDeps) {
         })();
       }
 
+      const postMergeHeadSha = readHeadSha(projectPath);
+
       try {
         execFileSync("git", ["checkout", "main"], {
           cwd: projectPath,
@@ -323,6 +370,9 @@ export function createWorktreeMergeTools(deps: CreateWorktreeMergeToolsDeps) {
       return {
         success: true,
         message: `Merged ${info.branchName} → dev and pushed to origin.`,
+        autoCommitSha,
+        postMergeHeadSha: postMergeHeadSha ?? undefined,
+        targetBranch: "dev",
       };
     } catch (err: unknown) {
       try {
@@ -345,7 +395,12 @@ export function createWorktreeMergeTools(deps: CreateWorktreeMergeToolsDeps) {
           } catch {
             /* ignore */
           }
-          return { success: false, message: `Merge conflict: ${conflicts.length} file(s) have conflicts.`, conflicts };
+          return {
+            success: false,
+            autoCommitSha,
+            message: `Merge conflict: ${conflicts.length} file(s) have conflicts.`,
+            conflicts,
+          };
         }
       } catch {
         /* ignore */
@@ -363,7 +418,7 @@ export function createWorktreeMergeTools(deps: CreateWorktreeMergeToolsDeps) {
       }
 
       const msg = err instanceof Error ? err.message : String(err);
-      return { success: false, message: `Dev merge failed: ${msg}` };
+      return { success: false, autoCommitSha, message: `Dev merge failed: ${msg}` };
     }
   }
 

@@ -34,6 +34,7 @@ function createDb(projectPath = "/tmp/project"): DatabaseSync {
       project_id TEXT,
       workflow_pack_key TEXT,
       project_path TEXT,
+      workflow_meta_json TEXT,
       result TEXT,
       created_at INTEGER DEFAULT 0,
       started_at INTEGER,
@@ -148,8 +149,8 @@ function createDb(projectPath = "/tmp/project"): DatabaseSync {
     `
       INSERT INTO tasks (
         id, title, description, status, department_id, source_task_id, project_id,
-        workflow_pack_key, project_path, result, created_at, started_at, updated_at
-      ) VALUES (?, ?, ?, 'review', 'planning', NULL, 'project-1', 'development', ?, ?, 1, 2, 3)
+        workflow_pack_key, project_path, workflow_meta_json, result, created_at, started_at, updated_at
+      ) VALUES (?, ?, ?, 'review', 'planning', NULL, 'project-1', 'development', ?, NULL, ?, 1, 2, 3)
     `,
   ).run("task-1", "Ship feature", "Fix production issue", projectPath, "Result summary");
   return db;
@@ -157,11 +158,26 @@ function createDb(projectPath = "/tmp/project"): DatabaseSync {
 
 function createTools(options?: {
   inspectSnapshot?: any;
-  mergeResult?: { success: boolean; message: string };
+  mergeResult?: {
+    success: boolean;
+    message: string;
+    autoCommitSha?: string;
+    postMergeHeadSha?: string;
+    targetBranch?: "main" | "dev";
+  };
   projectPath?: string;
 }) {
   const db = createDb(options?.projectPath);
-  const mergeToDevAndCreatePR = vi.fn(() => options?.mergeResult ?? { success: true, message: "merged to dev" });
+  const mergeToDevAndCreatePR = vi.fn(
+    () =>
+      options?.mergeResult ?? {
+        success: true,
+        message: "merged to dev",
+        autoCommitSha: "auto123",
+        postMergeHeadSha: "merge456",
+        targetBranch: "dev",
+      },
+  );
   const startReviewConsensusMeeting = vi.fn((_taskId, _taskTitle, _departmentId, onApproved) => {
     onApproved();
   });
@@ -232,6 +248,14 @@ function createTools(options?: {
   return { db, tools, mergeToDevAndCreatePR, startReviewConsensusMeeting, inspectTaskGithubPrFeedbackGate };
 }
 
+function readReviewAudit(db: DatabaseSync, taskId: string) {
+  const row = db.prepare("SELECT workflow_meta_json FROM tasks WHERE id = ?").get(taskId) as {
+    workflow_meta_json: string | null;
+  };
+  const meta = JSON.parse(row.workflow_meta_json ?? "{}");
+  return meta.development_review_audit ?? null;
+}
+
 describe("review finalize GitHub PR gate", () => {
   it("blocked snapshot이면 merge를 중단하고 quality run을 기록한다", async () => {
     const { db, tools, mergeToDevAndCreatePR } = createTools({
@@ -296,6 +320,15 @@ describe("review finalize GitHub PR gate", () => {
       });
       expect(runSheet?.stage).toBe("done");
       expect(mergeToDevAndCreatePR).toHaveBeenCalledTimes(1);
+      expect(readReviewAudit(db, "task-1")).toEqual(
+        expect.objectContaining({
+          approved_at: 10_000,
+          approval_source: "review_consensus",
+          auto_commit_sha: "auto123",
+          post_merge_head_sha: "merge456",
+          target_branch: "dev",
+        }),
+      );
     } finally {
       db.close();
     }
@@ -342,6 +375,7 @@ describe("review finalize GitHub PR gate", () => {
         success: false,
         message: "Merge conflict: 1 file(s) have conflicts and need manual resolution.",
         conflicts: ["src/app.ts"],
+        autoCommitSha: "auto-conflict-1",
       })),
       mergeWorktree: vi.fn(() => ({ success: true, message: "merged" })),
       cleanupWorktree,
@@ -407,6 +441,15 @@ describe("review finalize GitHub PR gate", () => {
       expect(emitTaskReportEvent).toHaveBeenCalledWith("task-1");
       expect(reviewInFlight.has("task-1")).toBe(false);
       expect(reviewRoundState.has("task-1")).toBe(false);
+      expect(readReviewAudit(db, "task-1")).toEqual(
+        expect.objectContaining({
+          approved_at: 10_000,
+          approval_source: "review_consensus",
+          auto_commit_sha: "auto-conflict-1",
+          post_merge_head_sha: null,
+          target_branch: null,
+        }),
+      );
     } finally {
       db.close();
     }
@@ -424,10 +467,14 @@ describe("review finalize GitHub PR gate", () => {
         success: false,
         message: "Merge conflict: 1 file(s) have conflicts and need manual resolution.",
         conflicts: ["src/app.ts"],
+        autoCommitSha: "auto-first",
       })
       .mockReturnValueOnce({
         success: true,
         message: "merged to dev",
+        autoCommitSha: "auto-second",
+        postMergeHeadSha: "merge-second",
+        targetBranch: "dev",
       });
     const reviewRoundState = new Map<string, number>([["task-1", 2]]);
     const reviewInFlight = new Set<string>(["task-1"]);
@@ -511,6 +558,74 @@ describe("review finalize GitHub PR gate", () => {
       });
 
       expect(mergeToDevAndCreatePR).toHaveBeenCalledTimes(2);
+      expect(readReviewAudit(db, "task-1")).toEqual(
+        expect.objectContaining({
+          approved_at: 10_000,
+          approval_source: "review_consensus",
+          auto_commit_sha: "auto-second",
+          post_merge_head_sha: "merge-second",
+          target_branch: "dev",
+        }),
+      );
+    } finally {
+      db.close();
+    }
+  });
+
+  it("delegated child finalize는 delegated_review_finalize 감사 출처를 기록한다", async () => {
+    const db = createDb();
+    db.prepare("UPDATE tasks SET source_task_id = ? WHERE id = ?").run("parent-1", "task-1");
+    const tools = createReviewFinalizeTools({
+      db,
+      nowMs: () => 10_000,
+      logsDir: null,
+      broadcast: vi.fn(),
+      appendTaskLog: vi.fn(),
+      getPreferredLanguage: () => "en",
+      pickL: (pool: any, lang: string) => (pool?.[lang]?.[0] ?? pool?.en?.[0] ?? ""),
+      l: (ko: string[], en: string[], ja: string[], zh: string[]) => ({ ko, en, ja, zh }),
+      resolveLang: () => "en",
+      getProjectReviewGateSnapshot: () => ({ activeReview: 1, activeTotal: 1, ready: true }),
+      projectReviewGateNotifiedAt: new Map<string, number>(),
+      notifyCeo: vi.fn(),
+      taskWorktrees: new Map(),
+      mergeToDevAndCreatePR: vi.fn(),
+      mergeWorktree: vi.fn(),
+      cleanupWorktree: vi.fn(),
+      findTeamLeader: vi.fn(() => null),
+      getAgentDisplayName: vi.fn(() => "Team Lead"),
+      setTaskCreationAuditCompletion: vi.fn(),
+      endTaskExecutionSession: vi.fn(),
+      notifyTaskStatus: vi.fn(),
+      refreshCliUsageData: vi.fn(async () => ({})),
+      shouldDeferTaskReportUntilPlanningArchive: vi.fn(() => false),
+      emitTaskReportEvent: vi.fn(),
+      formatTaskSubtaskProgressSummary: vi.fn(() => ""),
+      reviewRoundState: new Map<string, number>(),
+      reviewInFlight: new Set<string>(),
+      archivePlanningConsolidatedReport: vi.fn(async () => undefined),
+      crossDeptNextCallbacks: new Map<string, () => void>(),
+      recoverCrossDeptQueueAfterMissingCallback: vi.fn(),
+      subtaskDelegationCallbacks: new Map<string, () => void>(),
+      startReviewConsensusMeeting: vi.fn(),
+      processSubtaskDelegations: vi.fn(),
+      inspectTaskGithubPrFeedbackGate: vi.fn(),
+    } as any);
+
+    try {
+      tools.finishReview("task-1", "Ship feature", { bypassProjectDecisionGate: true, trigger: "test" });
+
+      await vi.waitFor(() => {
+        const task = db.prepare("SELECT status FROM tasks WHERE id = ?").get("task-1") as { status: string };
+        expect(task.status).toBe("done");
+      });
+
+      expect(readReviewAudit(db, "task-1")).toEqual(
+        expect.objectContaining({
+          approved_at: 10_000,
+          approval_source: "delegated_review_finalize",
+        }),
+      );
     } finally {
       db.close();
     }
