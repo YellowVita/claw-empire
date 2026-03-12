@@ -219,4 +219,119 @@ describe("TaskCard blocked subtask actions", () => {
     expect(screen.getByText("원부서 정리 대기")).toBeInTheDocument();
     expect(screen.getByText("원부서 선행 작업 대기")).toBeInTheDocument();
   });
+
+  it("shows Diff for review tasks even outside the development workflow pack", () => {
+    render(
+      <I18nProvider language="en">
+        <TaskCard
+          task={{
+            ...baseTask,
+            status: "review",
+            workflow_pack_key: "report",
+            development_handoff: null,
+          }}
+          agents={agents}
+          departments={departments}
+          taskSubtasks={[]}
+          onUpdateTask={vi.fn()}
+          onDeleteTask={vi.fn()}
+          onAssignTask={vi.fn()}
+          onRunTask={vi.fn()}
+          onStopTask={vi.fn()}
+          onPauseTask={vi.fn()}
+          onResumeTask={vi.fn()}
+          onOpenTerminal={vi.fn()}
+          onOpenMeetingMinutes={vi.fn()}
+          onRunSubtaskAction={vi.fn()}
+        />
+      </I18nProvider>,
+    );
+
+    expect(screen.getByTitle("Diff")).toBeInTheDocument();
+  });
+
+  it("hides Diff for non-review tasks", () => {
+    render(
+      <I18nProvider language="en">
+        <TaskCard
+          task={{ ...baseTask, status: "in_progress" }}
+          agents={agents}
+          departments={departments}
+          taskSubtasks={[]}
+          onUpdateTask={vi.fn()}
+          onDeleteTask={vi.fn()}
+          onAssignTask={vi.fn()}
+          onRunTask={vi.fn()}
+          onStopTask={vi.fn()}
+          onPauseTask={vi.fn()}
+          onResumeTask={vi.fn()}
+          onOpenTerminal={vi.fn()}
+          onOpenMeetingMinutes={vi.fn()}
+          onRunSubtaskAction={vi.fn()}
+        />
+      </I18nProvider>,
+    );
+
+    expect(screen.queryByTitle("Diff")).not.toBeInTheDocument();
+  });
+
+  it("shows Pause for in-progress tasks when onPauseTask is provided", () => {
+    render(
+      <I18nProvider language="en">
+        <TaskCard
+          task={{ ...baseTask, status: "in_progress" }}
+          agents={agents}
+          departments={departments}
+          taskSubtasks={[]}
+          onUpdateTask={vi.fn()}
+          onDeleteTask={vi.fn()}
+          onAssignTask={vi.fn()}
+          onRunTask={vi.fn()}
+          onStopTask={vi.fn()}
+          onPauseTask={vi.fn()}
+          onResumeTask={vi.fn()}
+          onOpenTerminal={vi.fn()}
+          onOpenMeetingMinutes={vi.fn()}
+          onRunSubtaskAction={vi.fn()}
+        />
+      </I18nProvider>,
+    );
+
+    expect(screen.getByRole("button", { name: /pause/i })).toBeInTheDocument();
+  });
+
+  it("does not show Active badge when the task is not in progress even if updated recently", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-12T10:00:00.000Z"));
+    try {
+      render(
+        <I18nProvider language="en">
+          <TaskCard
+            task={{
+              ...baseTask,
+              status: "review",
+              updated_at: Date.now() - 60_000,
+            }}
+            agents={agents}
+            departments={departments}
+            taskSubtasks={[]}
+            onUpdateTask={vi.fn()}
+            onDeleteTask={vi.fn()}
+            onAssignTask={vi.fn()}
+            onRunTask={vi.fn()}
+            onStopTask={vi.fn()}
+            onPauseTask={vi.fn()}
+            onResumeTask={vi.fn()}
+            onOpenTerminal={vi.fn()}
+            onOpenMeetingMinutes={vi.fn()}
+            onRunSubtaskAction={vi.fn()}
+          />
+        </I18nProvider>,
+      );
+
+      expect(screen.queryByText("Active")).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

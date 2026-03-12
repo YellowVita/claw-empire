@@ -116,3 +116,8 @@
 - [x] Add `decision_status` hint for project review cards and blocked copy on the server
 - [x] Propagate `decision_status` through frontend mapping and Decision Inbox fallback rendering
 - [x] Add regression tests and run targeted server/web verification
+
+## 21. TaskCard Diff Visibility Regression Fix
+- [x] Restore Diff button visibility to `review` status tasks regardless of workflow pack
+- [x] Add TaskCard regressions for Diff visibility, Pause action, and Active badge gating
+- [x] Run targeted TaskCard tests plus build verification

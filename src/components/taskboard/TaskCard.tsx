@@ -113,6 +113,7 @@ export default function TaskCard({
   const canResume = (task.status === "pending" || task.status === "cancelled") && !!onResumeTask;
   const canDelete = task.status !== "in_progress";
   const canHideTask = isHideableStatus(task.status);
+  const canShowDiff = task.status === "review";
   const blockedSummary = summarizeBlockedSubtasks(task, taskSubtasks);
   const blockedSummaryItems = [
     blockedSummary.ownerGateWaiting > 0
@@ -469,7 +470,7 @@ export default function TaskCard({
                 <span>📝</span>
               </button>
             )}
-            {task.workflow_pack_key === "development" && (
+            {canShowDiff && (
               <button
                 onClick={() => setShowDiff(true)}
                 className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-700 bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200"
