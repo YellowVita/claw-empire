@@ -1,5 +1,5 @@
 export const ORCHESTRATION_V2_VERSION = 2;
-export const ORCHESTRATION_V2_FOREIGN_PARALLELISM = 2;
+export const ORCHESTRATION_V2_FOREIGN_PARALLELISM = 5;
 
 export const ORCHESTRATION_V2_STAGES = [
   "owner_prep",

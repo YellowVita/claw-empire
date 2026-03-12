@@ -21,7 +21,7 @@ describe("initializeSubtaskDelegation V2", () => {
     vi.useRealTimers();
   });
 
-  it("foreign_collab 단계에서는 최대 2개 부서만 먼저 실행한다", () => {
+  it("foreign_collab 단계에서는 최대 5개 부서만 먼저 실행한다", () => {
     const db = new DatabaseSync(":memory:");
     try {
       db.exec(`
@@ -89,6 +89,8 @@ describe("initializeSubtaskDelegation V2", () => {
       insertSubtask.run("st-qa", "QA batch", 1, "qa");
       insertSubtask.run("st-design", "Design batch", 2, "design");
       insertSubtask.run("st-dev", "Dev batch", 3, "dev");
+      insertSubtask.run("st-ops", "Ops batch", 4, "operations");
+      insertSubtask.run("st-sec", "DevSecOps batch", 5, "devsecops");
 
       const tools = initializeSubtaskDelegation({
         db,
@@ -135,18 +137,20 @@ describe("initializeSubtaskDelegation V2", () => {
 
       tools.processSubtaskDelegations("task-1");
 
-      expect(delegateSubtaskBatch).toHaveBeenCalledTimes(2);
-      const firstQueue = delegateSubtaskBatch.mock.calls[0]?.[0] ?? [];
-      const secondQueue = delegateSubtaskBatch.mock.calls[1]?.[0] ?? [];
-      const launchedDeptIds = [firstQueue[0]?.target_department_id, secondQueue[0]?.target_department_id];
-      expect(new Set(launchedDeptIds).size).toBe(2);
-      expect(launchedDeptIds.every((deptId) => ["qa", "design", "dev"].includes(String(deptId ?? "")))).toBe(true);
+      expect(delegateSubtaskBatch).toHaveBeenCalledTimes(5);
+      const launchedDeptIds = delegateSubtaskBatch.mock.calls.map((call) => call[0]?.[0]?.target_department_id);
+      expect(new Set(launchedDeptIds).size).toBe(5);
+      expect(
+        launchedDeptIds.every((deptId) =>
+          ["qa", "design", "dev", "operations", "devsecops"].includes(String(deptId ?? "")),
+        ),
+      ).toBe(true);
     } finally {
       db.close();
     }
   });
 
-  it("review 단계 검토보완 foreign_collab 서브태스크도 최대 2개 부서까지 위임한다", () => {
+  it("review 단계 검토보완 foreign_collab 서브태스크도 최대 5개 부서까지 위임한다", () => {
     const db = new DatabaseSync(":memory:");
     try {
       db.exec(`
@@ -214,6 +218,8 @@ describe("initializeSubtaskDelegation V2", () => {
       insertSubtask.run("review-dev", "[검토보완] 개발 보완", 1, "dev", "개발팀 협업 대기");
       insertSubtask.run("review-design", "[검토보완] 디자인 보완", 2, "design", "디자인팀 협업 대기");
       insertSubtask.run("review-qa", "[검토보완] QA 보완", 3, "qa", "품질관리팀 협업 대기");
+      insertSubtask.run("review-ops", "[검토보완] 운영 보완", 4, "operations", "운영팀 협업 대기");
+      insertSubtask.run("review-sec", "[검토보완] 보안 보완", 5, "devsecops", "보안팀 협업 대기");
 
       const tools = initializeSubtaskDelegation({
         db,
@@ -260,10 +266,14 @@ describe("initializeSubtaskDelegation V2", () => {
 
       tools.processSubtaskDelegations("task-review");
 
-      expect(delegateSubtaskBatch).toHaveBeenCalledTimes(2);
+      expect(delegateSubtaskBatch).toHaveBeenCalledTimes(5);
       const launchedDeptIds = delegateSubtaskBatch.mock.calls.map((call) => call[0]?.[0]?.target_department_id);
-      expect(new Set(launchedDeptIds).size).toBe(2);
-      expect(launchedDeptIds.every((deptId) => ["dev", "design", "qa"].includes(String(deptId ?? "")))).toBe(true);
+      expect(new Set(launchedDeptIds).size).toBe(5);
+      expect(
+        launchedDeptIds.every((deptId) =>
+          ["dev", "design", "qa", "operations", "devsecops"].includes(String(deptId ?? "")),
+        ),
+      ).toBe(true);
     } finally {
       db.close();
     }
