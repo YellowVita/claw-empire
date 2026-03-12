@@ -411,6 +411,7 @@ export interface ProjectDevelopmentWorkflowAttentionTask {
     | "rework"
     | null;
   pr_gate_status: "passed" | "blocked" | "skipped" | null;
+  owner_prep_blocker_count: number;
   pending_retry: boolean;
   updated_at: number | null;
 }
@@ -429,6 +430,8 @@ export interface ProjectDevelopmentWorkflowHealth {
     stored_run_sheet_count: number;
     synthetic_queued_count: number;
     missing_persisted_run_sheet_count: number;
+    owner_prep_blocked_count: number;
+    owner_prep_blocker_total: number;
   };
   handoff_states: Array<{
     state: ProjectDevelopmentWorkflowAttentionTask["handoff_state"];

@@ -29,6 +29,7 @@ vi.mock("../api", () => ({
   saveSettingsPatch: vi.fn(),
   getDecisionInbox: vi.fn(),
   replyDecisionInbox: vi.fn(),
+  getTaskReportDetail: vi.fn(),
   getDepartments: vi.fn(),
   getCliStatus: vi.fn(),
   clearMessages: vi.fn(),
@@ -111,6 +112,7 @@ function ActionsProbe(props: { onChange: (state: ProbeState) => void }) {
   const [decisionInboxItems, setDecisionInboxItems] = useState<DecisionInboxItem[]>([]);
   const [decisionReplyBusyKey, setDecisionReplyBusyKey] = useState<string | null>(null);
   const [cliStatus, setCliStatus] = useState<CliStatusMap | null>(null);
+  const [, setTaskReport] = useState<any>(null);
   const scheduleLiveSyncRef = useRef(vi.fn());
   const scheduleLiveSync = scheduleLiveSyncRef.current;
 
@@ -133,6 +135,7 @@ function ActionsProbe(props: { onChange: (state: ProbeState) => void }) {
     setDecisionInboxItems,
     setDecisionReplyBusyKey,
     setCliStatus,
+    setTaskReport,
   });
 
   useEffect(() => {
@@ -346,6 +349,7 @@ describe("useAppActions", () => {
   });
 
   it("shows actionable guidance when project review start is blocked by unfinished subtasks", async () => {
+    vi.mocked(api.getTaskReportDetail).mockResolvedValue({ task: { id: "task-1" } } as any);
     vi.mocked(api.replyDecisionInbox).mockResolvedValue({
       ok: true,
       resolved: false,
@@ -377,7 +381,8 @@ describe("useAppActions", () => {
     });
 
     expect(window.alert).toHaveBeenCalledWith(
-      expect.stringContaining("Expand the subtasks on the task board and finish the remaining items first"),
+      expect.stringContaining("Expand the subtasks on the task board and finish the remaining owner-side prep items first"),
     );
+    expect(api.getTaskReportDetail).toHaveBeenCalledWith("task-1");
   });
 });

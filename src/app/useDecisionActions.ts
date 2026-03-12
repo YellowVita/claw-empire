@@ -11,6 +11,7 @@ import { mapWorkflowDecisionItemsLocalized } from "./decision-inbox";
 interface UseDecisionActionsParams {
   agents: Agent[];
   language: string;
+  openTaskReport?: (taskId: string) => Promise<void>;
   scheduleLiveSync: (delayMs?: number) => void;
   setShowDecisionInbox: Dispatch<SetStateAction<boolean>>;
   setDecisionInboxLoading: Dispatch<SetStateAction<boolean>>;
@@ -33,10 +34,10 @@ function formatBlockedTaskGuidance(
   const guidance =
     reason === "unfinished_subtasks"
       ? pickLang(locale, {
-          ko: "업무 보드에서 서브태스크를 펼쳐 남은 항목을 먼저 처리하세요",
-          en: "Expand the subtasks on the task board and finish the remaining items first",
-          ja: "タスクボードでサブタスクを展開し、残り項目を先に処理してください",
-          zh: "请在任务看板中展开子任务，先处理剩余项",
+          ko: "업무 보드에서 서브태스크를 펼쳐 원부서 준비 작업부터 먼저 처리하세요",
+          en: "Expand the subtasks on the task board and finish the remaining owner-side prep items first",
+          ja: "タスクボードでサブタスクを展開し、オーナー側の準備タスクから先に処理してください",
+          zh: "请在任务看板中展开子任务，先处理剩余的原部门准备事项",
         })
       : reason === "collaboration_children_pending"
         ? pickLang(locale, {
@@ -65,6 +66,7 @@ function formatBlockedTaskGuidance(
 export function useDecisionActions({
   agents,
   language,
+  openTaskReport,
   scheduleLiveSync,
   setShowDecisionInbox,
   setDecisionInboxLoading,
@@ -151,7 +153,8 @@ export function useDecisionActions({
           }
           const replyResult = await api.replyDecisionInbox(item.id, optionNumber, payload);
           if (replyResult.action === "start_project_review_blocked") {
-            const blockedLines = (replyResult.blocked_tasks ?? []).slice(0, 3).map((entry) => formatBlockedTaskGuidance(locale, entry));
+            const blockedTasks = (replyResult.blocked_tasks ?? []).slice(0, 3);
+            const blockedLines = blockedTasks.map((entry) => formatBlockedTaskGuidance(locale, entry));
             const blockedSummary =
               blockedLines.length > 0
                 ? `\n\n${blockedLines.join("\n")}`
@@ -169,6 +172,14 @@ export function useDecisionActions({
                 zh: `组长评审会议暂缓启动。请先处理下面这些项目。${blockedSummary}`,
               }),
             );
+            const firstBlockedTaskId = String(blockedTasks[0]?.id ?? "").trim();
+            if (firstBlockedTaskId && openTaskReport) {
+              try {
+                await openTaskReport(firstBlockedTaskId);
+              } catch (openError) {
+                console.error("Open blocked task report failed:", openError);
+              }
+            }
           }
           if (replyResult.resolved) {
             setDecisionInboxItems((prev) => prev.filter((entry) => entry.id !== item.id));
@@ -190,7 +201,7 @@ export function useDecisionActions({
         setDecisionReplyBusyKey((prev) => (prev === busyKey ? null : prev));
       }
     },
-    [language, loadDecisionInbox, scheduleLiveSync, setDecisionInboxItems, setDecisionReplyBusyKey],
+    [language, loadDecisionInbox, openTaskReport, scheduleLiveSync, setDecisionInboxItems, setDecisionReplyBusyKey],
   );
 
   return {

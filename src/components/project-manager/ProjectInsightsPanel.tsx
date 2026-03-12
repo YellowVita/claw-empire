@@ -324,6 +324,24 @@ export default function ProjectInsightsPanel({
                     })}
                     : {developmentWorkflowHealth.coverage.missing_persisted_run_sheet_count}
                   </p>
+                  <p>
+                    {t({
+                      ko: "Owner Prep Blocked Tasks",
+                      en: "Owner Prep Blocked Tasks",
+                      ja: "Owner Prep Blocked Tasks",
+                      zh: "Owner Prep Blocked Tasks",
+                    })}
+                    : {developmentWorkflowHealth.coverage.owner_prep_blocked_count}
+                  </p>
+                  <p>
+                    {t({
+                      ko: "Owner Prep Blockers",
+                      en: "Owner Prep Blockers",
+                      ja: "Owner Prep Blockers",
+                      zh: "Owner Prep Blockers",
+                    })}
+                    : {developmentWorkflowHealth.coverage.owner_prep_blocker_total}
+                  </p>
                 </div>
               </div>
 
@@ -414,6 +432,17 @@ export default function ProjectInsightsPanel({
                           ? t({ ko: "Retry Pending", en: "Retry Pending", ja: "Retry Pending", zh: "Retry Pending" })
                           : t({ ko: "No Retry", en: "No Retry", ja: "No Retry", zh: "No Retry" })}
                       </p>
+                      {task.owner_prep_blocker_count > 0 && (
+                        <p className="mt-1 text-[11px] text-amber-300">
+                          {t({
+                            ko: "원부서 준비",
+                            en: "Owner prep blockers",
+                            ja: "Owner prep blockers",
+                            zh: "Owner prep blockers",
+                          })}
+                          : {task.owner_prep_blocker_count}
+                        </p>
+                      )}
                       {task.updated_at && (
                         <p className="mt-1 text-[11px] text-slate-500">
                           {t({ ko: "Updated", en: "Updated", ja: "Updated", zh: "Updated" })}: {fmtTime(task.updated_at)}

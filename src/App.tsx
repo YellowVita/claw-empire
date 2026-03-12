@@ -438,6 +438,7 @@ function AppShell({
     setDecisionInboxItems,
     setDecisionReplyBusyKey,
     setCliStatus,
+    setTaskReport,
   });
 
   const activeMeetingTaskId = useActiveMeetingTaskId(meetingPresence);

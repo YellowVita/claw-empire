@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import type { Dispatch, SetStateAction } from "react";
 
+import * as api from "../api";
 import type { DecisionInboxItem } from "../components/chat/decision-inbox";
 import { normalizeLanguage, pickLang } from "../i18n";
 import type {
@@ -13,6 +14,7 @@ import type {
   SubTask,
   Task,
 } from "../types";
+import type { TaskReportDetail } from "../api";
 import { useChatActions } from "./useChatActions";
 import { useDecisionActions } from "./useDecisionActions";
 import { useSettingsActions } from "./useSettingsActions";
@@ -37,6 +39,7 @@ interface UseAppActionsParams {
   setDecisionInboxItems: Dispatch<SetStateAction<DecisionInboxItem[]>>;
   setDecisionReplyBusyKey: Dispatch<SetStateAction<string | null>>;
   setCliStatus: Dispatch<SetStateAction<CliStatusMap | null>>;
+  setTaskReport: Dispatch<SetStateAction<TaskReportDetail | null>>;
 }
 
 export function useAppActions({
@@ -58,6 +61,7 @@ export function useAppActions({
   setDecisionInboxItems,
   setDecisionReplyBusyKey,
   setCliStatus,
+  setTaskReport,
 }: UseAppActionsParams) {
   const taskActions = useTaskActions({
     settings,
@@ -73,9 +77,17 @@ export function useAppActions({
     setShowChat,
     setUnreadAgentIds,
   });
+  const openTaskReport = useCallback(
+    async (taskId: string) => {
+      const detail = await api.getTaskReportDetail(taskId);
+      setTaskReport(detail);
+    },
+    [setTaskReport],
+  );
   const decisionActions = useDecisionActions({
     agents,
     language: settings.language,
+    openTaskReport,
     scheduleLiveSync,
     setShowDecisionInbox,
     setDecisionInboxLoading,

@@ -191,7 +191,9 @@ function createHarness() {
       id TEXT PRIMARY KEY,
       task_id TEXT NOT NULL,
       title TEXT NOT NULL,
-      status TEXT NOT NULL
+      status TEXT NOT NULL,
+      target_department_id TEXT,
+      orchestration_phase TEXT
     );
   `);
 
@@ -368,6 +370,15 @@ describe("project development workflow health", () => {
         }),
         300,
       );
+      db.prepare(
+        "INSERT INTO subtasks (id, task_id, title, status, target_department_id, orchestration_phase) VALUES (?, ?, ?, ?, ?, ?)",
+      ).run("subtask-owner-prep", "task-missing", "Owner prep checklist", "pending", null, "owner_prep");
+      db.prepare(
+        "INSERT INTO subtasks (id, task_id, title, status, target_department_id, orchestration_phase) VALUES (?, ?, ?, ?, ?, ?)",
+      ).run("subtask-owner-integrate", "task-missing", "Integrate deliverables", "pending", null, "owner_integrate");
+      db.prepare(
+        "INSERT INTO subtasks (id, task_id, title, status, target_department_id, orchestration_phase) VALUES (?, ?, ?, ?, ?, ?)",
+      ).run("subtask-foreign", "task-missing", "QA collaboration", "blocked", "qa", "foreign_collab");
 
       db.prepare(
         `
@@ -475,6 +486,8 @@ describe("project development workflow health", () => {
         stored_run_sheet_count: 1,
         synthetic_queued_count: 1,
         missing_persisted_run_sheet_count: 1,
+        owner_prep_blocked_count: 1,
+        owner_prep_blocker_total: 1,
       });
       expect(health.contract_status.preview_pack_key).toBe("development");
       expect(health.contract_status.override_applied).toBe(true);
@@ -499,7 +512,12 @@ describe("project development workflow health", () => {
         handoff_state: "human_review",
         run_sheet_stage: "rework",
         pr_gate_status: "blocked",
+        owner_prep_blocker_count: 0,
         pending_retry: false,
+      });
+      expect(health.attention_tasks[1]).toMatchObject({
+        task_id: "task-missing",
+        owner_prep_blocker_count: 1,
       });
     } finally {
       db.close();

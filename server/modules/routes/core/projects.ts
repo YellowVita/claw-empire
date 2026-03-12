@@ -14,6 +14,7 @@ import {
   readTaskRunSheetForTask,
   type TaskRunSheetStage,
 } from "../../workflow/orchestration/task-run-sheets.ts";
+import { getLegacyForeignDelegationReadiness } from "../../workflow/orchestration/subtask-orchestration-v2.ts";
 
 type FirstQueryValue = (value: unknown) => string | undefined;
 type NormalizeTextField = (value: unknown) => string | null;
@@ -35,6 +36,7 @@ type ProjectTaskWorkflowRow = {
   workflow_pack_key: string | null;
   workflow_meta_json: string | null;
   source_task_id: string | null;
+  department_id: string | null;
   started_at: number | null;
   updated_at: number | null;
 };
@@ -46,8 +48,16 @@ type DevelopmentWorkflowAttentionTask = {
   handoff_state: DevelopmentHandoffState | TaskRunSheetStage | null;
   run_sheet_stage: TaskRunSheetStage | null;
   pr_gate_status: "blocked" | "passed" | "skipped" | null;
+  owner_prep_blocker_count: number;
   pending_retry: boolean;
   updated_at: number | null;
+};
+
+type TaskWorkflowSubtaskRow = {
+  title: string | null;
+  status: string | null;
+  target_department_id: string | null;
+  orchestration_phase: string | null;
 };
 
 type DevelopmentWorkflowHealthSummary = {
@@ -64,6 +74,8 @@ type DevelopmentWorkflowHealthSummary = {
     stored_run_sheet_count: number;
     synthetic_queued_count: number;
     missing_persisted_run_sheet_count: number;
+    owner_prep_blocked_count: number;
+    owner_prep_blocker_total: number;
   };
   handoff_states: Array<{
     state: DevelopmentHandoffState | TaskRunSheetStage;
@@ -177,6 +189,7 @@ function buildDevelopmentWorkflowHealthSummary(params: {
             workflow_pack_key,
             workflow_meta_json,
             source_task_id,
+            department_id,
             started_at,
             updated_at
           FROM tasks
@@ -205,6 +218,8 @@ function buildDevelopmentWorkflowHealthSummary(params: {
   let storedRunSheetCount = 0;
   let syntheticQueuedCount = 0;
   let missingPersistedRunSheetCount = 0;
+  let ownerPrepBlockedCount = 0;
+  let ownerPrepBlockerTotal = 0;
 
   for (const task of taskRows) {
     const handoff = readDevelopmentHandoffFromTaskLike(task);
@@ -215,6 +230,25 @@ function buildDevelopmentWorkflowHealthSummary(params: {
     if (storedRunSheet) storedRunSheetCount += 1;
     if (!storedRunSheet && syntheticRunSheet?.synthetic) syntheticQueuedCount += 1;
     if (!storedRunSheet && !syntheticRunSheet) missingPersistedRunSheetCount += 1;
+
+    let ownerPrepBlockerCount = 0;
+    try {
+      const openSubtasks = db
+        .prepare(
+          `
+            SELECT title, status, target_department_id, orchestration_phase
+            FROM subtasks
+            WHERE task_id = ?
+              AND status NOT IN ('done', 'cancelled')
+          `,
+        )
+        .all(task.id) as TaskWorkflowSubtaskRow[];
+      ownerPrepBlockerCount = getLegacyForeignDelegationReadiness(task, openSubtasks).ownerPrepBlockerCount;
+    } catch {
+      ownerPrepBlockerCount = 0;
+    }
+    if (ownerPrepBlockerCount > 0) ownerPrepBlockedCount += 1;
+    ownerPrepBlockerTotal += ownerPrepBlockerCount;
 
     const resolvedState = handoff?.state ?? storedRunSheet?.stage ?? syntheticRunSheet?.stage ?? null;
     if (resolvedState) {
@@ -237,15 +271,17 @@ function buildDevelopmentWorkflowHealthSummary(params: {
     const priority =
       latestPrGate.status === "blocked"
         ? 0
-        : resolvedState === "rework"
+        : ownerPrepBlockerCount > 0
           ? 1
-          : resolvedState === "human_review"
+          : resolvedState === "rework"
             ? 2
-            : pendingRetry
+            : resolvedState === "human_review"
               ? 3
-              : !storedRunSheet && !syntheticRunSheet
+              : pendingRetry
                 ? 4
-                : null;
+                : !storedRunSheet && !syntheticRunSheet
+                  ? 5
+                  : null;
     if (priority != null) {
       attentionTasks.push({
         priority,
@@ -255,6 +291,7 @@ function buildDevelopmentWorkflowHealthSummary(params: {
         handoff_state: resolvedState,
         run_sheet_stage: storedRunSheet?.stage ?? syntheticRunSheet?.stage ?? null,
         pr_gate_status: latestPrGate.status,
+        owner_prep_blocker_count: ownerPrepBlockerCount,
         pending_retry: pendingRetry,
         updated_at: normalizeNullableNumber(task.updated_at),
       });
@@ -284,6 +321,8 @@ function buildDevelopmentWorkflowHealthSummary(params: {
       stored_run_sheet_count: storedRunSheetCount,
       synthetic_queued_count: syntheticQueuedCount,
       missing_persisted_run_sheet_count: missingPersistedRunSheetCount,
+      owner_prep_blocked_count: ownerPrepBlockedCount,
+      owner_prep_blocker_total: ownerPrepBlockerTotal,
     },
     handoff_states: [...handoffStateCounts.entries()]
       .map(([state, count]) => ({ state, count }))

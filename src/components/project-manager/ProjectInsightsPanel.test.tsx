@@ -180,6 +180,8 @@ describe("ProjectInsightsPanel", () => {
         stored_run_sheet_count: 2,
         synthetic_queued_count: 1,
         missing_persisted_run_sheet_count: 1,
+        owner_prep_blocked_count: 1,
+        owner_prep_blocker_total: 3,
       },
       handoff_states: [
         { state: "human_review", count: 1 },
@@ -200,6 +202,7 @@ describe("ProjectInsightsPanel", () => {
           handoff_state: "human_review",
           run_sheet_stage: "rework",
           pr_gate_status: "blocked",
+          owner_prep_blocker_count: 3,
           pending_retry: false,
           updated_at: 1700000000000,
         },
@@ -226,8 +229,11 @@ describe("ProjectInsightsPanel", () => {
 
     expect(screen.getByText("Development Workflow Health")).toBeInTheDocument();
     expect(screen.getByText((text) => text.includes("Root Tasks: 4"))).toBeInTheDocument();
+    expect(screen.getByText((text) => text.includes("Owner Prep Blocked Tasks: 1"))).toBeInTheDocument();
+    expect(screen.getByText((text) => text.includes("Owner Prep Blockers: 3"))).toBeInTheDocument();
     expect(screen.getByText((text) => text.includes("Ignored Optional Checks: 3"))).toBeInTheDocument();
     expect(screen.getByText("Blocked task")).toBeInTheDocument();
+    expect(screen.getByText((text) => text.includes("Owner prep blockers: 3"))).toBeInTheDocument();
     expect(screen.getByText("last-known-good applied from settings cache")).toBeInTheDocument();
   });
 });
