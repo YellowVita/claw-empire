@@ -121,3 +121,8 @@
 - [x] Restore Diff button visibility to `review` status tasks regardless of workflow pack
 - [x] Add TaskCard regressions for Diff visibility, Pause action, and Active badge gating
 - [x] Run targeted TaskCard tests plus build verification
+
+## 22. V2 Foreign Collaboration Parallelism Increase
+- [x] Raise V2 foreign collaboration department parallelism from `2` to `5`
+- [x] Update V2 delegation tests and operator-facing assertions to the new slot count
+- [x] Run targeted server verification for V2 delegation behavior
