@@ -124,6 +124,8 @@ function assertDelegationFunctionDep(name: string, value: unknown): asserts valu
   }
 }
 
+const ACTIVE_PARENT_TASK_STATUSES = new Set(["planned", "pending", "in_progress", "review", "collaborating"]);
+
 export function createSubtaskDelegationBatch(deps: BatchDeps) {
   const {
     db,
@@ -334,7 +336,7 @@ export function createSubtaskDelegationBatch(deps: BatchDeps) {
         | { status?: string }
         | undefined;
       const parentStatus = String(latestParent?.status ?? "").trim();
-      if (!latestParent || !["planned", "pending", "in_progress", "review"].includes(parentStatus)) {
+      if (!latestParent || !ACTIVE_PARENT_TASK_STATUSES.has(parentStatus)) {
         appendTaskLog(
           parentTask.id,
           "system",

@@ -99,3 +99,14 @@
 - [x] Update `TaskCard` and `AgentDetail` to render waiting-oriented badges and summaries
 - [x] Improve decision blocked alerts with actionable guidance from existing reason codes
 - [x] Add regression tests and run targeted UI verification plus build
+
+## 18. Subtask Foreign Delegation Gate Relaxation
+- [x] Add a phase-aware legacy delegation readiness helper in orchestration utilities
+- [x] Relax legacy foreign delegation to block only on `owner_prep` owner-side subtasks
+- [x] Update defer/retry logs to use `owner_prep` blocker terminology
+- [x] Add regression tests and run targeted server verification plus build
+
+## 19. Foreign Collaboration Batch Active Status Fix
+- [x] Treat `collaborating` parent tasks as active during foreign delegation batch ack
+- [x] Add regression coverage for delegating from `collaborating` parent tasks
+- [x] Run targeted server test verification
