@@ -23,11 +23,13 @@ type SubtaskLike = {
   title?: string | null;
   target_department_id?: string | null;
   orchestration_phase?: string | null;
+  status?: string | null;
 };
 
 type TaskLike = {
   orchestration_version?: number | null;
   orchestration_stage?: string | null;
+  department_id?: string | null;
 };
 
 function normalizeText(value: unknown): string {
@@ -62,6 +64,48 @@ export function inferOrchestrationPhaseFromSubtask(subtask: SubtaskLike | null |
   }
   if (normalizeText(subtask?.target_department_id)) return "foreign_collab";
   return "owner_prep";
+}
+
+export type LegacyDelegationReadiness = {
+  ready: boolean;
+  ownerPrepBlockerCount: number;
+  ownerSideOpenCount: number;
+  ownerIntegrateOpenCount: number;
+};
+
+function isOpenSubtaskStatus(status: unknown): boolean {
+  const normalized = normalizeText(status);
+  return normalized !== "done" && normalized !== "cancelled";
+}
+
+function isOwnerSideSubtask(subtask: SubtaskLike | null | undefined, task: TaskLike | null | undefined): boolean {
+  const targetDepartmentId = normalizeText(subtask?.target_department_id);
+  const ownerDepartmentId = normalizeText(task?.department_id);
+  return !targetDepartmentId || (!!ownerDepartmentId && targetDepartmentId === ownerDepartmentId);
+}
+
+export function getLegacyForeignDelegationReadiness(
+  task: TaskLike | null | undefined,
+  subtasks: Array<SubtaskLike | null | undefined>,
+): LegacyDelegationReadiness {
+  const ownerSideOpenSubtasks = subtasks.filter(
+    (subtask) => isOpenSubtaskStatus(subtask?.status) && isOwnerSideSubtask(subtask, task),
+  );
+  let ownerPrepBlockerCount = 0;
+  let ownerIntegrateOpenCount = 0;
+
+  for (const subtask of ownerSideOpenSubtasks) {
+    const phase = inferOrchestrationPhaseFromSubtask(subtask);
+    if (phase === "owner_prep") ownerPrepBlockerCount += 1;
+    if (phase === "owner_integrate") ownerIntegrateOpenCount += 1;
+  }
+
+  return {
+    ready: ownerPrepBlockerCount === 0,
+    ownerPrepBlockerCount,
+    ownerSideOpenCount: ownerSideOpenSubtasks.length,
+    ownerIntegrateOpenCount,
+  };
 }
 
 export function getStagePendingPhases(stage: OrchestrationV2Stage): OrchestrationV2Phase[] {

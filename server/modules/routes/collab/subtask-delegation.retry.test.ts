@@ -102,7 +102,7 @@ describe("initializeSubtaskDelegation", () => {
     expect(appendTaskLog).toHaveBeenCalledWith(
       "task-1",
       "system",
-      expect.stringContaining("Subtask delegation deferred"),
+      expect.stringContaining("owner_prep blocker"),
     );
     expect(appendTaskLog).toHaveBeenCalledWith(
       "task-1",

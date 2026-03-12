@@ -5,6 +5,7 @@ import { buildManagedWorktreePath, getTaskShortId } from "../../workflow/core/wo
 import { reconcileVideoRenderDelegationState } from "../../workflow/orchestration/video-render-delegation-state.ts";
 import {
   buildOwnerIntegrationInstruction,
+  getLegacyForeignDelegationReadiness,
   getTaskOrchestrationStage,
   inferOrchestrationPhaseFromSubtask,
   isTaskOrchestrationV2,
@@ -340,7 +341,7 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
     taskId: string,
     title: string,
     lang: Lang,
-    ownDeptPending: number,
+    ownerPrepBlockerCount: number,
     taskStatus: string,
   ): void {
     if (delegationRetryTimers.has(taskId)) return;
@@ -350,23 +351,23 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
     appendTaskLog(
       taskId,
       "system",
-      `Subtask delegation retry scheduled in ${Math.round(delayMs / 1000)}s (attempt ${nextAttempt}; own_pending=${ownDeptPending}; status=${taskStatus})`,
+      `Subtask delegation retry scheduled in ${Math.round(delayMs / 1000)}s (attempt ${nextAttempt}; owner_prep_blockers=${ownerPrepBlockerCount}; status=${taskStatus})`,
     );
     if (nextAttempt === 1 || nextAttempt % 3 === 0) {
       notifyCeo(
         pickL(
           l(
             [
-              `'${title}' 는 원부서 서브태스크 ${ownDeptPending}건이 아직 남아 있어 외부 부서 위임을 잠시 대기합니다. 자동 재시도 예정입니다.`,
+              `'${title}' 는 owner_prep 서브태스크 ${ownerPrepBlockerCount}건이 아직 남아 있어 외부 부서 위임을 잠시 대기합니다. 자동 재시도 예정입니다.`,
             ],
             [
-              `'${title}' is waiting to delegate external subtasks because ${ownDeptPending} origin-team subtasks are still unfinished. It will retry automatically.`,
+              `'${title}' is waiting to delegate external subtasks because ${ownerPrepBlockerCount} owner_prep subtasks are still unfinished. It will retry automatically.`,
             ],
             [
-              `'${title}' は元部門のサブタスク${ownDeptPending}件が未完了のため、他部門委任を一時待機しています。自動再試行します。`,
+              `'${title}' は owner_prep サブタスク${ownerPrepBlockerCount}件が未完了のため、他部門委任を一時待機しています。自動再試行します。`,
             ],
             [
-              `'${title}' 因原部门仍有 ${ownDeptPending} 个子任务未完成，暂缓对外部门委派。系统将自动重试。`,
+              `'${title}' 因仍有 ${ownerPrepBlockerCount} 个 owner_prep 子任务未完成，暂缓对外部门委派。系统将自动重试。`,
             ],
           ),
           lang,
@@ -524,21 +525,26 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
       return;
     }
 
-    // Origin team first: legacy path waits until origin team reaches review.
-    if (!isV2 && !["review", "done"].includes(parentTask.status)) {
-      const ownDeptPending = db
-        .prepare(
-          "SELECT COUNT(*) as cnt FROM subtasks WHERE task_id = ? AND (target_department_id IS NULL OR target_department_id = ?) AND status NOT IN ('done', 'cancelled')",
-        )
-        .get(taskId, parentTask.department_id ?? "") as { cnt: number };
-      if (ownDeptPending.cnt > 0) {
+    if (!isV2) {
+      const openSubtasks = db
+        .prepare("SELECT * FROM subtasks WHERE task_id = ? AND status NOT IN ('done', 'cancelled') ORDER BY created_at")
+        .all(taskId) as unknown as SubtaskRow[];
+      const readiness = getLegacyForeignDelegationReadiness(parentTask, openSubtasks);
+      if (!readiness.ready) {
         appendTaskLog(
           taskId,
           "system",
-          `Subtask delegation deferred: origin team has ${ownDeptPending.cnt} unfinished subtask(s) (task status=${parentTask.status}). Foreign delegation will start after origin team reaches review.`,
+          `Subtask delegation deferred: ${readiness.ownerPrepBlockerCount} owner_prep blocker(s) remain (owner_open=${readiness.ownerSideOpenCount}, status=${parentTask.status}). Foreign delegation will start after owner prep clears.`,
         );
-        scheduleDelegationRetry(taskId, parentTask.title, lang, ownDeptPending.cnt, parentTask.status);
+        scheduleDelegationRetry(taskId, parentTask.title, lang, readiness.ownerPrepBlockerCount, parentTask.status);
         return;
+      }
+      if (readiness.ownerIntegrateOpenCount > 0) {
+        appendTaskLog(
+          taskId,
+          "system",
+          `Subtask delegation proceeding: owner_prep clear; ${readiness.ownerIntegrateOpenCount} owner_integrate subtask(s) remain but do not block foreign delegation.`,
+        );
       }
     }
     clearDelegationRetry(taskId);
