@@ -6,8 +6,10 @@ export type BlockedSubtaskDisplayState =
   | "delegation_retry_needed"
   | "generic_blocked";
 
+export type SubtaskDisplayTone = "waiting" | "retry" | "blocked" | "default";
 export type SubtaskDisplayState = {
   kind: BlockedSubtaskDisplayState | "default";
+  tone: SubtaskDisplayTone;
   isBlocked: boolean;
   isWaiting: boolean;
   showRawReasonAsPrimary: boolean;
@@ -26,10 +28,18 @@ function isOpenOwnerSubtask(subtask: SubTask, task: Task): boolean {
   return targetDepartmentId === null || targetDepartmentId === task.department_id;
 }
 
+export function getBlockedSubtaskTone(kind: BlockedSubtaskDisplayState | "default"): SubtaskDisplayTone {
+  if (kind === "owner_gate_waiting" || kind === "collaboration_waiting") return "waiting";
+  if (kind === "delegation_retry_needed") return "retry";
+  if (kind === "generic_blocked") return "blocked";
+  return "default";
+}
+
 export function getSubtaskDisplayState(subtask: SubTask, task: Task, taskSubtasks: SubTask[]): SubtaskDisplayState {
   if (subtask.status !== "blocked") {
     return {
       kind: "default",
+      tone: "default",
       isBlocked: false,
       isWaiting: false,
       showRawReasonAsPrimary: false,
@@ -41,6 +51,7 @@ export function getSubtaskDisplayState(subtask: SubTask, task: Task, taskSubtask
     if (ownerOpenSubtasks && task.status !== "review" && task.status !== "done") {
       return {
         kind: "owner_gate_waiting",
+        tone: "waiting",
         isBlocked: true,
         isWaiting: true,
         showRawReasonAsPrimary: false,
@@ -48,6 +59,7 @@ export function getSubtaskDisplayState(subtask: SubTask, task: Task, taskSubtask
     }
     return {
       kind: "collaboration_waiting",
+      tone: "waiting",
       isBlocked: true,
       isWaiting: true,
       showRawReasonAsPrimary: false,
@@ -57,6 +69,7 @@ export function getSubtaskDisplayState(subtask: SubTask, task: Task, taskSubtask
   if (subtask.delegated_task_id) {
     return {
       kind: "delegation_retry_needed",
+      tone: "retry",
       isBlocked: true,
       isWaiting: false,
       showRawReasonAsPrimary: true,
@@ -65,6 +78,7 @@ export function getSubtaskDisplayState(subtask: SubTask, task: Task, taskSubtask
 
   return {
     kind: "generic_blocked",
+    tone: "blocked",
     isBlocked: true,
     isWaiting: false,
     showRawReasonAsPrimary: true,
