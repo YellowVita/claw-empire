@@ -2,6 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 
 import {
+  buildDevelopmentHandoffSummary,
   clearDevelopmentHandoffMetadata,
   decorateTaskWithDevelopmentHandoff,
   upsertDevelopmentHandoffMetadata,
@@ -104,5 +105,16 @@ describe("development handoff metadata", () => {
     } finally {
       db.close();
     }
+  });
+
+  it("prefers merge failure summary over generic human review wording", () => {
+    expect(
+      buildDevelopmentHandoffSummary({
+        state: "human_review",
+        pendingRetry: false,
+        prGateStatus: null,
+        mergeStatus: "failed",
+      }),
+    ).toBe("Merge failed; manual resolution required");
   });
 });

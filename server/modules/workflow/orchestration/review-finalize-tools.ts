@@ -823,6 +823,20 @@ export function createReviewFinalizeTools(deps: CreateReviewFinalizeToolsDeps) {
               ),
               lang,
             );
+
+            upsertTaskRunSheet(db as any, {
+              taskId,
+              stage: "human_review",
+              updatedAt: t,
+            });
+            appendTaskLog(taskId, "system", "Review finalization halted after merge failure; task remains in review");
+            reviewRoundState.delete(taskId);
+            reviewInFlight.delete(taskId);
+
+            const updatedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId);
+            broadcast("task_update", updatedTask);
+            emitTaskReportEvent(taskId);
+            return;
           }
         }
 

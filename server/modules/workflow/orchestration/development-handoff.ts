@@ -61,8 +61,10 @@ export function buildDevelopmentHandoffSummary(input: {
   state: DevelopmentHandoffState;
   pendingRetry: boolean;
   prGateStatus: DevelopmentHandoffGateStatus;
+  mergeStatus?: "not_started" | "merged" | "failed";
 }): string {
   if (input.pendingRetry) return "Retry scheduled after failed run";
+  if (input.mergeStatus === "failed") return "Merge failed; manual resolution required";
   if (input.prGateStatus === "blocked") return "Blocked by PR feedback gate";
   switch (input.state) {
     case "queued":
@@ -250,6 +252,7 @@ export function syncDevelopmentHandoffFromRunSheet(db: DbLike, input: {
       state: input.stage,
       pendingRetry: input.snapshot.review_checklist.pending_retry || input.snapshot.validation.pending_retry,
       prGateStatus: gate?.status ?? null,
+      mergeStatus: input.snapshot.review_checklist.merge_status,
     }),
   });
 }

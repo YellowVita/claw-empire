@@ -301,6 +301,221 @@ describe("review finalize GitHub PR gate", () => {
     }
   });
 
+  it("merge failure면 task를 review에 유지하고 done 전이를 중단한다", async () => {
+    const db = createDb();
+    const appendTaskLog = vi.fn((taskId: string, kind: string, message: string) => {
+      db.prepare("INSERT INTO task_logs (task_id, kind, message, created_at) VALUES (?, ?, ?, ?)")
+        .run(taskId, kind, message, 10_000);
+    });
+    const cleanupWorktree = vi.fn();
+    const endTaskExecutionSession = vi.fn();
+    const notifyTaskStatus = vi.fn();
+    const emitTaskReportEvent = vi.fn();
+    const archivePlanningConsolidatedReport = vi.fn(async () => undefined);
+    const reviewRoundState = new Map<string, number>([["task-1", 2]]);
+    const reviewInFlight = new Set<string>(["task-1"]);
+
+    const tools = createReviewFinalizeTools({
+      db,
+      nowMs: () => 10_000,
+      logsDir: null,
+      broadcast: vi.fn(),
+      appendTaskLog,
+      getPreferredLanguage: () => "en",
+      pickL: (pool: any, lang: string) => (pool?.[lang]?.[0] ?? pool?.en?.[0] ?? ""),
+      l: (ko: string[], en: string[], ja: string[], zh: string[]) => ({ ko, en, ja, zh }),
+      resolveLang: () => "en",
+      getProjectReviewGateSnapshot: () => ({ activeReview: 1, activeTotal: 1, ready: true }),
+      projectReviewGateNotifiedAt: new Map<string, number>(),
+      notifyCeo: vi.fn(),
+      taskWorktrees: new Map([
+        [
+          "task-1",
+          {
+            worktreePath: "/tmp/project/.wt/task-1",
+            projectPath: "/tmp/project",
+            branchName: "claw/task-1",
+          },
+        ],
+      ]),
+      mergeToDevAndCreatePR: vi.fn(() => ({
+        success: false,
+        message: "Merge conflict: 1 file(s) have conflicts and need manual resolution.",
+        conflicts: ["src/app.ts"],
+      })),
+      mergeWorktree: vi.fn(() => ({ success: true, message: "merged" })),
+      cleanupWorktree,
+      findTeamLeader: vi.fn(() => null),
+      getAgentDisplayName: vi.fn(() => "Team Lead"),
+      setTaskCreationAuditCompletion: vi.fn(),
+      endTaskExecutionSession,
+      notifyTaskStatus,
+      refreshCliUsageData: vi.fn(async () => ({})),
+      shouldDeferTaskReportUntilPlanningArchive: vi.fn(() => false),
+      emitTaskReportEvent,
+      formatTaskSubtaskProgressSummary: vi.fn(() => ""),
+      reviewRoundState,
+      reviewInFlight,
+      archivePlanningConsolidatedReport,
+      crossDeptNextCallbacks: new Map<string, () => void>(),
+      recoverCrossDeptQueueAfterMissingCallback: vi.fn(),
+      subtaskDelegationCallbacks: new Map<string, () => void>(),
+      startReviewConsensusMeeting: vi.fn((_taskId, _taskTitle, _departmentId, onApproved) => {
+        onApproved();
+      }),
+      processSubtaskDelegations: vi.fn(),
+      inspectTaskGithubPrFeedbackGate: vi.fn(async () => ({
+        applicable: true,
+        status: "passed",
+        pr_url: "https://github.com/acme/repo/pull/12",
+        pr_number: 12,
+        review_decision: "APPROVED",
+        unresolved_thread_count: 0,
+        change_requests_count: 0,
+        failing_check_count: 0,
+        pending_check_count: 0,
+        ignored_check_count: 0,
+        ignored_check_names: [],
+        blocking_reasons: [],
+        checked_at: 10_000,
+      })),
+    } as any);
+
+    try {
+      tools.finishReview("task-1", "Ship feature", { bypassProjectDecisionGate: true, trigger: "test" });
+
+      await vi.waitFor(() => {
+        const runSheet = db.prepare("SELECT stage, snapshot_json FROM task_run_sheets WHERE task_id = ?").get("task-1") as
+          | { stage: string; snapshot_json: string }
+          | undefined;
+        const snapshot = JSON.parse(runSheet?.snapshot_json ?? "{}");
+        expect(runSheet?.stage).toBe("human_review");
+        expect(snapshot.review_checklist?.merge_status).toBe("failed");
+      });
+
+      const task = db.prepare("SELECT status, completed_at FROM tasks WHERE id = ?").get("task-1") as {
+        status: string;
+        completed_at: number | null;
+      };
+
+      expect(task.status).toBe("review");
+      expect(task.completed_at).toBeNull();
+      expect(cleanupWorktree).not.toHaveBeenCalled();
+      expect(endTaskExecutionSession).not.toHaveBeenCalled();
+      expect(notifyTaskStatus).not.toHaveBeenCalled();
+      expect(archivePlanningConsolidatedReport).not.toHaveBeenCalled();
+      expect(emitTaskReportEvent).toHaveBeenCalledWith("task-1");
+      expect(reviewInFlight.has("task-1")).toBe(false);
+      expect(reviewRoundState.has("task-1")).toBe(false);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("merge failure 후 같은 finalize 경로를 재시도하면 성공 시 done으로 끝난다", async () => {
+    const db = createDb();
+    const appendTaskLog = vi.fn((taskId: string, kind: string, message: string) => {
+      db.prepare("INSERT INTO task_logs (task_id, kind, message, created_at) VALUES (?, ?, ?, ?)")
+        .run(taskId, kind, message, 10_000);
+    });
+    const mergeToDevAndCreatePR = vi
+      .fn()
+      .mockReturnValueOnce({
+        success: false,
+        message: "Merge conflict: 1 file(s) have conflicts and need manual resolution.",
+        conflicts: ["src/app.ts"],
+      })
+      .mockReturnValueOnce({
+        success: true,
+        message: "merged to dev",
+      });
+    const reviewRoundState = new Map<string, number>([["task-1", 2]]);
+    const reviewInFlight = new Set<string>(["task-1"]);
+
+    const tools = createReviewFinalizeTools({
+      db,
+      nowMs: () => 10_000,
+      logsDir: null,
+      broadcast: vi.fn(),
+      appendTaskLog,
+      getPreferredLanguage: () => "en",
+      pickL: (pool: any, lang: string) => (pool?.[lang]?.[0] ?? pool?.en?.[0] ?? ""),
+      l: (ko: string[], en: string[], ja: string[], zh: string[]) => ({ ko, en, ja, zh }),
+      resolveLang: () => "en",
+      getProjectReviewGateSnapshot: () => ({ activeReview: 1, activeTotal: 1, ready: true }),
+      projectReviewGateNotifiedAt: new Map<string, number>(),
+      notifyCeo: vi.fn(),
+      taskWorktrees: new Map([
+        [
+          "task-1",
+          {
+            worktreePath: "/tmp/project/.wt/task-1",
+            projectPath: "/tmp/project",
+            branchName: "claw/task-1",
+          },
+        ],
+      ]),
+      mergeToDevAndCreatePR,
+      mergeWorktree: vi.fn(() => ({ success: true, message: "merged" })),
+      cleanupWorktree: vi.fn(),
+      findTeamLeader: vi.fn(() => null),
+      getAgentDisplayName: vi.fn(() => "Team Lead"),
+      setTaskCreationAuditCompletion: vi.fn(),
+      endTaskExecutionSession: vi.fn(),
+      notifyTaskStatus: vi.fn(),
+      refreshCliUsageData: vi.fn(async () => ({})),
+      shouldDeferTaskReportUntilPlanningArchive: vi.fn(() => false),
+      emitTaskReportEvent: vi.fn(),
+      formatTaskSubtaskProgressSummary: vi.fn(() => ""),
+      reviewRoundState,
+      reviewInFlight,
+      archivePlanningConsolidatedReport: vi.fn(async () => undefined),
+      crossDeptNextCallbacks: new Map<string, () => void>(),
+      recoverCrossDeptQueueAfterMissingCallback: vi.fn(),
+      subtaskDelegationCallbacks: new Map<string, () => void>(),
+      startReviewConsensusMeeting: vi.fn((_taskId, _taskTitle, _departmentId, onApproved) => {
+        onApproved();
+      }),
+      processSubtaskDelegations: vi.fn(),
+      inspectTaskGithubPrFeedbackGate: vi.fn(async () => ({
+        applicable: true,
+        status: "passed",
+        pr_url: "https://github.com/acme/repo/pull/12",
+        pr_number: 12,
+        review_decision: "APPROVED",
+        unresolved_thread_count: 0,
+        change_requests_count: 0,
+        failing_check_count: 0,
+        pending_check_count: 0,
+        ignored_check_count: 0,
+        ignored_check_names: [],
+        blocking_reasons: [],
+        checked_at: 10_000,
+      })),
+    } as any);
+
+    try {
+      tools.finishReview("task-1", "Ship feature", { bypassProjectDecisionGate: true, trigger: "test" });
+      await vi.waitFor(() => {
+        const task = db.prepare("SELECT status FROM tasks WHERE id = ?").get("task-1") as { status: string };
+        expect(task.status).toBe("review");
+      });
+
+      reviewInFlight.add("task-1");
+      reviewRoundState.set("task-1", 3);
+      tools.finishReview("task-1", "Ship feature", { bypassProjectDecisionGate: true, trigger: "retry" });
+
+      await vi.waitFor(() => {
+        const task = db.prepare("SELECT status FROM tasks WHERE id = ?").get("task-1") as { status: string };
+        expect(task.status).toBe("done");
+      });
+
+      expect(mergeToDevAndCreatePR).toHaveBeenCalledTimes(2);
+    } finally {
+      db.close();
+    }
+  });
+
   it("review finalize는 project workflow policy를 읽어 gate helper에 전달한다", async () => {
     const projectDir = createTempDir("claw-pr-gate-policy-");
     fs.writeFileSync(
