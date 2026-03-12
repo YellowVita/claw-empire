@@ -42,6 +42,11 @@ function pruneDuplicateReviewMeetings(ctx: RuntimeContext): void {
 function recoverInterruptedWorkflowOnStartup(ctx: RuntimeContext): void {
   pruneDuplicateReviewMeetings(ctx);
   try {
+    ctx.repairExplicitRoleSubtaskRouting();
+  } catch (err) {
+    console.error("[Claw-Empire] startup explicit-role routing repair failed:", err);
+  }
+  try {
     ctx.reconcileCrossDeptSubtasks();
   } catch (err) {
     console.error("[Claw-Empire] startup reconciliation failed:", err);

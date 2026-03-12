@@ -54,12 +54,20 @@ export function createSubtaskSeedingTools(deps: SubtaskSeedingDeps) {
     ).run(subId, taskId, title, parentAgent?.assigned_agent_id ?? null, toolUseId, nowMs());
 
     // Detect if this subtask belongs to a foreign department
-    const parentTaskDept = db.prepare("SELECT department_id, workflow_pack_key FROM tasks WHERE id = ?").get(taskId) as
-      | { department_id: string | null; workflow_pack_key: string | null }
+    const parentTaskDept = db
+      .prepare("SELECT department_id, workflow_pack_key, project_id FROM tasks WHERE id = ?")
+      .get(taskId) as
+      | { department_id: string | null; workflow_pack_key: string | null; project_id: string | null }
       | undefined;
     const targetDeptId = analyzeSubtaskDepartment(title, parentTaskDept?.department_id ?? null);
 
     if (targetDeptId) {
+      const constrainedAgentIds = resolveConstrainedAgentScopeForTask(db as any, {
+        project_id: parentTaskDept?.project_id ?? null,
+        workflow_pack_key: parentTaskDept?.workflow_pack_key ?? null,
+        department_id: parentTaskDept?.department_id ?? null,
+      });
+      const targetLeader = findTeamLeader(targetDeptId, constrainedAgentIds);
       const targetDeptName = getDeptName(targetDeptId, parentTaskDept?.workflow_pack_key ?? null);
       const lang = getPreferredLanguage();
       const blockedReason = pickL(
@@ -72,8 +80,8 @@ export function createSubtaskSeedingTools(deps: SubtaskSeedingDeps) {
         lang,
       );
       db.prepare(
-        "UPDATE subtasks SET target_department_id = ?, status = 'blocked', blocked_reason = ? WHERE id = ?",
-      ).run(targetDeptId, blockedReason, subId);
+        "UPDATE subtasks SET target_department_id = ?, status = 'blocked', blocked_reason = ?, assigned_agent_id = ? WHERE id = ?",
+      ).run(targetDeptId, blockedReason, targetLeader?.id ?? (parentAgent?.assigned_agent_id ?? null), subId);
     }
 
     const subtask = db.prepare("SELECT * FROM subtasks WHERE id = ?").get(subId);

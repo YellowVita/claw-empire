@@ -78,12 +78,18 @@
 - [x] Add operator QA checklist document for development workflow validation
 - [x] Run targeted server/UI verification plus build
 
-## 14. Development Workflow Operations Doc
+## 14. Subtask Department Misrouting Fix
+- [x] Prioritize explicit role labels like `QA팀장` over generic implementation keywords
+- [x] Apply the same routing rule to CLI-created subtasks and startup repair for active misrouted rows
+- [x] Add regression tests for routing, CLI creation, and repair behavior
+- [x] Run targeted server tests plus build verification
+
+## 15. Development Workflow Operations Doc
 - [x] Write an operator-facing development workflow operations guide
 - [x] Link current runtime surfaces, signals, and response playbooks in one document
 - [x] Record documentation completion in this checklist
 
-## 15. Development Workflow Smoke Validation
+## 16. Development Workflow Smoke Validation
 - [x] Define real-project smoke validation scope and pass/fail criteria
 - [x] Add an operator-facing smoke validation plan under `docs/plans`
 - [x] Record the smoke validation planning completion in this checklist

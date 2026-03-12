@@ -32,12 +32,13 @@ export function initializeWorkflowPartB(ctx: RuntimeContext): WorkflowAgentExpor
   const killPidTree = __ctx.killPidTree;
   const buildAgentArgs = __ctx.buildAgentArgs;
 
-  const { analyzeSubtaskDepartment, rerouteSubtasksByPlanningLeader } = createSubtaskRoutingTools({
-    db,
-    DEPT_KEYWORDS,
-    detectTargetDepartments,
-    runAgentOneShot,
-    resolveProjectPath,
+  const { analyzeSubtaskDepartment, repairExplicitRoleSubtaskRouting, rerouteSubtasksByPlanningLeader } =
+    createSubtaskRoutingTools({
+      db,
+      DEPT_KEYWORDS,
+      detectTargetDepartments,
+      runAgentOneShot,
+      resolveProjectPath,
     resolveLang,
     findTeamLeader,
     getDeptName,
@@ -123,12 +124,14 @@ export function initializeWorkflowPartB(ctx: RuntimeContext): WorkflowAgentExpor
 
   Object.assign(__ctx, {
     rerouteSubtasksByPlanningLeader,
+    repairExplicitRoleSubtaskRouting,
     createSubtaskFromCli,
     completeSubtaskFromCli,
   });
 
   return {
     analyzeSubtaskDepartment,
+    repairExplicitRoleSubtaskRouting,
     seedApprovedPlanSubtasks,
     seedReviewRevisionSubtasks,
     codexThreadToSubtask,

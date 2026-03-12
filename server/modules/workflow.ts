@@ -82,6 +82,7 @@ export function initializeWorkflow(
     notifyCeo: runtime.notifyCeo,
     archivePlanningConsolidatedReport: runtime.archivePlanningConsolidatedReport,
     randomDelay: runtime.randomDelay,
+    repairExplicitRoleSubtaskRouting: runtime.repairExplicitRoleSubtaskRouting,
     refreshGoogleToken: runtime.refreshGoogleToken,
     rollbackTaskWorktree: runtime.rollbackTaskWorktree,
     runAgentOneShot: runtime.runAgentOneShot,

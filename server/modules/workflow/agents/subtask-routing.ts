@@ -8,6 +8,30 @@ type PlannerSubtaskAssignment = {
   confidence?: number;
 };
 
+type DepartmentRow = {
+  id: string;
+  name: string;
+  name_ko: string;
+  name_ja?: string | null;
+  name_zh?: string | null;
+};
+
+type ActiveSubtaskRoutingRow = {
+  id: string;
+  task_id: string;
+  title: string;
+  status: string;
+  blocked_reason: string | null;
+  target_department_id: string | null;
+  assigned_agent_id: string | null;
+  task_title: string;
+  task_description: string | null;
+  task_status: string;
+  task_department_id: string | null;
+  project_id: string | null;
+  workflow_pack_key: string | null;
+};
+
 type SubtaskRoutingDeps = {
   db: any;
   DEPT_KEYWORDS: Record<string, string[]>;
@@ -40,20 +64,104 @@ export function createSubtaskRoutingTools(deps: SubtaskRoutingDeps) {
     notifyCeo,
   } = deps;
 
+  const DEPARTMENT_ROLE_HINT_ALIASES: Record<string, string[]> = {
+    planning: ["기획팀장", "기획 리드", "기획 담당", "planning lead", "planning owner"],
+    dev: ["개발팀장", "개발 리드", "개발 담당", "engineering lead", "engineering owner", "dev lead"],
+    design: ["디자인팀장", "디자인 리드", "디자인 담당", "design lead", "design owner"],
+    qa: ["qa팀장", "qa 리드", "qa 담당", "품질관리팀장", "품질관리 리드", "품질관리 담당", "qa/qc팀장"],
+    devsecops: [
+      "인프라보안팀장",
+      "인프라보안 리드",
+      "인프라보안 담당",
+      "인프라팀장",
+      "보안팀장",
+      "devsecops lead",
+      "infra lead",
+      "security lead",
+    ],
+    operations: ["운영팀장", "운영 리드", "운영 담당", "operations lead", "operations owner"],
+  };
+
+  function normalizeDepartmentHintToken(input: string): string {
+    return input.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+  }
+
+  function getDepartmentRows(): DepartmentRow[] {
+    try {
+      return db
+        .prepare("SELECT id, name, name_ko, name_ja, name_zh FROM departments ORDER BY sort_order ASC")
+        .all() as DepartmentRow[];
+    } catch {
+      try {
+        return db.prepare("SELECT id, name, name_ko, name_ja, name_zh FROM departments ORDER BY id ASC").all() as DepartmentRow[];
+      } catch {
+        return db.prepare("SELECT id, name, name_ko FROM departments ORDER BY id ASC").all() as DepartmentRow[];
+      }
+    }
+  }
+
+  function buildDepartmentAliasTokens(dept: DepartmentRow): string[] {
+    const raw = new Set<string>([
+      dept.id,
+      dept.name,
+      dept.name_ko,
+      dept.name_ja ?? "",
+      dept.name_zh ?? "",
+      dept.name_ko.replace(/팀$/g, ""),
+      dept.name.replace(/\s*team$/gi, ""),
+    ]);
+    for (const alias of DEPARTMENT_ROLE_HINT_ALIASES[dept.id] ?? []) {
+      raw.add(alias);
+    }
+    return [...raw]
+      .map((value) => normalizeDepartmentHintToken(String(value ?? "").trim()))
+      .filter((value, index, arr) => value.length > 0 && arr.indexOf(value) === index);
+  }
+
+  function buildDepartmentRoleHintTokens(dept: DepartmentRow): string[] {
+    const baseAliases = buildDepartmentAliasTokens(dept);
+    const tokens = new Set<string>();
+    const suffixes = ["팀장", "리드", "담당", "lead", "owner", "manager"];
+    for (const alias of baseAliases) {
+      tokens.add(alias);
+      const trimmed = alias.replace(/(team|팀|组|組|班)$/u, "");
+      for (const base of new Set([alias, trimmed])) {
+        if (!base) continue;
+        for (const suffix of suffixes) {
+          tokens.add(normalizeDepartmentHintToken(`${base}${suffix}`));
+        }
+      }
+    }
+    return [...tokens].filter(Boolean);
+  }
+
   function findExplicitDepartmentByMention(text: string, parentDeptId: string | null): string | null {
-    const normalized = text.toLowerCase();
-    const deptRows = db.prepare("SELECT id, name, name_ko FROM departments ORDER BY sort_order ASC").all() as Array<{
-      id: string;
-      name: string;
-      name_ko: string;
-    }>;
+    const normalized = normalizeDepartmentHintToken(text);
+    const deptRows = getDepartmentRows();
 
     let best: { id: string; index: number; len: number } | null = null;
     for (const dept of deptRows) {
       if (dept.id === parentDeptId) continue;
-      const variants = [dept.name, dept.name_ko, dept.name_ko.replace(/팀$/, "")];
-      for (const variant of variants) {
-        const token = variant.trim().toLowerCase();
+      for (const token of buildDepartmentAliasTokens(dept)) {
+        if (!token) continue;
+        const idx = normalized.indexOf(token);
+        if (idx < 0) continue;
+        if (!best || idx < best.index || (idx === best.index && token.length > best.len)) {
+          best = { id: dept.id, index: idx, len: token.length };
+        }
+      }
+    }
+    return best?.id ?? null;
+  }
+
+  function findExplicitDepartmentRoleHint(text: string, parentDeptId: string | null): string | null {
+    const normalized = normalizeDepartmentHintToken(text);
+    const deptRows = getDepartmentRows();
+
+    let best: { id: string; index: number; len: number } | null = null;
+    for (const dept of deptRows) {
+      if (dept.id === parentDeptId) continue;
+      for (const token of buildDepartmentRoleHintTokens(dept)) {
         if (!token) continue;
         const idx = normalized.indexOf(token);
         if (idx < 0) continue;
@@ -71,6 +179,9 @@ export function createSubtaskRoutingTools(deps: SubtaskRoutingDeps) {
       .replace(/\s+/g, " ")
       .trim();
     if (!cleaned) return null;
+
+    const explicitRoleHint = findExplicitDepartmentRoleHint(cleaned, parentDeptId);
+    if (explicitRoleHint) return explicitRoleHint;
 
     const prefix = cleaned.includes(":") ? cleaned.split(":")[0] : cleaned;
     const explicitFromPrefix = findExplicitDepartmentByMention(prefix, parentDeptId);
@@ -106,6 +217,73 @@ export function createSubtaskRoutingTools(deps: SubtaskRoutingDeps) {
     }
 
     return bestDept ?? foreignDepts[0] ?? null;
+  }
+
+  function repairExplicitRoleSubtaskRouting(): number {
+    const rows = db.prepare(
+      `
+      SELECT
+        s.id,
+        s.task_id,
+        s.title,
+        s.status,
+        s.blocked_reason,
+        s.target_department_id,
+        s.assigned_agent_id,
+        t.title AS task_title,
+        t.description AS task_description,
+        t.status AS task_status,
+        t.department_id AS task_department_id,
+        t.project_id,
+        t.workflow_pack_key
+      FROM subtasks s
+      JOIN tasks t ON t.id = s.task_id
+      WHERE s.status IN ('pending', 'blocked')
+        AND (s.delegated_task_id IS NULL OR s.delegated_task_id = '')
+        AND t.status NOT IN ('done', 'cancelled')
+      ORDER BY s.created_at ASC
+    `,
+    ).all() as ActiveSubtaskRoutingRow[];
+
+    let updated = 0;
+    for (const row of rows) {
+      const expectedDeptId = findExplicitDepartmentRoleHint(row.title, row.task_department_id ?? null);
+      if (!expectedDeptId) continue;
+
+      const lang = resolveLang(row.task_description ?? row.task_title ?? row.title);
+      const constrainedAgentIds = resolveConstrainedAgentScopeForTask(db as any, {
+        project_id: row.project_id,
+        workflow_pack_key: row.workflow_pack_key,
+        department_id: row.task_department_id,
+      });
+      const targetLeader = findTeamLeader(expectedDeptId, constrainedAgentIds);
+      const targetDeptName = getDeptName(expectedDeptId);
+      const blockedReason = pickL(
+        l(
+          [`${targetDeptName} 협업 대기`],
+          [`Waiting for ${targetDeptName} collaboration`],
+          [`${targetDeptName}の協業待ち`],
+          [`等待${targetDeptName}协作`],
+        ),
+        lang,
+      );
+      const nextAssignedAgentId = targetLeader?.id ?? row.assigned_agent_id ?? null;
+
+      const targetSame = (row.target_department_id ?? null) === expectedDeptId;
+      const statusSame = row.status === "blocked";
+      const blockedSame = (row.blocked_reason ?? null) === blockedReason;
+      const assigneeSame = (row.assigned_agent_id ?? null) === (nextAssignedAgentId ?? null);
+      if (targetSame && statusSame && blockedSame && assigneeSame) continue;
+
+      db.prepare(
+        "UPDATE subtasks SET target_department_id = ?, status = 'blocked', blocked_reason = ?, assigned_agent_id = ? WHERE id = ?",
+      ).run(expectedDeptId, blockedReason, nextAssignedAgentId, row.id);
+      broadcast("subtask_update", db.prepare("SELECT * FROM subtasks WHERE id = ?").get(row.id));
+      appendTaskLog(row.task_id, "system", `Repaired explicit-role subtask routing: '${row.title}' => ${expectedDeptId}`);
+      updated += 1;
+    }
+
+    return updated;
   }
 
   const plannerSubtaskRoutingInFlight = new Set<string>();
@@ -407,6 +585,7 @@ export function createSubtaskRoutingTools(deps: SubtaskRoutingDeps) {
 
   return {
     analyzeSubtaskDepartment,
+    repairExplicitRoleSubtaskRouting,
     rerouteSubtasksByPlanningLeader,
   };
 }

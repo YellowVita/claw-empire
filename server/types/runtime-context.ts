@@ -233,6 +233,7 @@ export interface WorkflowAgentExports {
 
   // Functions
   analyzeSubtaskDepartment: (...args: any[]) => any;
+  repairExplicitRoleSubtaskRouting: (...args: any[]) => any;
   seedApprovedPlanSubtasks: (...args: any[]) => any;
   seedReviewRevisionSubtasks: (...args: any[]) => any;
   codexThreadToSubtask: Map<string, string>;
