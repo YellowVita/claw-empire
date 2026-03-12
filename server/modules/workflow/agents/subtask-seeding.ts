@@ -23,6 +23,10 @@ type SubtaskSeedingDeps = {
   notifyCeo: (message: string, taskId: string | null, messageType?: string) => void;
 };
 
+type ApprovedPlanSeedOptions = {
+  skipPlannedMeeting?: boolean;
+};
+
 export function createSubtaskSeedingTools(deps: SubtaskSeedingDeps) {
   const {
     db,
@@ -100,7 +104,12 @@ export function createSubtaskSeedingTools(deps: SubtaskSeedingDeps) {
     broadcast("subtask_update", subtask);
   }
 
-  function seedApprovedPlanSubtasks(taskId: string, ownerDeptId: string | null, planningNotes: string[] = []): void {
+  function seedApprovedPlanSubtasks(
+    taskId: string,
+    ownerDeptId: string | null,
+    planningNotes: string[] = [],
+    options: ApprovedPlanSeedOptions = {},
+  ): void {
     const existing = db.prepare("SELECT COUNT(*) as cnt FROM subtasks WHERE task_id = ?").get(taskId) as {
       cnt: number;
     };
@@ -131,6 +140,7 @@ export function createSubtaskSeedingTools(deps: SubtaskSeedingDeps) {
     });
 
     const now = nowMs();
+    const skipPlannedMeeting = options.skipPlannedMeeting === true;
     const baseAssignee = task.assigned_agent_id;
     const uniquePlanNotes: string[] = [];
     const planSeen = new Set<string>();
@@ -156,19 +166,35 @@ export function createSubtaskSeedingTools(deps: SubtaskSeedingDeps) {
       {
         title: pickL(
           l(
-            ["Planned 상세 실행 계획 확정"],
-            ["Finalize detailed execution plan from planned meeting"],
-            ["Planned会議の詳細実行計画を確定"],
-            ["确定 Planned 会议的详细执行计划"],
+            [skipPlannedMeeting ? "상세 실행 계획 확정" : "Planned 상세 실행 계획 확정"],
+            [skipPlannedMeeting ? "Finalize detailed execution plan" : "Finalize detailed execution plan from planned meeting"],
+            [skipPlannedMeeting ? "詳細実行計画を確定" : "Planned会議の詳細実行計画を確定"],
+            [skipPlannedMeeting ? "确定详细执行计划" : "确定 Planned 会议的详细执行计划"],
           ),
           lang,
         ),
         description: pickL(
           l(
-            [`Planned 회의 기준으로 상세 작업 순서/산출물 기준을 확정합니다. (${task.title})`],
-            [`Finalize detailed task sequence and deliverable criteria from the planned meeting. (${task.title})`],
-            [`Planned会議を基準に、詳細な作業順序と成果物基準を確定します。(${task.title})`],
-            [`基于 Planned 会议，确定详细任务顺序与交付物标准。（${task.title}）`],
+            [
+              skipPlannedMeeting
+                ? `현재 지시 기준으로 상세 작업 순서/산출물 기준을 확정합니다. (${task.title})`
+                : `Planned 회의 기준으로 상세 작업 순서/산출물 기준을 확정합니다. (${task.title})`,
+            ],
+            [
+              skipPlannedMeeting
+                ? `Finalize detailed task sequence and deliverable criteria for the current directive. (${task.title})`
+                : `Finalize detailed task sequence and deliverable criteria from the planned meeting. (${task.title})`,
+            ],
+            [
+              skipPlannedMeeting
+                ? `現在の指示を基準に、詳細な作業順序と成果物基準を確定します。(${task.title})`
+                : `Planned会議を基準に、詳細な作業順序と成果物基準を確定します。(${task.title})`,
+            ],
+            [
+              skipPlannedMeeting
+                ? `基于当前指令，确定详细任务顺序与交付物标准。（${task.title}）`
+                : `基于 Planned 会议，确定详细任务顺序与交付物标准。（${task.title}）`,
+            ],
           ),
           lang,
         ),
@@ -206,10 +232,26 @@ export function createSubtaskSeedingTools(deps: SubtaskSeedingDeps) {
         ),
         description: pickL(
           l(
-            [`Planned 회의 보완점을 실행 계획으로 반영합니다: ${detail}`],
-            [`Convert this planned-meeting improvement note into an executable task: ${detail}`],
-            [`Planned会議の補完項目を実行計画へ反映します: ${detail}`],
-            [`将 Planned 会议补充项转为可执行任务：${detail}`],
+            [
+              skipPlannedMeeting
+                ? `현재 지시 보완점을 실행 계획으로 반영합니다: ${detail}`
+                : `Planned 회의 보완점을 실행 계획으로 반영합니다: ${detail}`,
+            ],
+            [
+              skipPlannedMeeting
+                ? `Convert this directive improvement note into an executable task: ${detail}`
+                : `Convert this planned-meeting improvement note into an executable task: ${detail}`,
+            ],
+            [
+              skipPlannedMeeting
+                ? `現在の指示の補完項目を実行計画へ反映します: ${detail}`
+                : `Planned会議の補完項目を実行計画へ反映します: ${detail}`,
+            ],
+            [
+              skipPlannedMeeting
+                ? `将当前指令补充项转为可执行任务：${detail}`
+                : `将 Planned 会议补充项转为可执行任务：${detail}`,
+            ],
           ),
           lang,
         ),
@@ -250,10 +292,26 @@ export function createSubtaskSeedingTools(deps: SubtaskSeedingDeps) {
         ),
         description: pickL(
           l(
-            [`Planned 회의 기준 ${deptName} 담당 결과물을 작성/공유합니다.`],
-            [`Create and share the ${deptName}-owned deliverable based on the planned meeting.`],
-            [`Planned会議を基準に、${deptName}担当の成果物を作成・共有します。`],
-            [`基于 Planned 会议，完成并共享${deptName}负责的交付物。`],
+            [
+              skipPlannedMeeting
+                ? `${deptName} 담당 결과물을 작성/공유합니다.`
+                : `Planned 회의 기준 ${deptName} 담당 결과물을 작성/공유합니다.`,
+            ],
+            [
+              skipPlannedMeeting
+                ? `Create and share the ${deptName}-owned deliverable.`
+                : `Create and share the ${deptName}-owned deliverable based on the planned meeting.`,
+            ],
+            [
+              skipPlannedMeeting
+                ? `${deptName}担当の成果物を作成・共有します。`
+                : `Planned会議を基準に、${deptName}担当の成果物を作成・共有します。`,
+            ],
+            [
+              skipPlannedMeeting
+                ? `完成并共享${deptName}负责的交付物。`
+                : `基于 Planned 会议，完成并共享${deptName}负责的交付物。`,
+            ],
           ),
           lang,
         ),

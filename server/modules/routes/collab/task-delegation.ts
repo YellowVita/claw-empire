@@ -66,7 +66,12 @@ interface TaskDelegationDeps {
     },
     onComplete?: () => void,
   ) => void;
-  seedApprovedPlanSubtasks: (taskId: string, leaderDeptId: string, planningNotes: string[]) => void;
+  seedApprovedPlanSubtasks: (
+    taskId: string,
+    leaderDeptId: string,
+    planningNotes: string[],
+    options?: { skipPlannedMeeting?: boolean },
+  ) => void;
   startPlannedApprovalMeeting: (
     taskId: string,
     taskTitle: string,
@@ -172,7 +177,7 @@ export function createTaskDelegationHandler(deps: TaskDelegationDeps) {
       if (projectContextHint && projectContextHint !== selectedProject.coreGoal) {
         taskDescriptionLines.push(`[PROJECT CONTEXT] ${projectContextHint}`);
       }
-      const useOrchestrationV2 = !skipPlannedMeeting;
+      const useOrchestrationV2 = true;
       db.prepare(
         `
       INSERT INTO tasks (
@@ -190,8 +195,8 @@ export function createTaskDelegationHandler(deps: TaskDelegationDeps) {
         teamLeader.id,
         selectedProject.id,
         workflowPackKey,
-        useOrchestrationV2 ? ORCHESTRATION_V2_VERSION : 1,
-        useOrchestrationV2 ? "owner_prep" : null,
+        ORCHESTRATION_V2_VERSION,
+        "owner_prep",
         detectedPath,
         t,
         t,
@@ -398,7 +403,7 @@ export function createTaskDelegationHandler(deps: TaskDelegationDeps) {
         if (skipPlannedMeeting) {
           appendTaskLog(taskId, "system", "Planned meeting skipped by CEO directive");
           if (!skipPlanSubtasks) {
-            seedApprovedPlanSubtasks(taskId, leaderDeptId, []);
+            seedApprovedPlanSubtasks(taskId, leaderDeptId, [], { skipPlannedMeeting: true });
           }
           runCrossDeptBeforeDelegationIfNeeded(afterPlan);
           return;
@@ -406,7 +411,7 @@ export function createTaskDelegationHandler(deps: TaskDelegationDeps) {
         startPlannedApprovalMeeting(taskId, taskTitle, leaderDeptId, (planningNotes: string[]) => {
           if (isTaskWorkflowInterrupted(taskId)) return;
           if (!skipPlanSubtasks) {
-            seedApprovedPlanSubtasks(taskId, leaderDeptId, planningNotes ?? []);
+            seedApprovedPlanSubtasks(taskId, leaderDeptId, planningNotes ?? [], { skipPlannedMeeting: false });
           }
           runCrossDeptBeforeDelegationIfNeeded(afterPlan);
         });
