@@ -91,7 +91,7 @@ export function createProjectAndTimeoutDecisionItems(
     }
   }
 
-  function countBlockedReviewRemediationSubtasks(projectId: string): number {
+  function countUnfinishedReviewSubtasks(projectId: string): number {
     try {
       const row = db
         .prepare(
@@ -103,8 +103,6 @@ export function createProjectAndTimeoutDecisionItems(
           AND t.status = 'review'
           AND t.source_task_id IS NULL
           AND s.status NOT IN ('done', 'cancelled')
-          AND s.target_department_id IS NOT NULL
-          AND s.orchestration_phase = 'foreign_collab'
       `,
         )
         .get(projectId) as { cnt: number } | undefined;
@@ -337,7 +335,7 @@ export function createProjectAndTimeoutDecisionItems(
         String(decisionState?.planner_summary ?? latestPlanningSummaryEvent?.summary ?? "").trim(),
       );
       const hasPlannerSummary = plannerSummary.length > 0;
-      const blockedRemediationCount = countBlockedReviewRemediationSubtasks(row.project_id);
+      const blockedRemediationCount = countUnfinishedReviewSubtasks(row.project_id);
       const isReviewMeetingBlocked =
         pendingChoices.length === 0 &&
         hasPlannerSummary &&
@@ -389,10 +387,10 @@ export function createProjectAndTimeoutDecisionItems(
       const blockedReason =
         blockedRemediationCount > 0
           ? t(
-              `다만 미완료 검토보완 서브태스크 ${blockedRemediationCount}건 때문에 회의 시작이 보류됨`,
-              `However, meeting start is on hold because ${blockedRemediationCount} review-remediation subtasks are still unfinished.`,
-              `ただし、未完了のレビュー補完サブタスク${blockedRemediationCount}件のため会議開始は保留中です。`,
-              `但是由于仍有 ${blockedRemediationCount} 个评审补充子任务未完成，会议启动已被保留。`,
+              `다만 미완료 서브태스크 ${blockedRemediationCount}건 때문에 회의 시작이 보류됨`,
+              `However, meeting start is on hold because ${blockedRemediationCount} subtasks are still unfinished.`,
+              `ただし、未完了のサブタスク${blockedRemediationCount}件のため会議開始は保留中です。`,
+              `但是由于仍有 ${blockedRemediationCount} 个子任务未完成，会议启动已被保留。`,
             )
           : String(latestReviewBlockedEvent?.note ?? latestReviewBlockedEvent?.summary ?? "").trim() ||
             t(
