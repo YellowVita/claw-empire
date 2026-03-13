@@ -20,6 +20,7 @@ const baseReport = {
       pending_retry: false,
       pr_gate_status: "blocked",
       pr_url: "https://github.com/acme/repo/pull/12",
+      merge_strategy: "task_branch_pr",
       summary: "Blocked by PR feedback gate",
     },
     created_at: 1000,
@@ -177,6 +178,8 @@ const baseReport = {
           auto_commit_sha: "abcdef1234567890",
           post_merge_head_sha: "fedcba0987654321",
           target_branch: "dev",
+          merge_strategy: "task_branch_pr",
+          pr_url: "https://github.com/acme/repo/pull/12",
           updated_at: 2000,
         },
         pr_feedback_gate: {
@@ -261,6 +264,24 @@ describe("TaskReportPopup", () => {
     expect(screen.getByText("Execution Observability")).toBeInTheDocument();
     expect(screen.getByText("hard_timeout")).toBeInTheDocument();
     expect(screen.getByText("Automatic retry scheduled")).toBeInTheDocument();
+  });
+
+  it("shows merge strategy and PR URL in the audit section", () => {
+    render(
+      <I18nProvider language="en">
+        <TaskReportPopup
+          report={baseReport as any}
+          agents={[{ id: "agent-1", name: "Ari", name_ko: "아리", avatar_emoji: "A" } as any]}
+          departments={[{ id: "planning", name: "Planning", name_ko: "기획팀", color: "#00aa88", icon: "P" } as any]}
+          uiLanguage="en"
+          onClose={() => {}}
+        />
+      </I18nProvider>,
+    );
+
+    expect(screen.getByText("Merge Strategy")).toBeInTheDocument();
+    expect(screen.getAllByText("task_branch_pr").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("https://github.com/acme/repo/pull/12").length).toBeGreaterThan(0);
   });
 
   it("shows quality evidence when quality runs and artifacts exist", () => {

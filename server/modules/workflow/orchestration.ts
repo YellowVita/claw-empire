@@ -123,6 +123,7 @@ export function initializeWorkflowPartC(ctx: RuntimeContext): WorkflowOrchestrat
   const launchApiProviderAgent = __ctx.launchApiProviderAgent;
   const mergeWorktree = __ctx.mergeWorktree;
   const mergeToDevAndCreatePR = __ctx.mergeToDevAndCreatePR;
+  const pushTaskBranchAndCreatePR = __ctx.pushTaskBranchAndCreatePR;
   const normalizeOAuthProvider = __ctx.normalizeOAuthProvider;
   const randomDelay = __ctx.randomDelay;
   const recordTaskCreationAudit = __ctx.recordTaskCreationAudit;
@@ -677,6 +678,7 @@ export function initializeWorkflowPartC(ctx: RuntimeContext): WorkflowOrchestrat
     notifyCeo,
     taskWorktrees,
     mergeToDevAndCreatePR,
+    pushTaskBranchAndCreatePR,
     mergeWorktree,
     cleanupWorktree,
     findTeamLeader,

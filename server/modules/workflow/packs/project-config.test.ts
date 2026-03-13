@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   readProjectDevelopmentPrFeedbackGatePolicy,
   readProjectGitBootstrapPolicy,
+  readProjectMergeStrategyPolicy,
   readProjectWorkflowConfig,
   readProjectWorkflowConfigCached,
   readProjectWorkflowDefaultPackKey,
@@ -334,6 +335,60 @@ gitBootstrap:
     const result = readProjectGitBootstrapPolicy(projectDir);
     expect(result.policy).toEqual({ allowAutoGitBootstrap: false });
     expect(result.warnings).toEqual([".claw-workflow.json invalid gitBootstrap.allowAutoGitBootstrap, ignoring"]);
+    expect(result.valid).toBe(false);
+  });
+
+  it("mergeStrategy는 WORKFLOW.md가 JSON보다 우선한다", () => {
+    const projectDir = createTempDir("claw-workflow-merge-strategy-");
+    fs.writeFileSync(
+      path.join(projectDir, ".claw-workflow.json"),
+      JSON.stringify(
+        {
+          mergeStrategy: {
+            mode: "shared_dev_pr",
+          },
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+    fs.writeFileSync(
+      path.join(projectDir, "WORKFLOW.md"),
+      `---
+mergeStrategy:
+  mode: task_branch_pr
+---
+`,
+      "utf8",
+    );
+
+    const result = readProjectMergeStrategyPolicy(projectDir);
+    expect(result.policy).toEqual({ mode: "task_branch_pr" });
+    expect(result.warnings).toEqual([]);
+    expect(result.configSources).toEqual(["workflow_md", "claw_workflow_json"]);
+    expect(result.valid).toBe(true);
+  });
+
+  it("invalid mergeStrategy schema는 warning 후 shared_dev_pr로 fallback 한다", () => {
+    const projectDir = createTempDir("claw-workflow-merge-strategy-invalid-");
+    fs.writeFileSync(
+      path.join(projectDir, ".claw-workflow.json"),
+      JSON.stringify(
+        {
+          mergeStrategy: {
+            mode: "branch-per-task",
+          },
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
+    const result = readProjectMergeStrategyPolicy(projectDir);
+    expect(result.policy).toEqual({ mode: "shared_dev_pr" });
+    expect(result.warnings).toEqual([".claw-workflow.json invalid mergeStrategy.mode, ignoring"]);
     expect(result.valid).toBe(false);
   });
 

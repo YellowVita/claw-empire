@@ -30,6 +30,16 @@ Thanks for contributing.
 3. After merge to `main`, tag/release as needed
 4. Keep `dev` synced with any direct hotfix merged to `main`
 
+## Workflow Merge Strategy
+
+- Default GitHub workflow strategy: `shared_dev_pr`
+  - task branch merges into local `dev`
+  - shared release PR stays `dev -> main`
+- Optional project policy: `mergeStrategy.mode: task_branch_pr`
+  - finalize pushes the task branch and creates/updates a task PR `task-branch -> dev`
+  - task is considered complete when that PR is created or updated successfully
+  - PR checks/review threads are tracked for reporting, not as a finalize blocker
+
 ## Suggested GitHub Branch Protection
 
 Configure both `main` and `dev`:

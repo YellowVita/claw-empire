@@ -264,6 +264,8 @@ export interface TaskRunSheetSnapshot {
       auto_commit_sha: string | null;
       post_merge_head_sha: string | null;
       target_branch: "main" | "dev" | null;
+      merge_strategy?: "shared_dev_pr" | "task_branch_pr" | null;
+      pr_url?: string | null;
       updated_at: number | null;
     } | null;
     pr_feedback_gate: null | {

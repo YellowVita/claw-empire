@@ -123,6 +123,7 @@ export interface DevelopmentHandoff {
   pending_retry: boolean;
   pr_gate_status: DevelopmentHandoffGateStatus;
   pr_url: string | null;
+  merge_strategy?: "shared_dev_pr" | "task_branch_pr" | null;
   summary: string | null;
 }
 

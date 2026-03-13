@@ -164,10 +164,25 @@ function createTools(options?: {
     autoCommitSha?: string;
     postMergeHeadSha?: string;
     targetBranch?: "main" | "dev";
+    prUrl?: string;
+    strategy?: "shared_dev_pr" | "task_branch_pr";
   };
   projectPath?: string;
+  mergeStrategyMode?: "shared_dev_pr" | "task_branch_pr";
 }) {
-  const db = createDb(options?.projectPath);
+  const projectPath = options?.projectPath ?? createTempDir("claw-pr-gate-project-");
+  if (options?.mergeStrategyMode) {
+    fs.writeFileSync(
+      path.join(projectPath, "WORKFLOW.md"),
+      `---
+mergeStrategy:
+  mode: ${options.mergeStrategyMode}
+---
+`,
+      "utf8",
+    );
+  }
+  const db = createDb(projectPath);
   const mergeToDevAndCreatePR = vi.fn(
     () =>
       options?.mergeResult ?? {
@@ -176,6 +191,19 @@ function createTools(options?: {
         autoCommitSha: "auto123",
         postMergeHeadSha: "merge456",
         targetBranch: "dev",
+        prUrl: "https://github.com/acme/repo/pull/12",
+        strategy: "shared_dev_pr",
+      },
+  );
+  const pushTaskBranchAndCreatePR = vi.fn(
+    async () =>
+      options?.mergeResult ?? {
+        success: true,
+        message: "task branch pr ready",
+        autoCommitSha: "auto123",
+        targetBranch: "dev",
+        prUrl: "https://github.com/acme/repo/pull/21",
+        strategy: "task_branch_pr",
       },
   );
   const startReviewConsensusMeeting = vi.fn((_taskId, _taskTitle, _departmentId, onApproved) => {
@@ -216,13 +244,14 @@ function createTools(options?: {
       [
         "task-1",
         {
-          worktreePath: "/tmp/project/.wt/task-1",
-          projectPath: "/tmp/project",
+          worktreePath: `${projectPath}/.wt/task-1`,
+          projectPath,
           branchName: "claw/task-1",
         },
       ],
     ]),
     mergeToDevAndCreatePR,
+    pushTaskBranchAndCreatePR,
     mergeWorktree: vi.fn(() => ({ success: true, message: "merged" })),
     cleanupWorktree: vi.fn(),
     findTeamLeader: vi.fn(() => null),
@@ -245,7 +274,14 @@ function createTools(options?: {
     inspectTaskGithubPrFeedbackGate,
   } as any);
 
-  return { db, tools, mergeToDevAndCreatePR, startReviewConsensusMeeting, inspectTaskGithubPrFeedbackGate };
+  return {
+    db,
+    tools,
+    mergeToDevAndCreatePR,
+    pushTaskBranchAndCreatePR,
+    startReviewConsensusMeeting,
+    inspectTaskGithubPrFeedbackGate,
+  };
 }
 
 function readReviewAudit(db: DatabaseSync, taskId: string) {
@@ -655,10 +691,70 @@ developmentPrFeedbackGate:
       expect(inspectTaskGithubPrFeedbackGate).toHaveBeenCalledWith(
         expect.objectContaining({
           githubRepo: "acme/repo",
+          headBranch: "dev",
+          baseBranch: "main",
           policy: {
             ignoredCheckNames: ["preview / deploy"],
             ignoredCheckPrefixes: ["optional /"],
           },
+        }),
+      );
+    } finally {
+      db.close();
+    }
+  });
+
+  it("task_branch_pr 전략은 gate가 blocked여도 task PR 생성 후 done으로 끝난다", async () => {
+    const { db, tools, mergeToDevAndCreatePR, pushTaskBranchAndCreatePR, inspectTaskGithubPrFeedbackGate } = createTools({
+      mergeStrategyMode: "task_branch_pr",
+      inspectSnapshot: {
+        applicable: true,
+        status: "blocked",
+        pr_url: "https://github.com/acme/repo/pull/21",
+        pr_number: 21,
+        review_decision: "CHANGES_REQUESTED",
+        unresolved_thread_count: 1,
+        change_requests_count: 1,
+        failing_check_count: 0,
+        pending_check_count: 1,
+        ignored_check_count: 0,
+        ignored_check_names: [],
+        blocking_reasons: ["Unresolved review threads: 1", "Pending checks: 1"],
+        checked_at: 10_000,
+      },
+      mergeResult: {
+        success: true,
+        message: "task branch pr ready",
+        autoCommitSha: "auto-task-1",
+        targetBranch: "dev",
+        prUrl: "https://github.com/acme/repo/pull/21",
+        strategy: "task_branch_pr",
+      },
+    });
+
+    try {
+      tools.finishReview("task-1", "Ship feature", { bypassProjectDecisionGate: true, trigger: "test" });
+      await vi.waitFor(() => {
+        const task = db.prepare("SELECT status FROM tasks WHERE id = ?").get("task-1") as { status: string };
+        expect(task.status).toBe("done");
+      });
+
+      expect(mergeToDevAndCreatePR).not.toHaveBeenCalled();
+      expect(pushTaskBranchAndCreatePR).toHaveBeenCalledTimes(1);
+      expect(inspectTaskGithubPrFeedbackGate).toHaveBeenCalledTimes(1);
+      expect(inspectTaskGithubPrFeedbackGate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          headBranch: "claw/task-1",
+          baseBranch: "dev",
+        }),
+      );
+      expect(readReviewAudit(db, "task-1")).toEqual(
+        expect.objectContaining({
+          auto_commit_sha: "auto-task-1",
+          post_merge_head_sha: null,
+          target_branch: "dev",
+          merge_strategy: "task_branch_pr",
+          pr_url: "https://github.com/acme/repo/pull/21",
         }),
       );
     } finally {

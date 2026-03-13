@@ -23,6 +23,19 @@ type CreateWorktreeMergeToolsDeps = {
   resolveLang: (text: string) => string;
   l: (...args: any[]) => any;
   pickL: (...args: any[]) => string;
+  fetchImpl?: typeof fetch;
+};
+
+export type WorktreeGitHubMergeStrategy = "shared_dev_pr" | "task_branch_pr";
+export type WorktreeMergeResult = {
+  success: boolean;
+  message: string;
+  conflicts?: string[];
+  prUrl?: string;
+  autoCommitSha?: string;
+  postMergeHeadSha?: string;
+  targetBranch?: "main" | "dev";
+  strategy?: WorktreeGitHubMergeStrategy;
 };
 
 function readHeadSha(projectPath: string): string | null {
@@ -40,19 +53,91 @@ function readHeadSha(projectPath: string): string | null {
 }
 
 export function createWorktreeMergeTools(deps: CreateWorktreeMergeToolsDeps) {
-  const { db, taskWorktrees, appendTaskLog, cleanupWorktree, resolveLang, l, pickL } = deps;
+  const { db, taskWorktrees, appendTaskLog, cleanupWorktree, resolveLang, l, pickL, fetchImpl = fetch } = deps;
 
-  function mergeWorktree(
-    projectPath: string,
-    taskId: string,
-  ): {
-    success: boolean;
-    message: string;
-    conflicts?: string[];
-    autoCommitSha?: string;
-    postMergeHeadSha?: string;
-    targetBranch?: "main" | "dev";
-  } {
+  function parseGithubRepo(githubRepo: string): { owner: string; repo: string } | null {
+    const trimmed = String(githubRepo ?? "").trim();
+    if (!trimmed) return null;
+    const [owner, repo] = trimmed.split("/");
+    if (!owner || !repo) return null;
+    return { owner, repo };
+  }
+
+  async function upsertPullRequest(input: {
+    githubRepo: string;
+    token: string;
+    headBranch: string;
+    baseBranch: string;
+    title: string;
+    body: string;
+  }): Promise<{ prUrl: string }> {
+    const parsedRepo = parseGithubRepo(input.githubRepo);
+    if (!parsedRepo) {
+      throw new Error(`Invalid github_repo: ${input.githubRepo}`);
+    }
+
+    const listRes = await fetchImpl(
+      `https://api.github.com/repos/${parsedRepo.owner}/${parsedRepo.repo}/pulls?head=${parsedRepo.owner}:${encodeURIComponent(input.headBranch)}&base=${encodeURIComponent(input.baseBranch)}&state=open&per_page=1`,
+      {
+        headers: buildGitHubApiHeaders(input.token),
+      },
+    );
+    const existingPRs = (await listRes.json().catch(() => null)) as Array<{ html_url?: string | null }> | null;
+    if (listRes.ok && Array.isArray(existingPRs) && existingPRs.length > 0 && existingPRs[0]?.html_url) {
+      return { prUrl: existingPRs[0].html_url };
+    }
+
+    const createRes = await fetchImpl(`https://api.github.com/repos/${parsedRepo.owner}/${parsedRepo.repo}/pulls`, {
+      method: "POST",
+      headers: {
+        ...buildGitHubApiHeaders(input.token),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        title: input.title,
+        body: input.body,
+        head: input.headBranch,
+        base: input.baseBranch,
+      }),
+    });
+    const createBody = (await createRes.json().catch(() => null)) as { html_url?: string; message?: string } | null;
+    if (!createRes.ok || !createBody?.html_url) {
+      throw new Error(createBody?.message || `GitHub PR creation failed: ${createRes.status}`);
+    }
+    return { prUrl: createBody.html_url };
+  }
+
+  function configureGitHubRemote(projectPath: string, githubRepo: string, token: string | null): void {
+    if (!token) return;
+    let originUrl = "";
+    try {
+      originUrl = execFileSync("git", ["remote", "get-url", "origin"], {
+        cwd: projectPath,
+        stdio: "pipe",
+        timeout: 5000,
+      })
+        .toString()
+        .trim();
+    } catch {
+      return;
+    }
+
+    const normalizedOrigin = originUrl.toLowerCase();
+    const normalizedRepo = githubRepo.toLowerCase();
+    const isGitHubOrigin =
+      normalizedOrigin.includes("github.com/") &&
+      (normalizedOrigin.includes(`${normalizedRepo}.git`) || normalizedOrigin.endsWith(normalizedRepo));
+    if (!isGitHubOrigin) return;
+
+    const remoteUrl = `https://x-access-token:${token}@github.com/${githubRepo}.git`;
+    execFileSync("git", ["remote", "set-url", "origin", remoteUrl], {
+      cwd: projectPath,
+      stdio: "pipe",
+      timeout: 5000,
+    });
+  }
+
+  function mergeWorktree(projectPath: string, taskId: string): WorktreeMergeResult {
     const info = taskWorktrees.get(taskId);
     if (!info) return { success: false, message: "No worktree found for this task" };
     const taskRow = db.prepare("SELECT title, description FROM tasks WHERE id = ?").get(taskId) as
@@ -222,19 +307,7 @@ export function createWorktreeMergeTools(deps: CreateWorktreeMergeToolsDeps) {
     }
   }
 
-  function mergeToDevAndCreatePR(
-    projectPath: string,
-    taskId: string,
-    githubRepo: string,
-  ): {
-    success: boolean;
-    message: string;
-    conflicts?: string[];
-    prUrl?: string;
-    autoCommitSha?: string;
-    postMergeHeadSha?: string;
-    targetBranch?: "main" | "dev";
-  } {
+  async function mergeToDevAndCreatePR(projectPath: string, taskId: string, githubRepo: string): Promise<WorktreeMergeResult> {
     const info = taskWorktrees.get(taskId);
     if (!info) return { success: false, message: "No worktree found for this task" };
     const taskRow = db.prepare("SELECT title FROM tasks WHERE id = ?").get(taskId) as { title: string } | undefined;
@@ -298,61 +371,32 @@ export function createWorktreeMergeTools(deps: CreateWorktreeMergeToolsDeps) {
       });
 
       const token = getGitHubAccessToken(db);
-      if (token) {
-        const remoteUrl = `https://x-access-token:${token}@github.com/${githubRepo}.git`;
-        execFileSync("git", ["remote", "set-url", "origin", remoteUrl], {
-          cwd: projectPath,
-          stdio: "pipe",
-          timeout: 5000,
-        });
-      }
+      configureGitHubRemote(projectPath, githubRepo, token);
       execFileSync("git", ["push", "origin", "dev"], {
         cwd: projectPath,
         stdio: "pipe",
         timeout: 60000,
       });
 
+      let prUrl: string | undefined;
       if (token) {
-        const [owner, repo] = githubRepo.split("/");
-        void (async () => {
-          try {
-            const listRes = await fetch(
-              `https://api.github.com/repos/${owner}/${repo}/pulls?head=${owner}:dev&base=main&state=open`,
-              { headers: buildGitHubApiHeaders(token) },
-            );
-            const existingPRs = await listRes.json();
-            if (Array.isArray(existingPRs) && existingPRs.length > 0) {
-              const prUrl = existingPRs[0].html_url;
-              console.log(`[Claw-Empire] Existing PR updated: ${prUrl}`);
-              appendTaskLog(taskId, "system", `GitHub PR updated: ${prUrl}`);
-            } else {
-              const createRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls`, {
-                method: "POST",
-                headers: {
-                  ...buildGitHubApiHeaders(token),
-                  "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                  title: `[Climpire] ${taskTitle}`,
-                  body: `## Climpire Task\n\n**Task:** ${taskTitle}\n**Task ID:** ${taskShortId}\n\nAutomatically created by Climpire workflow.`,
-                  head: "dev",
-                  base: "main",
-                }),
-              });
-              if (createRes.ok) {
-                const prData = (await createRes.json()) as { html_url?: string };
-                console.log(`[Claw-Empire] Created PR: ${prData.html_url}`);
-                appendTaskLog(taskId, "system", `GitHub PR created: ${prData.html_url}`);
-              } else {
-                const errBody = await createRes.text();
-                console.warn(`[Claw-Empire] Failed to create PR: ${createRes.status} ${errBody}`);
-                appendTaskLog(taskId, "system", `GitHub PR creation failed: ${createRes.status}`);
-              }
-            }
-          } catch (prErr) {
-            console.warn(`[Claw-Empire] PR creation error:`, prErr);
-          }
-        })();
+        try {
+          const pr = await upsertPullRequest({
+            githubRepo,
+            token,
+            headBranch: "dev",
+            baseBranch: "main",
+            title: `[Climpire] ${taskTitle}`,
+            body: `## Climpire Task\n\n**Task:** ${taskTitle}\n**Task ID:** ${taskShortId}\n\nAutomatically created by Climpire workflow.`,
+          });
+          prUrl = pr.prUrl;
+          appendTaskLog(taskId, "system", `GitHub PR ready: ${prUrl}`);
+        } catch (prError) {
+          const prMessage = prError instanceof Error ? prError.message : String(prError);
+          appendTaskLog(taskId, "system", `GitHub PR sync failed: ${prMessage}`);
+        }
+      } else {
+        appendTaskLog(taskId, "system", "GitHub token unavailable; skipped shared dev PR sync.");
       }
 
       const postMergeHeadSha = readHeadSha(projectPath);
@@ -370,9 +414,11 @@ export function createWorktreeMergeTools(deps: CreateWorktreeMergeToolsDeps) {
       return {
         success: true,
         message: `Merged ${info.branchName} → dev and pushed to origin.`,
+        prUrl,
         autoCommitSha,
         postMergeHeadSha: postMergeHeadSha ?? undefined,
         targetBranch: "dev",
+        strategy: "shared_dev_pr",
       };
     } catch (err: unknown) {
       try {
@@ -419,6 +465,80 @@ export function createWorktreeMergeTools(deps: CreateWorktreeMergeToolsDeps) {
 
       const msg = err instanceof Error ? err.message : String(err);
       return { success: false, autoCommitSha, message: `Dev merge failed: ${msg}` };
+    }
+  }
+
+  async function pushTaskBranchAndCreatePR(
+    projectPath: string,
+    taskId: string,
+    githubRepo: string,
+  ): Promise<WorktreeMergeResult> {
+    const info = taskWorktrees.get(taskId);
+    if (!info) return { success: false, message: "No worktree found for this task" };
+    const taskRow = db.prepare("SELECT title FROM tasks WHERE id = ?").get(taskId) as { title: string } | undefined;
+    const taskShortId = getTaskShortId(taskId);
+    const taskTitle = taskRow?.title ?? taskShortId;
+    let autoCommitSha: string | undefined;
+
+    try {
+      const autoCommit = autoCommitWorktreePendingChanges(taskId, info, appendTaskLog);
+      autoCommitSha = autoCommit.commitSha;
+      if (autoCommit.error) {
+        if (autoCommit.errorKind === "restricted_untracked") {
+          return {
+            success: false,
+            autoCommitSha,
+            message: `Pre-PR auto-commit blocked by restricted untracked files (${autoCommit.restrictedUntrackedCount}). Remove or handle restricted files and retry.`,
+          };
+        }
+        return { success: false, autoCommitSha, message: `Pre-PR auto-commit failed: ${autoCommit.error}` };
+      }
+
+      const token = getGitHubAccessToken(db);
+      if (!token) {
+        return {
+          success: false,
+          autoCommitSha,
+          message: "GitHub token is required to create or update a task branch PR.",
+          targetBranch: "dev",
+          strategy: "task_branch_pr",
+        };
+      }
+
+      configureGitHubRemote(projectPath, githubRepo, token);
+      execFileSync("git", ["push", "origin", info.branchName], {
+        cwd: projectPath,
+        stdio: "pipe",
+        timeout: 60000,
+      });
+
+      const pr = await upsertPullRequest({
+        githubRepo,
+        token,
+        headBranch: info.branchName,
+        baseBranch: "dev",
+        title: `[Climpire] ${taskTitle}`,
+        body: `## Climpire Task\n\n**Task:** ${taskTitle}\n**Task ID:** ${taskShortId}\n\nAutomatically created by Climpire workflow.`,
+      });
+      appendTaskLog(taskId, "system", `GitHub task PR ready: ${pr.prUrl}`);
+
+      return {
+        success: true,
+        message: `Pushed ${info.branchName} and created/updated PR to dev.`,
+        prUrl: pr.prUrl,
+        autoCommitSha,
+        targetBranch: "dev",
+        strategy: "task_branch_pr",
+      };
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return {
+        success: false,
+        autoCommitSha,
+        message: `Task branch PR sync failed: ${msg}`,
+        targetBranch: "dev",
+        strategy: "task_branch_pr",
+      };
     }
   }
 
@@ -470,6 +590,7 @@ export function createWorktreeMergeTools(deps: CreateWorktreeMergeToolsDeps) {
   return {
     mergeWorktree,
     mergeToDevAndCreatePR,
+    pushTaskBranchAndCreatePR,
     rollbackTaskWorktree,
     getWorktreeDiffSummary,
     hasVisibleDiffSummary,

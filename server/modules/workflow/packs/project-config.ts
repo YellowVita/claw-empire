@@ -24,6 +24,10 @@ export type ProjectDevelopmentPrFeedbackGatePolicy = {
 export type ProjectGitBootstrapPolicy = {
   allowAutoGitBootstrap: boolean;
 };
+export type ProjectMergeStrategyMode = "shared_dev_pr" | "task_branch_pr";
+export type ProjectMergeStrategyPolicy = {
+  mode: ProjectMergeStrategyMode;
+};
 
 export type ProjectWorkflowConfig = {
   path: string;
@@ -151,6 +155,12 @@ function mergeProjectWorkflowRaw(
       continue;
     }
     if (key === "gitBootstrap") {
+      const basePolicy = asObject(merged[key]);
+      const overridePolicy = asObject(value);
+      merged[key] = overridePolicy && basePolicy ? { ...basePolicy, ...overridePolicy } : overridePolicy ?? value;
+      continue;
+    }
+    if (key === "mergeStrategy") {
       const basePolicy = asObject(merged[key]);
       const overridePolicy = asObject(value);
       merged[key] = overridePolicy && basePolicy ? { ...basePolicy, ...overridePolicy } : overridePolicy ?? value;
@@ -1012,6 +1022,158 @@ export function readProjectGitBootstrapPolicy(projectPath: string): {
     },
     warnings,
     configSources: [...config.sources],
+    valid,
+  };
+}
+
+export function readProjectMergeStrategyPolicy(projectPath: string): {
+  policy: ProjectMergeStrategyPolicy;
+  warnings: string[];
+  configSources: ProjectWorkflowConfigSource[];
+  valid: boolean;
+} {
+  const defaultPolicy: ProjectMergeStrategyPolicy = {
+    mode: "shared_dev_pr",
+  };
+  const config = readProjectWorkflowConfig(projectPath);
+  if (!config) {
+    return {
+      policy: defaultPolicy,
+      warnings: [],
+      configSources: [],
+      valid: true,
+    };
+  }
+  if (!config.raw) {
+    return {
+      policy: defaultPolicy,
+      warnings: [...config.warnings],
+      configSources: [...config.sources],
+      valid: false,
+    };
+  }
+
+  const warnings = [...config.warnings];
+  const sourceLabel = describeProjectWorkflowConfigSource(config);
+  const rawPolicy = config.raw.mergeStrategy;
+  if (rawPolicy === undefined) {
+    return {
+      policy: defaultPolicy,
+      warnings,
+      configSources: [...config.sources],
+      valid: true,
+    };
+  }
+  if (!isPlainObject(rawPolicy)) {
+    warnings.push(`${sourceLabel} invalid mergeStrategy object, ignoring`);
+    return {
+      policy: defaultPolicy,
+      warnings,
+      configSources: [...config.sources],
+      valid: false,
+    };
+  }
+
+  let valid = true;
+  const mode =
+    rawPolicy.mode === undefined
+      ? "shared_dev_pr"
+      : rawPolicy.mode === "shared_dev_pr" || rawPolicy.mode === "task_branch_pr"
+        ? rawPolicy.mode
+        : (() => {
+            valid = false;
+            warnings.push(`${sourceLabel} invalid mergeStrategy.mode, ignoring`);
+            return "shared_dev_pr" as const;
+          })();
+
+  return {
+    policy: { mode },
+    warnings,
+    configSources: [...config.sources],
+    valid,
+  };
+}
+
+export function readProjectMergeStrategyPolicyCached(
+  db: DbLike,
+  projectPath: string,
+  options?: { nowMs?: () => number },
+): {
+  policy: ProjectMergeStrategyPolicy;
+  warnings: string[];
+  configSources: ProjectWorkflowConfigSource[];
+  cacheApplied: boolean;
+  cacheUpdatedAt: number | null;
+  valid: boolean;
+} {
+  const defaultPolicy: ProjectMergeStrategyPolicy = {
+    mode: "shared_dev_pr",
+  };
+  const config = readProjectWorkflowConfigCached(db, projectPath, options);
+  if (!config) {
+    return {
+      policy: defaultPolicy,
+      warnings: [],
+      configSources: [],
+      cacheApplied: false,
+      cacheUpdatedAt: null,
+      valid: true,
+    };
+  }
+  if (!config.raw) {
+    return {
+      policy: defaultPolicy,
+      warnings: [...config.warnings],
+      configSources: [...config.sources],
+      cacheApplied: config.cacheApplied,
+      cacheUpdatedAt: config.cacheUpdatedAt,
+      valid: false,
+    };
+  }
+
+  const warnings = [...config.warnings];
+  const sourceLabel = describeProjectWorkflowConfigSource(config);
+  const rawPolicy = config.raw.mergeStrategy;
+  if (rawPolicy === undefined) {
+    return {
+      policy: defaultPolicy,
+      warnings,
+      configSources: [...config.sources],
+      cacheApplied: config.cacheApplied,
+      cacheUpdatedAt: config.cacheUpdatedAt,
+      valid: true,
+    };
+  }
+  if (!isPlainObject(rawPolicy)) {
+    warnings.push(`${sourceLabel} invalid mergeStrategy object, ignoring`);
+    return {
+      policy: defaultPolicy,
+      warnings,
+      configSources: [...config.sources],
+      cacheApplied: config.cacheApplied,
+      cacheUpdatedAt: config.cacheUpdatedAt,
+      valid: false,
+    };
+  }
+
+  let valid = true;
+  const mode =
+    rawPolicy.mode === undefined
+      ? "shared_dev_pr"
+      : rawPolicy.mode === "shared_dev_pr" || rawPolicy.mode === "task_branch_pr"
+        ? rawPolicy.mode
+        : (() => {
+            valid = false;
+            warnings.push(`${sourceLabel} invalid mergeStrategy.mode, ignoring`);
+            return "shared_dev_pr" as const;
+          })();
+
+  return {
+    policy: { mode },
+    warnings,
+    configSources: [...config.sources],
+    cacheApplied: config.cacheApplied,
+    cacheUpdatedAt: config.cacheUpdatedAt,
     valid,
   };
 }

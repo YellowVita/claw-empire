@@ -14,6 +14,7 @@ export type DevelopmentHandoffState =
 
 export type DevelopmentHandoffGateStatus = "passed" | "blocked" | "skipped" | null;
 export type DevelopmentReviewApprovalSource = "review_consensus" | "delegated_review_finalize";
+export type DevelopmentReviewMergeStrategy = "shared_dev_pr" | "task_branch_pr";
 
 export type DevelopmentHandoffMetadata = {
   state: DevelopmentHandoffState;
@@ -22,6 +23,7 @@ export type DevelopmentHandoffMetadata = {
   pending_retry: boolean;
   pr_gate_status: DevelopmentHandoffGateStatus;
   pr_url: string | null;
+  merge_strategy?: DevelopmentReviewMergeStrategy | null;
   summary: string | null;
 };
 
@@ -31,6 +33,8 @@ export type DevelopmentReviewAuditMetadata = {
   auto_commit_sha: string | null;
   post_merge_head_sha: string | null;
   target_branch: "main" | "dev" | null;
+  merge_strategy?: DevelopmentReviewMergeStrategy | null;
+  pr_url?: string | null;
   updated_at: number;
 };
 
@@ -72,9 +76,13 @@ export function buildDevelopmentHandoffSummary(input: {
   pendingRetry: boolean;
   prGateStatus: DevelopmentHandoffGateStatus;
   mergeStatus?: "not_started" | "merged" | "failed";
+  mergeStrategy?: DevelopmentReviewMergeStrategy | null;
 }): string {
   if (input.pendingRetry) return "Retry scheduled after failed run";
   if (input.mergeStatus === "failed") return "Merge failed; manual resolution required";
+  if (input.state === "done" && input.mergeStrategy === "task_branch_pr") {
+    return "Task branch PR created; awaiting dev review";
+  }
   if (input.prGateStatus === "blocked") return "Blocked by PR feedback gate";
   switch (input.state) {
     case "queued":
@@ -122,6 +130,10 @@ export function normalizeDevelopmentHandoffMetadata(raw: unknown): DevelopmentHa
     pr_gate_status:
       prGateStatus === "passed" || prGateStatus === "blocked" || prGateStatus === "skipped" ? prGateStatus : null,
     pr_url: normalizeText(source.pr_url),
+    merge_strategy:
+      normalizeText(source.merge_strategy) === "shared_dev_pr" || normalizeText(source.merge_strategy) === "task_branch_pr"
+        ? (normalizeText(source.merge_strategy) as DevelopmentReviewMergeStrategy)
+        : null,
     summary: normalizeText(source.summary),
   };
 }
@@ -142,6 +154,11 @@ export function normalizeDevelopmentReviewAuditMetadata(raw: unknown): Developme
     auto_commit_sha: normalizeText(source.auto_commit_sha),
     post_merge_head_sha: normalizeText(source.post_merge_head_sha),
     target_branch: targetBranch === "main" || targetBranch === "dev" ? targetBranch : null,
+    merge_strategy:
+      normalizeText(source.merge_strategy) === "shared_dev_pr" || normalizeText(source.merge_strategy) === "task_branch_pr"
+        ? (normalizeText(source.merge_strategy) as DevelopmentReviewMergeStrategy)
+        : null,
+    pr_url: normalizeText(source.pr_url),
     updated_at: Number.isFinite(updatedAtValue) && updatedAtValue > 0 ? Math.trunc(updatedAtValue) : 0,
   };
 }
@@ -189,6 +206,7 @@ export function upsertDevelopmentHandoffMetadata(db: DbLike, input: {
   pendingRetry?: boolean;
   prGateStatus?: DevelopmentHandoffGateStatus;
   prUrl?: string | null;
+  mergeStrategy?: DevelopmentReviewMergeStrategy | null;
   summary?: string | null;
 }): void {
   const task = readTaskMetaRow(db, input.taskId);
@@ -199,8 +217,8 @@ export function upsertDevelopmentHandoffMetadata(db: DbLike, input: {
   const updatedAt = input.updatedAt ?? Date.now();
   const pendingRetry = input.pendingRetry ?? existing?.pending_retry ?? false;
   const prGateStatus = input.prGateStatus ?? existing?.pr_gate_status ?? null;
-  const prUrl =
-    input.prUrl !== undefined ? input.prUrl : existing?.pr_url ?? null;
+  const prUrl = input.prUrl !== undefined ? input.prUrl : existing?.pr_url ?? null;
+  const mergeStrategy = input.mergeStrategy !== undefined ? input.mergeStrategy : existing?.merge_strategy ?? null;
   const summary =
     input.summary !== undefined
       ? input.summary
@@ -208,6 +226,7 @@ export function upsertDevelopmentHandoffMetadata(db: DbLike, input: {
           state: input.state,
           pendingRetry,
           prGateStatus,
+          mergeStrategy,
         });
 
   const next: DevelopmentHandoffMetadata = {
@@ -217,6 +236,7 @@ export function upsertDevelopmentHandoffMetadata(db: DbLike, input: {
     pending_retry: pendingRetry,
     pr_gate_status: prGateStatus,
     pr_url: prUrl,
+    merge_strategy: mergeStrategy,
     summary,
   };
 
@@ -271,6 +291,8 @@ export function upsertDevelopmentReviewAuditMetadata(db: DbLike, input: {
   autoCommitSha?: string | null;
   postMergeHeadSha?: string | null;
   targetBranch?: "main" | "dev" | null;
+  mergeStrategy?: DevelopmentReviewMergeStrategy | null;
+  prUrl?: string | null;
   updatedAt?: number;
 }): void {
   const task = readTaskMetaRow(db, input.taskId);
@@ -287,6 +309,8 @@ export function upsertDevelopmentReviewAuditMetadata(db: DbLike, input: {
     post_merge_head_sha:
       input.postMergeHeadSha !== undefined ? input.postMergeHeadSha : existing?.post_merge_head_sha ?? null,
     target_branch: input.targetBranch !== undefined ? input.targetBranch : existing?.target_branch ?? null,
+    merge_strategy: input.mergeStrategy !== undefined ? input.mergeStrategy : existing?.merge_strategy ?? null,
+    pr_url: input.prUrl !== undefined ? input.prUrl : existing?.pr_url ?? null,
     updated_at: updatedAt,
   };
 
@@ -326,11 +350,13 @@ export function syncDevelopmentHandoffFromRunSheet(db: DbLike, input: {
     pendingRetry: input.snapshot.review_checklist.pending_retry || input.snapshot.validation.pending_retry,
     prGateStatus: gate?.status ?? null,
     prUrl: gate?.pr_url ?? null,
+    mergeStrategy: input.snapshot.review_checklist.merge_audit?.merge_strategy ?? null,
     summary: buildDevelopmentHandoffSummary({
       state: input.stage,
       pendingRetry: input.snapshot.review_checklist.pending_retry || input.snapshot.validation.pending_retry,
       prGateStatus: gate?.status ?? null,
       mergeStatus: input.snapshot.review_checklist.merge_status,
+      mergeStrategy: input.snapshot.review_checklist.merge_audit?.merge_strategy ?? null,
     }),
   });
 }

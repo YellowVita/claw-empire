@@ -65,3 +65,21 @@
 - [x] 테스트 및 문서 보정
   - project-config / lifecycle / execution-run regression 추가
   - release / operations guide에 opt-in 정책 반영
+
+# Phase 5 Plan Execution: GitHub merge strategy 옵션화
+
+- [x] 프로젝트 정책 `mergeStrategy.mode` 추가
+  - `shared_dev_pr` 기본값 유지
+  - `WORKFLOW.md > .claw-workflow.json` 우선순위 및 invalid fallback 적용
+- [x] GitHub merge helper 전략 분리
+  - `shared_dev_pr`: 기존 `dev -> main` shared PR 경로 유지
+  - `task_branch_pr`: task branch push + `task branch -> dev` PR 생성/갱신
+- [x] PR gate selector 일반화 및 전략별 동작 분리
+  - `shared_dev_pr`는 blocker
+  - `task_branch_pr`는 observational
+- [x] 감사/리포트/UI 반영
+  - `development_review_audit`, run sheet, handoff, TaskReportPopup에 `merge_strategy` / `pr_url` 반영
+- [x] 검증
+  - `pnpm run typecheck` 통과
+  - server workflow/task-report regression tests 통과
+  - `TaskReportPopup` component tests 통과

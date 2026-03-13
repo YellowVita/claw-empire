@@ -30,6 +30,8 @@ export type TaskGithubPrGateSnapshot = {
 type InspectTaskGithubPrFeedbackGateInput = {
   db: DbLike;
   githubRepo: string;
+  headBranch?: string;
+  baseBranch?: string;
   nowMs?: () => number;
   fetchImpl?: FetchLike;
   maxThreadPages?: number;
@@ -127,14 +129,16 @@ async function readJsonOrThrow<T>(response: Response, fallback: string): Promise
   return data as T;
 }
 
-async function fetchOpenDevMainPr(input: {
+async function fetchOpenPullRequest(input: {
   fetchImpl: FetchLike;
   token: string;
   owner: string;
   repo: string;
+  headBranch: string;
+  baseBranch: string;
 }): Promise<OpenPullRequest | null> {
-  const { fetchImpl, token, owner, repo } = input;
-  const url = `https://api.github.com/repos/${owner}/${repo}/pulls?head=${owner}:dev&base=main&state=open&per_page=1`;
+  const { fetchImpl, token, owner, repo, headBranch, baseBranch } = input;
+  const url = `https://api.github.com/repos/${owner}/${repo}/pulls?head=${owner}:${encodeURIComponent(headBranch)}&base=${encodeURIComponent(baseBranch)}&state=open&per_page=1`;
   const response = await fetchImpl(url, {
     headers: buildGitHubApiHeaders(token),
     signal: AbortSignal.timeout(15_000),
@@ -354,6 +358,8 @@ export async function inspectTaskGithubPrFeedbackGate(
   const fetchImpl = input.fetchImpl ?? fetch;
   const maxThreadPages = Math.max(1, Number(input.maxThreadPages ?? 10));
   const maxCheckPages = Math.max(1, Number(input.maxCheckPages ?? 5));
+  const headBranch = input.headBranch?.trim() || "dev";
+  const baseBranch = input.baseBranch?.trim() || "main";
   const parsedRepo = parseGithubRepo(input.githubRepo);
   if (!parsedRepo) {
     return blockedSnapshot(checkedAt, "GitHub repository configuration is invalid");
@@ -367,7 +373,7 @@ export async function inspectTaskGithubPrFeedbackGate(
   const { owner, repo } = parsedRepo;
 
   try {
-    const openPr = await fetchOpenDevMainPr({ fetchImpl, token, owner, repo });
+    const openPr = await fetchOpenPullRequest({ fetchImpl, token, owner, repo, headBranch, baseBranch });
     if (!openPr) {
       return buildSnapshot(checkedAt, {
         applicable: false,
@@ -445,7 +451,7 @@ export function summarizeTaskGithubPrGateSnapshot(snapshot: TaskGithubPrGateSnap
   const ignoredSuffix =
     snapshot.ignored_check_count > 0 ? ` (ignored optional checks: ${snapshot.ignored_check_count})` : "";
   if (snapshot.status === "skipped") {
-    return `GitHub PR feedback gate skipped (no open dev -> main PR)${ignoredSuffix}`;
+    return `GitHub PR feedback gate skipped (no matching open PR)${ignoredSuffix}`;
   }
   if (snapshot.status === "passed") {
     return `GitHub PR feedback gate passed${ignoredSuffix}`;

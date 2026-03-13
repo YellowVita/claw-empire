@@ -54,6 +54,37 @@ describe("github PR feedback gate", () => {
     }
   });
 
+  it("selector 기반으로 task branch -> dev PR을 조회한다", async () => {
+    const db = createDb();
+    const seenUrls: string[] = [];
+    try {
+      const snapshot = await inspectTaskGithubPrFeedbackGate({
+        db: db as any,
+        githubRepo: "acme/repo",
+        headBranch: "climpire/task1234",
+        baseBranch: "dev",
+        nowMs: () => 1000,
+        fetchImpl: async (input: unknown) => {
+          const url = String(input);
+          seenUrls.push(url);
+          if (url.includes("/pulls?head=")) {
+            return new Response(JSON.stringify([]), {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+          throw new Error(`Unexpected URL: ${url}`);
+        },
+      });
+
+      expect(snapshot.status).toBe("skipped");
+      expect(seenUrls[0]).toContain("head=acme:climpire%2Ftask1234");
+      expect(seenUrls[0]).toContain("base=dev");
+    } finally {
+      db.close();
+    }
+  });
+
   it("unresolved thread와 failing/pending checks가 있으면 blocked snapshot을 반환한다", async () => {
     const db = createDb();
     const fetchImpl = async (input: unknown) => {

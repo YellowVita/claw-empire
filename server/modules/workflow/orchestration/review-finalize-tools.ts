@@ -7,7 +7,10 @@ import {
 } from "../packs/video-artifact.ts";
 import { evaluateRemotionOnlyGateFromLogFiles } from "../packs/video-render-engine-gate.ts";
 import { resolveScopedTeamLeader } from "../packs/agent-scope.ts";
-import { readProjectDevelopmentPrFeedbackGatePolicyCached } from "../packs/project-config.ts";
+import {
+  readProjectDevelopmentPrFeedbackGatePolicyCached,
+  readProjectMergeStrategyPolicyCached,
+} from "../packs/project-config.ts";
 import { readYoloModeEnabled } from "../../routes/ops/messages/decision-inbox/yolo-mode.ts";
 import { reconcileVideoRenderDelegationState } from "./video-render-delegation-state.ts";
 import {
@@ -36,6 +39,7 @@ export function createReviewFinalizeTools(deps: CreateReviewFinalizeToolsDeps) {
     notifyCeo,
     taskWorktrees,
     mergeToDevAndCreatePR,
+    pushTaskBranchAndCreatePR,
     mergeWorktree,
     cleanupWorktree,
     findTeamLeader,
@@ -57,6 +61,28 @@ export function createReviewFinalizeTools(deps: CreateReviewFinalizeToolsDeps) {
     processSubtaskDelegations,
     inspectTaskGithubPrFeedbackGate,
   } = deps;
+
+  function recordGithubPrGateSnapshot(taskId: string, gateSnapshot: TaskGithubPrGateSnapshot, t: number): string {
+    const gateSummary = summarizeTaskGithubPrGateSnapshot(gateSnapshot);
+    recordTaskQualityRun(db as any, {
+      taskId,
+      runType: "system",
+      name: "github_pr_feedback_gate",
+      status:
+        gateSnapshot.status === "blocked"
+          ? "failed"
+          : gateSnapshot.status === "passed"
+            ? "passed"
+            : "skipped",
+      summary: gateSummary,
+      metadata: gateSnapshot,
+      startedAt: t,
+      completedAt: t,
+      createdAt: t,
+    });
+    appendTaskLog(taskId, "system", gateSummary);
+    return gateSummary;
+  }
 
   function reconcileDelegatedSubtasksAfterRun(taskId: string, exitCode: number): void {
     const linked = db
@@ -660,11 +686,20 @@ export function createReviewFinalizeTools(deps: CreateReviewFinalizeToolsDeps) {
                 | undefined)
             : undefined;
           const githubRepo = projectRow?.github_repo;
+          const mergeStrategyResult =
+            latestTask.workflow_pack_key === "development" && latestTask.project_path
+              ? readProjectMergeStrategyPolicyCached(db as any, latestTask.project_path, { nowMs })
+              : null;
+          const mergeStrategy = githubRepo ? mergeStrategyResult?.policy.mode ?? "shared_dev_pr" : null;
+          for (const warning of mergeStrategyResult?.warnings ?? []) {
+            appendTaskLog(taskId, "system", `Merge strategy policy warning: ${warning}`);
+          }
 
           if (
             latestTask.workflow_pack_key === "development" &&
             githubRepo &&
-            typeof inspectTaskGithubPrFeedbackGate === "function"
+            typeof inspectTaskGithubPrFeedbackGate === "function" &&
+            mergeStrategy !== "task_branch_pr"
           ) {
             const prGatePolicyResult = readProjectDevelopmentPrFeedbackGatePolicyCached(
               db as any,
@@ -680,6 +715,8 @@ export function createReviewFinalizeTools(deps: CreateReviewFinalizeToolsDeps) {
                 db: db as any,
                 githubRepo,
                 nowMs,
+                headBranch: "dev",
+                baseBranch: "main",
                 policy: prGatePolicyResult.policy,
               });
             } catch (error) {
@@ -701,24 +738,7 @@ export function createReviewFinalizeTools(deps: CreateReviewFinalizeToolsDeps) {
               };
             }
 
-            const gateSummary = summarizeTaskGithubPrGateSnapshot(gateSnapshot);
-            recordTaskQualityRun(db as any, {
-              taskId,
-              runType: "system",
-              name: "github_pr_feedback_gate",
-              status:
-                gateSnapshot.status === "blocked"
-                  ? "failed"
-                  : gateSnapshot.status === "passed"
-                    ? "passed"
-                    : "skipped",
-              summary: gateSummary,
-              metadata: gateSnapshot,
-              startedAt: t,
-              completedAt: t,
-              createdAt: t,
-            });
-            appendTaskLog(taskId, "system", gateSummary);
+            const gateSummary = recordGithubPrGateSnapshot(taskId, gateSnapshot, t);
 
             if (gateSnapshot.status === "blocked") {
               upsertTaskRunSheet(db as any, {
@@ -757,38 +777,99 @@ export function createReviewFinalizeTools(deps: CreateReviewFinalizeToolsDeps) {
           });
 
           const mergeResult = githubRepo
-            ? mergeToDevAndCreatePR(wtInfo.projectPath, taskId, githubRepo)
+            ? mergeStrategy === "task_branch_pr"
+              ? await pushTaskBranchAndCreatePR(wtInfo.projectPath, taskId, githubRepo)
+              : await mergeToDevAndCreatePR(wtInfo.projectPath, taskId, githubRepo)
             : mergeWorktree(wtInfo.projectPath, taskId);
 
           if (mergeResult.autoCommitSha) {
             upsertDevelopmentReviewAuditMetadata(db as any, {
               taskId,
               autoCommitSha: mergeResult.autoCommitSha,
+              mergeStrategy: mergeResult.strategy ?? mergeStrategy ?? null,
+              prUrl: mergeResult.prUrl ?? null,
               updatedAt: t,
             });
           }
 
           if (mergeResult.success) {
+            if (
+              latestTask.workflow_pack_key === "development" &&
+              githubRepo &&
+              mergeStrategy === "task_branch_pr" &&
+              typeof inspectTaskGithubPrFeedbackGate === "function"
+            ) {
+              const prGatePolicyResult = readProjectDevelopmentPrFeedbackGatePolicyCached(
+                db as any,
+                latestTask.project_path ?? "",
+                { nowMs },
+              );
+              for (const warning of prGatePolicyResult.warnings) {
+                appendTaskLog(taskId, "system", `GitHub PR gate policy warning: ${warning}`);
+              }
+              let gateSnapshot: TaskGithubPrGateSnapshot;
+              try {
+                gateSnapshot = await inspectTaskGithubPrFeedbackGate({
+                  db: db as any,
+                  githubRepo,
+                  nowMs,
+                  headBranch: wtInfo.branchName,
+                  baseBranch: "dev",
+                  policy: prGatePolicyResult.policy,
+                });
+              } catch (error) {
+                const reason = error instanceof Error ? error.message : String(error);
+                gateSnapshot = {
+                  applicable: true,
+                  status: "blocked",
+                  pr_url: mergeResult.prUrl ?? null,
+                  pr_number: null,
+                  review_decision: null,
+                  unresolved_thread_count: 0,
+                  change_requests_count: 0,
+                  failing_check_count: 0,
+                  pending_check_count: 0,
+                  ignored_check_count: 0,
+                  ignored_check_names: [],
+                  blocking_reasons: [`GitHub PR inspection failed: ${reason}`],
+                  checked_at: t,
+                };
+              }
+              recordGithubPrGateSnapshot(taskId, gateSnapshot, t);
+            }
+
             upsertDevelopmentReviewAuditMetadata(db as any, {
               taskId,
               ...(mergeResult.autoCommitSha !== undefined ? { autoCommitSha: mergeResult.autoCommitSha } : {}),
               postMergeHeadSha: mergeResult.postMergeHeadSha ?? null,
               targetBranch: mergeResult.targetBranch ?? null,
+              mergeStrategy: mergeResult.strategy ?? mergeStrategy ?? null,
+              prUrl: mergeResult.prUrl ?? null,
               updatedAt: t,
             });
             appendTaskLog(taskId, "system", `Git merge completed: ${mergeResult.message}`);
             cleanupWorktree(wtInfo.projectPath, taskId);
             appendTaskLog(taskId, "system", "Worktree cleaned up after successful merge");
             mergeNote = githubRepo
-              ? pickL(
-                  l(
-                    [" (dev 병합 + PR 생성)"],
-                    [" (merged to dev + PR)"],
-                    [" (dev マージ + PR)"],
-                    ["（合并到 dev + PR）"],
-                  ),
-                  lang,
-                )
+              ? mergeStrategy === "task_branch_pr"
+                ? pickL(
+                    l(
+                      [" (task PR 생성)"],
+                      [" (task PR created)"],
+                      [" (task PR 作成)"],
+                      ["（已创建任务 PR）"],
+                    ),
+                    lang,
+                  )
+                : pickL(
+                    l(
+                      [" (dev 병합 + PR 생성)"],
+                      [" (merged to dev + PR)"],
+                      [" (dev マージ + PR)"],
+                      ["（合并到 dev + PR）"],
+                    ),
+                    lang,
+                  )
               : pickL(l([" (병합 완료)"], [" (merged)"], [" (マージ完了)"], ["（已合并）"]), lang);
           } else {
             appendTaskLog(taskId, "system", `Git merge failed: ${mergeResult.message}`);

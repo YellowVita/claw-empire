@@ -184,6 +184,7 @@ export interface WorkflowCoreExports {
   createWorktree: (...args: any[]) => any;
   mergeWorktree: (...args: any[]) => any;
   mergeToDevAndCreatePR: (...args: any[]) => any;
+  pushTaskBranchAndCreatePR: (...args: any[]) => any;
   cleanupWorktree: (...args: any[]) => any;
   rollbackTaskWorktree: (...args: any[]) => any;
   getWorktreeDiffSummary: (...args: any[]) => any;

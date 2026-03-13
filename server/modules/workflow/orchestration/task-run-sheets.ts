@@ -42,6 +42,8 @@ export type TaskRunSheetMergeAudit = {
   auto_commit_sha: string | null;
   post_merge_head_sha: string | null;
   target_branch: "main" | "dev" | null;
+  merge_strategy?: "shared_dev_pr" | "task_branch_pr" | null;
+  pr_url?: string | null;
   updated_at: number | null;
 };
 
@@ -469,6 +471,8 @@ function extractDevelopmentReviewAudit(
         auto_commit_sha: audit.auto_commit_sha,
         post_merge_head_sha: audit.post_merge_head_sha,
         target_branch: audit.target_branch,
+        merge_strategy: audit.merge_strategy ?? null,
+        pr_url: audit.pr_url ?? null,
         updated_at: audit.updated_at || null,
       },
     };
@@ -588,6 +592,8 @@ export function renderTaskRunSheetMarkdown(input: {
     `- Auto-Commit SHA: ${snapshot.review_checklist.merge_audit?.auto_commit_sha ?? "-"}`,
     `- Post-Merge HEAD SHA: ${snapshot.review_checklist.merge_audit?.post_merge_head_sha ?? "-"}`,
     `- Target Branch: ${snapshot.review_checklist.merge_audit?.target_branch ?? "-"}`,
+    `- Merge Strategy: ${snapshot.review_checklist.merge_audit?.merge_strategy ?? "-"}`,
+    `- Merge PR URL: ${snapshot.review_checklist.merge_audit?.pr_url ?? "-"}`,
     ...(
       snapshot.review_checklist.pr_feedback_gate?.ignored_check_names?.length
         ? snapshot.review_checklist.pr_feedback_gate.ignored_check_names.map((name) => `- Ignored Check: ${name}`)

@@ -450,7 +450,7 @@ export default function TaskReportPopup({ report, agents, departments, uiLanguag
               <p className="mt-1 text-[11px] text-fuchsia-300/70">{fmtTime(developmentRunSheet.updated_at)}</p>
             </div>
           </div>
-          <div className="mb-3 grid grid-cols-2 gap-2 md:grid-cols-5">
+          <div className="mb-3 grid grid-cols-2 gap-2 md:grid-cols-6">
             <div className="rounded-md border border-fuchsia-500/20 bg-slate-950/30 px-3 py-2">
               <p className="text-[11px] text-slate-400">{t({ ko: "상태", en: "Status", ja: "状態", zh: "状态" })}</p>
               <p className="text-sm font-semibold text-slate-100">{developmentRunSheet.status || "-"}</p>
@@ -487,6 +487,12 @@ export default function TaskReportPopup({ report, agents, departments, uiLanguag
               </p>
               <p className="text-sm font-semibold text-slate-100">{prFeedbackGate?.status || "-"}</p>
             </div>
+            <div className="rounded-md border border-fuchsia-500/20 bg-slate-950/30 px-3 py-2">
+              <p className="text-[11px] text-slate-400">
+                {t({ ko: "병합 전략", en: "Merge Strategy", ja: "マージ戦略", zh: "合并策略" })}
+              </p>
+              <p className="text-sm font-semibold text-slate-100">{mergeAudit?.merge_strategy || "-"}</p>
+            </div>
           </div>
           {(approvalAudit || mergeAudit) && (
             <div className="mb-3 rounded-md border border-fuchsia-500/20 bg-slate-950/30 p-3">
@@ -498,7 +504,7 @@ export default function TaskReportPopup({ report, agents, departments, uiLanguag
                   {fmtTime(mergeAudit?.updated_at ?? approvalAudit?.updated_at)}
                 </span>
               </div>
-              <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
+              <div className="grid grid-cols-2 gap-2 md:grid-cols-6">
                 <div className="rounded-md border border-slate-700/50 bg-black/20 px-3 py-2">
                   <p className="text-[11px] text-slate-400">{t({ ko: "승인 출처", en: "Approval Source", ja: "承認ソース", zh: "审批来源" })}</p>
                   <p className="text-sm font-semibold text-slate-100">{approvalAudit?.approval_source || "-"}</p>
@@ -518,6 +524,10 @@ export default function TaskReportPopup({ report, agents, departments, uiLanguag
                 <div className="rounded-md border border-slate-700/50 bg-black/20 px-3 py-2">
                   <p className="text-[11px] text-slate-400">{t({ ko: "대상 브랜치", en: "Target Branch", ja: "対象ブランチ", zh: "目标分支" })}</p>
                   <p className="text-sm font-semibold text-slate-100">{mergeAudit?.target_branch || "-"}</p>
+                </div>
+                <div className="rounded-md border border-slate-700/50 bg-black/20 px-3 py-2">
+                  <p className="text-[11px] text-slate-400">{t({ ko: "PR 링크", en: "PR URL", ja: "PR URL", zh: "PR URL" })}</p>
+                  <p className="truncate text-sm font-semibold text-slate-100">{mergeAudit?.pr_url || "-"}</p>
                 </div>
               </div>
             </div>

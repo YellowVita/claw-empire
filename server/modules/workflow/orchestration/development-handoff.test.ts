@@ -120,6 +120,18 @@ describe("development handoff metadata", () => {
     ).toBe("Merge failed; manual resolution required");
   });
 
+  it("task_branch_pr done summary는 gate blocked보다 PR handoff 문구를 우선한다", () => {
+    expect(
+      buildDevelopmentHandoffSummary({
+        state: "done",
+        pendingRetry: false,
+        prGateStatus: "blocked",
+        mergeStatus: "merged",
+        mergeStrategy: "task_branch_pr",
+      }),
+    ).toBe("Task branch PR created; awaiting dev review");
+  });
+
   it("preserves existing development_handoff while patching development_review_audit", () => {
     const db = createDb();
     try {
@@ -150,6 +162,8 @@ describe("development handoff metadata", () => {
         autoCommitSha: "abc123",
         postMergeHeadSha: "def456",
         targetBranch: "dev",
+        mergeStrategy: "shared_dev_pr",
+        prUrl: "https://example.com/pr/1",
         updatedAt: 40,
       });
 
@@ -173,6 +187,8 @@ describe("development handoff metadata", () => {
           auto_commit_sha: "abc123",
           post_merge_head_sha: "def456",
           target_branch: "dev",
+          merge_strategy: "shared_dev_pr",
+          pr_url: "https://example.com/pr/1",
           updated_at: 40,
         }),
       );
