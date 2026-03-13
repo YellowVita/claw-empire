@@ -140,11 +140,11 @@ describe("createSubtaskFromCli", () => {
     }
   });
 
-  it("V2 owner_integrate 단계에서는 Codex spawn_agent 내부 워커를 공식 서브태스크로 승격하지 않는다", () => {
+  it("V2 owner_prep 단계에서도 Codex spawn_agent 내부 워커의 외부 부서 승격을 막는다", () => {
     const db = setupDb();
     const appendTaskLog = vi.fn();
     try {
-      db.prepare("UPDATE tasks SET orchestration_version = 2, orchestration_stage = 'owner_integrate' WHERE id = ?").run(
+      db.prepare("UPDATE tasks SET orchestration_version = 2, orchestration_stage = 'owner_prep' WHERE id = ?").run(
         "task-1",
       );
 
@@ -194,18 +194,18 @@ describe("createSubtaskFromCli", () => {
       expect(appendTaskLog).toHaveBeenCalledWith(
         "task-1",
         "system",
-        expect.stringContaining("Owner integrate internal worker kept log-only"),
+        expect.stringContaining("V2 internal worker kept log-only"),
       );
     } finally {
       db.close();
     }
   });
 
-  it("V2 owner_integrate 단계에서는 Claude Task 내부 워커도 공식 서브태스크로 승격하지 않는다", () => {
+  it("V2 owner_prep 단계에서도 Claude Task 내부 워커의 외부 부서 승격을 막는다", () => {
     const db = setupDb();
     const appendTaskLog = vi.fn();
     try {
-      db.prepare("UPDATE tasks SET orchestration_version = 2, orchestration_stage = 'owner_integrate' WHERE id = ?").run(
+      db.prepare("UPDATE tasks SET orchestration_version = 2, orchestration_stage = 'owner_prep' WHERE id = ?").run(
         "task-1",
       );
 
@@ -258,17 +258,17 @@ describe("createSubtaskFromCli", () => {
       expect(appendTaskLog).toHaveBeenCalledWith(
         "task-1",
         "system",
-        expect.stringContaining("Owner integrate internal worker kept log-only"),
+        expect.stringContaining("V2 internal worker kept log-only"),
       );
     } finally {
       db.close();
     }
   });
 
-  it("V2 owner_integrate 단계에서도 선언적 plan 기반 서브태스크 생성은 유지한다", () => {
+  it("V2 owner_prep 단계에서도 선언적 plan 기반 서브태스크 생성은 유지한다", () => {
     const db = setupDb();
     try {
-      db.prepare("UPDATE tasks SET orchestration_version = 2, orchestration_stage = 'owner_integrate' WHERE id = ?").run(
+      db.prepare("UPDATE tasks SET orchestration_version = 2, orchestration_stage = 'owner_prep' WHERE id = ?").run(
         "task-1",
       );
 
@@ -322,6 +322,63 @@ describe("createSubtaskFromCli", () => {
       expect(result).toEqual({ created: true });
       expect(created.status).toBe("blocked");
       expect(created.target_department_id).toBe("qa");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("비-V2 태스크에서는 기존처럼 내부 워커 기반 외부 부서 서브태스크 생성이 유지된다", () => {
+    const db = setupDb();
+    try {
+      const routing = createSubtaskRoutingTools({
+        db,
+        DEPT_KEYWORDS: {
+          qa: ["qa", "테스트", "검증"],
+          dev: ["개발", "구현", "코딩"],
+        },
+        detectTargetDepartments: () => [],
+        runAgentOneShot: vi.fn(),
+        resolveProjectPath: () => "C:/workspace/project",
+        resolveLang: () => "ko",
+        findTeamLeader: (departmentId: string) => ({ id: `${departmentId}-lead` }),
+        getDeptName: (departmentId: string) => (departmentId === "dev" ? "개발팀" : departmentId),
+        pickL: (pool: any, lang: string) => pool[lang]?.[0] ?? pool.ko[0],
+        l: (ko: string[], en: string[], ja = en, zh = en) => ({ ko, en, ja, zh }),
+        broadcast: vi.fn(),
+        appendTaskLog: vi.fn(),
+        notifyCeo: vi.fn(),
+      });
+
+      const seeding = createSubtaskSeedingTools({
+        db,
+        nowMs: () => 1_000,
+        broadcast: vi.fn(),
+        analyzeSubtaskDepartment: routing.analyzeSubtaskDepartment,
+        rerouteSubtasksByPlanningLeader: vi.fn(),
+        findTeamLeader: (departmentId: string) => ({ id: `${departmentId}-lead` }),
+        getDeptName: (departmentId: string) => (departmentId === "dev" ? "개발팀" : departmentId),
+        getPreferredLanguage: () => "ko",
+        resolveLang: () => "ko",
+        l: (ko: string[], en: string[], ja = en, zh = en) => ({ ko, en, ja, zh }),
+        pickL: (pool: any, lang: string) => pool[lang]?.[0] ?? pool.ko[0],
+        appendTaskLog: vi.fn(),
+        notifyCeo: vi.fn(),
+      });
+
+      const result = seeding.createSubtaskFromCli("task-1", "tool-v1", "개발팀 역할로 API를 구현하세요.", {
+        source: "codex_spawn_agent",
+      });
+
+      const created = db.prepare("SELECT status, target_department_id, blocked_reason FROM subtasks").get() as {
+        status: string;
+        target_department_id: string | null;
+        blocked_reason: string | null;
+      };
+
+      expect(result).toEqual({ created: true });
+      expect(created.status).toBe("blocked");
+      expect(created.target_department_id).toBe("dev");
+      expect(created.blocked_reason).toBe("개발팀 협업 대기");
     } finally {
       db.close();
     }

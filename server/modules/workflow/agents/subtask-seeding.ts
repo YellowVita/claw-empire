@@ -87,11 +87,14 @@ export function createSubtaskSeedingTools(deps: SubtaskSeedingDeps) {
 
     const source = options.source ?? "claude_task";
     const isInternalWorker = source === "claude_task" || source === "codex_spawn_agent";
-    if (isInternalWorker && isTaskOrchestrationV2(parentTask) && getTaskOrchestrationStage(parentTask) === "owner_integrate") {
+    const targetDeptId = analyzeSubtaskDepartment(title, parentTask.department_id ?? null);
+    const isForeignDepartmentWork =
+      Boolean(targetDeptId) && (!parentTask.department_id || targetDeptId !== parentTask.department_id);
+    if (isInternalWorker && isTaskOrchestrationV2(parentTask) && isForeignDepartmentWork) {
       appendTaskLog(
         taskId,
         "system",
-        `Owner integrate internal worker kept log-only: skipped official subtask creation (source=${source}, title=${title.slice(0, 80)})`,
+        `V2 internal worker kept log-only: skipped official foreign-collab subtask creation (source=${source}, stage=${getTaskOrchestrationStage(parentTask) ?? "unknown"}, target=${targetDeptId}, title=${title.slice(0, 80)})`,
       );
       return { created: false };
     }
@@ -105,8 +108,6 @@ export function createSubtaskSeedingTools(deps: SubtaskSeedingDeps) {
     ).run(subId, taskId, title, parentTask.assigned_agent_id ?? null, toolUseId, nowMs());
 
     // Detect if this subtask belongs to a foreign department
-    const targetDeptId = analyzeSubtaskDepartment(title, parentTask.department_id ?? null);
-
     if (targetDeptId) {
       const constrainedAgentIds = resolveConstrainedAgentScopeForTask(db as any, {
         project_id: parentTask.project_id ?? null,

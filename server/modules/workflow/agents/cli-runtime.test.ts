@@ -41,7 +41,7 @@ function createRuntime(
 }
 
 describe("createCliRuntimeTools", () => {
-  it("does not keep spawn_agent thread mappings when owner-integrate policy skips official subtask creation", () => {
+  it("does not keep spawn_agent thread mappings when V2 policy skips official foreign-collab subtask creation", () => {
     const db = setupDb();
     try {
       const createSubtaskFromCli = vi.fn(() => ({ created: false }));
