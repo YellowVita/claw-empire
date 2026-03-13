@@ -50,3 +50,18 @@
   - `pnpm run typecheck` 통과
   - `pnpm run build` 통과
   - 변경 파일 대상 `prettier --check` 통과
+
+# Phase 4 Plan Execution: auto git bootstrap opt-in 전환
+
+- [x] 프로젝트 정책 `gitBootstrap.allowAutoGitBootstrap` 추가
+  - `WORKFLOW.md > .claw-workflow.json` 우선순위 유지
+  - invalid/missing schema는 `false`로 안전 fallback
+- [x] worktree lifecycle 반환 타입 구조화
+  - `createWorktree()`가 `success/worktreePath/failureCode/message`를 반환
+  - `git_bootstrap_disabled` 실패 시 수동 Git 초기화 명령 제공
+- [x] 실행 경로 메시지 분기
+  - execution run / orchestration / spawn / delegated launch가 같은 failure code를 공유
+  - bootstrap disabled일 때는 manual git init 안내를 노출
+- [x] 테스트 및 문서 보정
+  - project-config / lifecycle / execution-run regression 추가
+  - release / operations guide에 opt-in 정책 반영

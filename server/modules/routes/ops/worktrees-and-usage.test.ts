@@ -201,7 +201,9 @@ describe("worktree verify-commit route", () => {
     const taskId = "verify-dirty-0000-0000-0000-000000000000";
     const taskWorktrees = new Map<string, { worktreePath: string; branchName: string; projectPath: string }>();
     const tools = createWorktreeLifecycleTools({ appendTaskLog: () => {}, taskWorktrees });
-    const worktreePath = tools.createWorktree(repo, taskId, "Tester");
+    const result = tools.createWorktree(repo, taskId, "Tester");
+    expect(result.success).toBe(true);
+    const worktreePath = result.success ? result.worktreePath : null;
     expect(worktreePath).toBeTruthy();
 
     fs.writeFileSync(path.join(String(worktreePath), "src-dirty.ts"), "export const dirty = true;\n", "utf8");
@@ -234,7 +236,9 @@ describe("worktree verify-commit route", () => {
     const taskId = "verify-okay-0000-0000-0000-000000000000";
     const taskWorktrees = new Map<string, { worktreePath: string; branchName: string; projectPath: string }>();
     const tools = createWorktreeLifecycleTools({ appendTaskLog: () => {}, taskWorktrees });
-    const worktreePath = tools.createWorktree(repo, taskId, "Tester");
+    const result = tools.createWorktree(repo, taskId, "Tester");
+    expect(result.success).toBe(true);
+    const worktreePath = result.success ? result.worktreePath : null;
     expect(worktreePath).toBeTruthy();
 
     const worktreeDir = String(worktreePath);
@@ -273,7 +277,9 @@ describe("worktree verify-commit route", () => {
     const taskId = "verify-merge-0000-0000-0000-000000000000";
     const taskWorktrees = new Map<string, { worktreePath: string; branchName: string; projectPath: string }>();
     const tools = createWorktreeLifecycleTools({ appendTaskLog: () => {}, taskWorktrees });
-    const worktreePath = tools.createWorktree(repo, taskId, "Tester");
+    const result = tools.createWorktree(repo, taskId, "Tester");
+    expect(result.success).toBe(true);
+    const worktreePath = result.success ? result.worktreePath : null;
     expect(worktreePath).toBeTruthy();
 
     const worktreeDir = String(worktreePath);

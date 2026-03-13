@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   readProjectDevelopmentPrFeedbackGatePolicy,
+  readProjectGitBootstrapPolicy,
   readProjectWorkflowConfig,
   readProjectWorkflowConfigCached,
   readProjectWorkflowDefaultPackKey,
@@ -280,6 +281,60 @@ Project policy
       ".claw-workflow.json invalid developmentPrFeedbackGate.ignoredCheckPrefixes, ignoring",
       ".claw-workflow.json invalid developmentPrFeedbackGate.ignoredCheckNames entries, ignoring non-string values",
     ]);
+  });
+
+  it("gitBootstrap은 WORKFLOW.md가 JSON보다 우선한다", () => {
+    const projectDir = createTempDir("claw-workflow-git-bootstrap-");
+    fs.writeFileSync(
+      path.join(projectDir, ".claw-workflow.json"),
+      JSON.stringify(
+        {
+          gitBootstrap: {
+            allowAutoGitBootstrap: false,
+          },
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+    fs.writeFileSync(
+      path.join(projectDir, "WORKFLOW.md"),
+      `---
+gitBootstrap:
+  allowAutoGitBootstrap: true
+---
+`,
+      "utf8",
+    );
+
+    const result = readProjectGitBootstrapPolicy(projectDir);
+    expect(result.policy).toEqual({ allowAutoGitBootstrap: true });
+    expect(result.warnings).toEqual([]);
+    expect(result.configSources).toEqual(["workflow_md", "claw_workflow_json"]);
+    expect(result.valid).toBe(true);
+  });
+
+  it("invalid gitBootstrap schema는 warning 후 false로 fallback 한다", () => {
+    const projectDir = createTempDir("claw-workflow-git-bootstrap-invalid-");
+    fs.writeFileSync(
+      path.join(projectDir, ".claw-workflow.json"),
+      JSON.stringify(
+        {
+          gitBootstrap: {
+            allowAutoGitBootstrap: "yes",
+          },
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
+    const result = readProjectGitBootstrapPolicy(projectDir);
+    expect(result.policy).toEqual({ allowAutoGitBootstrap: false });
+    expect(result.warnings).toEqual([".claw-workflow.json invalid gitBootstrap.allowAutoGitBootstrap, ignoring"]);
+    expect(result.valid).toBe(false);
   });
 
   it("정상 WORKFLOW.md를 읽으면 last-known-good를 settings에 저장한다", () => {

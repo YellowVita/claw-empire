@@ -3,12 +3,35 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { createProjectPathPolicy } from "../../../routes/core/projects/path-policy.ts";
+import { readProjectGitBootstrapPolicy } from "../../packs/project-config.ts";
 
 export type WorktreeInfo = {
   worktreePath: string;
   branchName: string;
   projectPath: string;
 };
+export type WorktreeCreateFailureCode =
+  | "project_path_blocked"
+  | "git_bootstrap_disabled"
+  | "git_bootstrap_failed"
+  | "git_repo_required"
+  | "invalid_short_id"
+  | "path_guard_blocked"
+  | "worktree_add_failed";
+export type WorktreeCreateResult =
+  | {
+      success: true;
+      worktreePath: string;
+      branchName: string;
+      projectPath: string;
+    }
+  | {
+      success: false;
+      failureCode: WorktreeCreateFailureCode;
+      message: string;
+      projectPath: string | null;
+      manualSetupCommands?: string[];
+    };
 
 type CreateWorktreeLifecycleToolsDeps = {
   appendTaskLog: (taskId: string, kind: string, message: string) => void;
@@ -209,17 +232,59 @@ export function createWorktreeLifecycleTools(deps: CreateWorktreeLifecycleToolsD
     }
   }
 
-  function ensureWorktreeBootstrapRepo(projectPath: string, taskId: string): boolean {
-    if (isGitRepo(projectPath)) return true;
+  function manualGitSetupCommands(): string[] {
+    return ['git init', 'git add -A', 'git commit -m "initial commit"'];
+  }
+
+  function buildWorktreeFailure(
+    failureCode: WorktreeCreateFailureCode,
+    projectPath: string | null,
+    message: string,
+    manualSetup = false,
+  ): WorktreeCreateResult {
+    return {
+      success: false,
+      failureCode,
+      message,
+      projectPath,
+      ...(manualSetup ? { manualSetupCommands: manualGitSetupCommands() } : {}),
+    };
+  }
+
+  function ensureWorktreeBootstrapRepo(projectPath: string, taskId: string): WorktreeCreateResult | null {
+    if (isGitRepo(projectPath)) return null;
     const shortId = getTaskShortId(taskId);
     try {
       if (!fs.existsSync(projectPath) || !fs.statSync(projectPath).isDirectory()) {
         appendTaskLog(taskId, "system", `Git bootstrap skipped: invalid project path (${projectPath})`);
-        return false;
+        return buildWorktreeFailure("git_repo_required", projectPath, `Git bootstrap skipped: invalid project path (${projectPath})`);
       }
     } catch {
       appendTaskLog(taskId, "system", `Git bootstrap skipped: cannot access project path (${projectPath})`);
-      return false;
+      return buildWorktreeFailure(
+        "git_repo_required",
+        projectPath,
+        `Git bootstrap skipped: cannot access project path (${projectPath})`,
+      );
+    }
+
+    const bootstrapPolicy = readProjectGitBootstrapPolicy(projectPath);
+    for (const warning of bootstrapPolicy.warnings) {
+      appendTaskLog(taskId, "system", `Git bootstrap policy warning: ${warning}`);
+    }
+    if (!bootstrapPolicy.policy.allowAutoGitBootstrap) {
+      appendTaskLog(
+        taskId,
+        "system",
+        "Git repository not found. Auto git bootstrap is disabled by project policy; initialize the repository manually and retry.",
+      );
+      appendTaskLog(taskId, "system", `Manual git setup: ${manualGitSetupCommands().join(" && ")}`);
+      return buildWorktreeFailure(
+        "git_bootstrap_disabled",
+        projectPath,
+        "Git repository not found and auto git bootstrap is disabled by project policy.",
+        true,
+      );
     }
 
     try {
@@ -297,25 +362,30 @@ export function createWorktreeLifecycleTools(deps: CreateWorktreeLifecycleToolsD
 
       appendTaskLog(taskId, "system", "Git repository initialized automatically for worktree execution.");
       console.log(`[Claw-Empire] Auto-initialized git repo for task ${shortId} at ${projectPath}`);
-      return true;
+      return null;
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       appendTaskLog(taskId, "system", `Git bootstrap failed: ${msg}`);
       console.error(`[Claw-Empire] Failed git bootstrap for task ${shortId}: ${msg}`);
-      return false;
+      return buildWorktreeFailure("git_bootstrap_failed", projectPath, `Git bootstrap failed: ${msg}`);
     }
   }
 
-  function createWorktree(projectPath: string, taskId: string, agentName: string, baseBranch?: string): string | null {
+  function createWorktree(projectPath: string, taskId: string, agentName: string, baseBranch?: string): WorktreeCreateResult {
     const approvedProjectPath = resolveApprovedProjectPath(projectPath, taskId);
-    if (!approvedProjectPath) return null;
-    if (!ensureWorktreeBootstrapRepo(approvedProjectPath, taskId)) return null;
-    if (!isGitRepo(approvedProjectPath)) return null;
+    if (!approvedProjectPath) {
+      return buildWorktreeFailure("project_path_blocked", null, `Project path was blocked for worktree creation (${projectPath})`);
+    }
+    const bootstrapFailure = ensureWorktreeBootstrapRepo(approvedProjectPath, taskId);
+    if (bootstrapFailure) return bootstrapFailure;
+    if (!isGitRepo(approvedProjectPath)) {
+      return buildWorktreeFailure("git_repo_required", approvedProjectPath, "Worktree creation requires a Git repository.");
+    }
 
     const shortId = getTaskShortId(taskId);
     if (!SHORT_ID_PATTERN.test(shortId)) {
       appendTaskLog(taskId, "system", `${WORKTREE_LOG_PREFIX} create blocked: invalid_short_id:${shortId}`);
-      return null;
+      return buildWorktreeFailure("invalid_short_id", approvedProjectPath, `Invalid short task id for worktree (${shortId})`);
     }
     const branchName = buildManagedWorktreeBranchName(shortId);
     const worktreeBase = buildManagedWorktreeRoot(approvedProjectPath);
@@ -325,7 +395,7 @@ export function createWorktreeLifecycleTools(deps: CreateWorktreeLifecycleToolsD
       const rootGuard = guardManagedWorktreePath(approvedProjectPath);
       if (!rootGuard.ok) {
         appendTaskLog(taskId, "system", `${WORKTREE_LOG_PREFIX} create blocked: ${rootGuard.reason}`);
-        return null;
+        return buildWorktreeFailure("path_guard_blocked", approvedProjectPath, rootGuard.reason);
       }
       fs.mkdirSync(worktreeBase, { recursive: true });
       execFileSync("git", ["worktree", "prune"], { cwd: approvedProjectPath, stdio: "pipe", timeout: 5000 });
@@ -428,11 +498,16 @@ export function createWorktreeLifecycleTools(deps: CreateWorktreeLifecycleToolsD
       console.log(
         `[Claw-Empire] Created worktree for task ${shortId}: ${selectedWorktreePath} (branch: ${selectedBranch}, agent: ${agentName})`,
       );
-      return selectedWorktreePath;
+      return {
+        success: true,
+        worktreePath: selectedWorktreePath,
+        branchName: selectedBranch,
+        projectPath: approvedProjectPath,
+      };
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[Claw-Empire] Failed to create worktree for task ${shortId}: ${msg}`);
-      return null;
+      return buildWorktreeFailure("worktree_add_failed", approvedProjectPath, msg);
     }
   }
 

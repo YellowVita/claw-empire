@@ -1,7 +1,11 @@
 import path from "node:path";
 import type { Lang } from "../../../types/lang.ts";
 import type { AgentRow } from "./direct-chat.ts";
-import { buildManagedWorktreePath, getTaskShortId } from "../../workflow/core/worktree/lifecycle.ts";
+import {
+  buildManagedWorktreePath,
+  getTaskShortId,
+  type WorktreeCreateResult,
+} from "../../workflow/core/worktree/lifecycle.ts";
 import { reconcileVideoRenderDelegationState } from "../../workflow/orchestration/video-render-delegation-state.ts";
 import {
   buildOwnerIntegrationInstruction,
@@ -62,7 +66,7 @@ interface SubtaskDelegationDeps {
     description?: string | null;
     title?: string | null;
   }) => string | null;
-  createWorktree: (projectPath: string, taskId: string, agentName: string, baseBranch?: string) => string | null;
+  createWorktree: (projectPath: string, taskId: string, agentName: string, baseBranch?: string) => WorktreeCreateResult;
   logsDir: string;
   ensureTaskExecutionSession: (
     taskId: string,

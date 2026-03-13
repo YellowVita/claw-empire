@@ -89,6 +89,29 @@ export function registerTaskRunRoute(deps: TaskRunRouteDeps): void {
   const { isRelativeProjectPathInput, normalizeProjectPathInput, isPathInsideAllowedRoots, normalizePathForScopeCompare } =
     createProjectPathPolicy({ normalizeTextField });
 
+  function formatWorktreeCreationFailure(taskLang: string, failureCode?: string): string {
+    if (failureCode === "git_bootstrap_disabled") {
+      return pickL(
+        l(
+          [
+            "프로젝트 정책상 auto git bootstrap이 비활성화되어 실행을 차단했습니다. 먼저 `git init`, `git add -A`, `git commit -m \"initial commit\"`을 실행한 뒤 다시 시도하세요.",
+          ],
+          [
+            "Execution was blocked because auto git bootstrap is disabled by project policy. Run `git init`, `git add -A`, and `git commit -m \"initial commit\"`, then retry.",
+          ],
+          [
+            "プロジェクトポリシーにより auto git bootstrap が無効なため実行を停止しました。先に `git init`、`git add -A`、`git commit -m \"initial commit\"` を実行してから再試行してください。",
+          ],
+          [
+            "由于项目策略禁用了 auto git bootstrap，执行已被阻止。请先运行 `git init`、`git add -A`、`git commit -m \"initial commit\"`，然后重试。",
+          ],
+        ),
+        taskLang,
+      );
+    }
+    return "Isolated worktree creation failed. Task execution was blocked to protect the project root.";
+  }
+
   function buildProjectPathError(error: string, taskLang: string): { error: string; message: string } {
     const messages = {
       relative_project_path_not_allowed: pickL(
@@ -465,18 +488,19 @@ export function registerTaskRunRoute(deps: TaskRunRouteDeps): void {
     const interruptPromptBlock = buildInterruptPromptBlock(pendingInterruptPrompts);
     const logPath = path.join(logsDir, `${id}.log`);
 
-    const worktreePath = createWorktree(projectPath, id, agent.name);
-    if (!worktreePath) {
+    const worktreeResult = createWorktree(projectPath, id, agent.name);
+    if (!worktreeResult.success) {
       appendTaskLog(
         id,
         "error",
-        `Execution blocked: isolated worktree creation failed for project path '${projectPath}'`,
+        `Execution blocked: isolated worktree creation failed for project path '${projectPath}' (${worktreeResult.failureCode}: ${worktreeResult.message})`,
       );
       return res.status(409).json({
         error: "worktree_required",
-        message: "Isolated worktree creation failed. Task execution was blocked to protect the project root.",
+        message: formatWorktreeCreationFailure(taskLang, worktreeResult.failureCode),
       });
     }
+    const worktreePath = worktreeResult.worktreePath;
     const agentCwd = worktreePath;
 
     appendTaskLog(id, "system", `Git worktree created: ${worktreePath} (branch: climpire/${taskShortId})`);

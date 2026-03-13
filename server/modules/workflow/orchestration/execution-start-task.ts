@@ -84,6 +84,26 @@ export function createExecutionStartTaskTools(deps: CreateExecutionStartTaskTool
     deptId: string | null,
     deptName: string,
   ): Promise<void> {
+    function buildBootstrapDisabledCeoNotice(taskTitle: string, taskLang: string): string {
+      return pickL(
+        l(
+          [
+            `[WORKTREE REQUIRED] '${taskTitle}' 실행을 차단했습니다. 프로젝트 정책상 auto git bootstrap이 비활성화되어 있습니다. 먼저 \`git init\`, \`git add -A\`, \`git commit -m "initial commit"\`을 실행한 뒤 다시 시도하세요.`,
+          ],
+          [
+            `[WORKTREE REQUIRED] Blocked execution for '${taskTitle}'. Auto git bootstrap is disabled by project policy. Run \`git init\`, \`git add -A\`, and \`git commit -m "initial commit"\`, then retry.`,
+          ],
+          [
+            `[WORKTREE REQUIRED] '${taskTitle}' の実行を停止しました。プロジェクトポリシーにより auto git bootstrap が無効です。先に \`git init\`、\`git add -A\`、\`git commit -m "initial commit"\` を実行してから再試行してください。`,
+          ],
+          [
+            `[WORKTREE REQUIRED] 已阻止 '${taskTitle}' 的执行。项目策略禁用了 auto git bootstrap。请先运行 \`git init\`、\`git add -A\`、\`git commit -m "initial commit"\`，然后重试。`,
+          ],
+        ),
+        taskLang,
+      );
+    }
+
     const execName = execAgent.name_ko || execAgent.name;
     const t = nowMs();
     db.prepare(
@@ -168,13 +188,13 @@ export function createExecutionStartTaskTools(deps: CreateExecutionStartTaskTool
     notifyTaskStatus(taskId, taskData.title, "in_progress", taskLang);
 
     const projPath = projectPath;
-    const worktreePath = createWorktree(projPath, taskId, execAgent.name, taskData.base_branch ?? undefined);
-    if (!worktreePath) {
+    const worktreeResult = createWorktree(projPath, taskId, execAgent.name, taskData.base_branch ?? undefined);
+    if (!worktreeResult.success) {
       const rollbackAt = nowMs();
       appendTaskLog(
         taskId,
         "error",
-        `Execution blocked: isolated worktree creation failed for project path '${projPath}'`,
+        `Execution blocked: isolated worktree creation failed for project path '${projPath}' (${worktreeResult.failureCode}: ${worktreeResult.message})`,
       );
       db.prepare("UPDATE tasks SET status = 'pending', started_at = NULL, updated_at = ? WHERE id = ?").run(
         rollbackAt,
@@ -188,27 +208,30 @@ export function createExecutionStartTaskTools(deps: CreateExecutionStartTaskTool
       broadcast("agent_status", db.prepare("SELECT * FROM agents WHERE id = ?").get(execAgent.id));
       notifyTaskStatus(taskId, taskData.title, "pending", taskLang);
       notifyCeo(
-        pickL(
-          l(
-            [
-              `[WORKTREE REQUIRED] '${taskData.title}' 실행을 차단했습니다. 격리 worktree 생성에 실패해 프로젝트 루트 오염을 방지하기 위해 중단되었습니다.`,
-            ],
-            [
-              `[WORKTREE REQUIRED] Blocked execution for '${taskData.title}'. Isolated worktree creation failed, so run was aborted to protect the project root.`,
-            ],
-            [
-              `[WORKTREE REQUIRED] '${taskData.title}' の実行を停止しました。分離 worktree 作成に失敗したため、プロジェクトルート保護のため中断しました。`,
-            ],
-            [
-              `[WORKTREE REQUIRED] 已阻止 '${taskData.title}' 的执行。由于隔离 worktree 创建失败，为保护项目根目录已中止。`,
-            ],
-          ),
-          taskLang,
-        ),
+        worktreeResult.failureCode === "git_bootstrap_disabled"
+          ? buildBootstrapDisabledCeoNotice(taskData.title, taskLang)
+          : pickL(
+              l(
+                [
+                  `[WORKTREE REQUIRED] '${taskData.title}' 실행을 차단했습니다. 격리 worktree 생성에 실패해 프로젝트 루트 오염을 방지하기 위해 중단되었습니다.`,
+                ],
+                [
+                  `[WORKTREE REQUIRED] Blocked execution for '${taskData.title}'. Isolated worktree creation failed, so run was aborted to protect the project root.`,
+                ],
+                [
+                  `[WORKTREE REQUIRED] '${taskData.title}' の実行を停止しました。分離 worktree 作成に失敗したため、プロジェクトルート保護のため中断しました。`,
+                ],
+                [
+                  `[WORKTREE REQUIRED] 已阻止 '${taskData.title}' 的执行。由于隔离 worktree 创建失败，为保护项目根目录已中止。`,
+                ],
+              ),
+              taskLang,
+            ),
         taskId,
       );
       return;
     }
+    const worktreePath = worktreeResult.worktreePath;
     const agentCwd = worktreePath;
     appendTaskLog(taskId, "system", `Git worktree created: ${worktreePath} (branch: climpire/${taskShortId})`);
     const beforeRunResult = await runTaskExecutionHooks({

@@ -3,7 +3,11 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 
 import type { Lang } from "../../../types/lang.ts";
-import { buildManagedWorktreePath, getTaskShortId } from "../../workflow/core/worktree/lifecycle.ts";
+import {
+  buildManagedWorktreePath,
+  getTaskShortId,
+  type WorktreeCreateResult,
+} from "../../workflow/core/worktree/lifecycle.ts";
 import { resolveWorkflowPackKeyForTask } from "../../workflow/packs/task-pack-resolver.ts";
 import { ensureVideoPreprodRemotionBestPracticesSkill } from "../../workflow/core/video-skill-bootstrap.ts";
 import { resolveConstrainedAgentScopeForTask } from "../core/tasks/execution-run-auto-assign.ts";
@@ -59,7 +63,7 @@ interface BatchDeps {
     description?: string | null;
     title?: string | null;
   }) => string | null;
-  createWorktree: (projectPath: string, taskId: string, agentName: string, baseBranch?: string) => string | null;
+  createWorktree: (projectPath: string, taskId: string, agentName: string, baseBranch?: string) => WorktreeCreateResult;
   logsDir: string;
   ensureTaskExecutionSession: (
     taskId: string,
@@ -504,14 +508,15 @@ export function createSubtaskDelegationBatch(deps: BatchDeps) {
             failDelegatedLaunch(new Error("missing_project_path"), "missing_project_path");
             return;
           }
-          const worktreePath = createWorktree(projPath, delegatedTaskId, execAgent.name);
-          if (!worktreePath) {
+          const worktreeResult = createWorktree(projPath, delegatedTaskId, execAgent.name);
+          if (!worktreeResult.success) {
             failDelegatedLaunch(
-              new Error(`worktree_required: isolated worktree creation failed for '${projPath}'`),
-              "worktree_required",
+              new Error(`worktree_required:${worktreeResult.failureCode}: ${worktreeResult.message}`),
+              worktreeResult.failureCode,
             );
             return;
           }
+          const worktreePath = worktreeResult.worktreePath;
           const agentCwd = worktreePath;
           const delegatedTaskShortId = getTaskShortId(delegatedTaskId);
           appendTaskLog(

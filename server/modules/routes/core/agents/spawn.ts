@@ -176,18 +176,38 @@ export function registerAgentSpawnRoute(ctx: RuntimeContext): void {
         ),
       });
     }
-    const worktreePath = createWorktree(projectPath, taskId, agent.name);
-    if (!worktreePath) {
+    const worktreeResult = createWorktree(projectPath, taskId, agent.name);
+    if (!worktreeResult.success) {
       appendTaskLog(
         taskId,
         "error",
-        `Execution blocked: isolated worktree creation failed for project path '${projectPath}'`,
+        `Execution blocked: isolated worktree creation failed for project path '${projectPath}' (${worktreeResult.failureCode}: ${worktreeResult.message})`,
       );
       return res.status(409).json({
         error: "worktree_required",
-        message: "Isolated worktree creation failed. Task execution was blocked to protect the project root.",
+        message:
+          worktreeResult.failureCode === "git_bootstrap_disabled"
+            ? pickL(
+                l(
+                  [
+                    "프로젝트 정책상 auto git bootstrap이 비활성화되어 실행을 차단했습니다. 먼저 `git init`, `git add -A`, `git commit -m \"initial commit\"`을 실행한 뒤 다시 시도하세요.",
+                  ],
+                  [
+                    "Execution was blocked because auto git bootstrap is disabled by project policy. Run `git init`, `git add -A`, and `git commit -m \"initial commit\"`, then retry.",
+                  ],
+                  [
+                    "プロジェクトポリシーにより auto git bootstrap が無効なため実行を停止しました。先に `git init`、`git add -A`、`git commit -m \"initial commit\"` を実行してから再試行してください。",
+                  ],
+                  [
+                    "由于项目策略禁用了 auto git bootstrap，执行已被阻止。请先运行 `git init`、`git add -A`、`git commit -m \"initial commit\"`，然后重试。",
+                  ],
+                ),
+                taskLang,
+              )
+            : "Isolated worktree creation failed. Task execution was blocked to protect the project root.",
       });
     }
+    const worktreePath = worktreeResult.worktreePath;
     const agentCwd = worktreePath;
     appendTaskLog(taskId, "system", `Git worktree created: ${worktreePath} (branch: climpire/${taskShortId})`);
     if (provider === "claude") {

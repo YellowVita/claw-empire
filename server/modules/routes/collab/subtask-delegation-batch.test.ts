@@ -272,7 +272,12 @@ describe("createSubtaskDelegationBatch", () => {
       appendTaskLog,
       recordTaskCreationAudit: vi.fn(),
       resolveProjectPath: () => "C:/workspace/project",
-      createWorktree: () => "C:/workspace/project/.climpire-worktrees/task-2",
+      createWorktree: () => ({
+        success: true,
+        worktreePath: "C:/workspace/project/.climpire-worktrees/task-2",
+        branchName: "climpire/task2",
+        projectPath: "C:/workspace/project",
+      }),
       logsDir: "C:/logs",
       ensureTaskExecutionSession: () => ({ sessionId: "s1", agentId: "qa-worker", provider: "codex" }),
       ensureClaudeMd: vi.fn(),

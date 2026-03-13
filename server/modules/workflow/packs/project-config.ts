@@ -21,6 +21,9 @@ export type ProjectDevelopmentPrFeedbackGatePolicy = {
   ignoredCheckNames: string[];
   ignoredCheckPrefixes: string[];
 };
+export type ProjectGitBootstrapPolicy = {
+  allowAutoGitBootstrap: boolean;
+};
 
 export type ProjectWorkflowConfig = {
   path: string;
@@ -142,6 +145,12 @@ function mergeProjectWorkflowRaw(
       continue;
     }
     if (key === "developmentPrFeedbackGate") {
+      const basePolicy = asObject(merged[key]);
+      const overridePolicy = asObject(value);
+      merged[key] = overridePolicy && basePolicy ? { ...basePolicy, ...overridePolicy } : overridePolicy ?? value;
+      continue;
+    }
+    if (key === "gitBootstrap") {
       const basePolicy = asObject(merged[key]);
       const overridePolicy = asObject(value);
       merged[key] = overridePolicy && basePolicy ? { ...basePolicy, ...overridePolicy } : overridePolicy ?? value;
@@ -933,5 +942,76 @@ export function readProjectDevelopmentPrFeedbackGatePolicyCached(
     configSources: [...config.sources],
     cacheApplied: config.cacheApplied,
     cacheUpdatedAt: config.cacheUpdatedAt,
+  };
+}
+
+export function readProjectGitBootstrapPolicy(projectPath: string): {
+  policy: ProjectGitBootstrapPolicy;
+  warnings: string[];
+  configSources: ProjectWorkflowConfigSource[];
+  valid: boolean;
+} {
+  const defaultPolicy: ProjectGitBootstrapPolicy = {
+    allowAutoGitBootstrap: false,
+  };
+  const config = readProjectWorkflowConfig(projectPath);
+  if (!config) {
+    return {
+      policy: defaultPolicy,
+      warnings: [],
+      configSources: [],
+      valid: true,
+    };
+  }
+
+  if (!config.raw) {
+    return {
+      policy: defaultPolicy,
+      warnings: [...config.warnings],
+      configSources: [...config.sources],
+      valid: false,
+    };
+  }
+
+  const warnings = [...config.warnings];
+  const sourceLabel = describeProjectWorkflowConfigSource(config);
+  const rawPolicy = config.raw.gitBootstrap;
+  if (rawPolicy === undefined) {
+    return {
+      policy: defaultPolicy,
+      warnings,
+      configSources: [...config.sources],
+      valid: true,
+    };
+  }
+  if (!isPlainObject(rawPolicy)) {
+    warnings.push(`${sourceLabel} invalid gitBootstrap object, ignoring`);
+    return {
+      policy: defaultPolicy,
+      warnings,
+      configSources: [...config.sources],
+      valid: false,
+    };
+  }
+
+  let valid = true;
+  const allowAutoGitBootstrap =
+    rawPolicy.allowAutoGitBootstrap === undefined
+      ? false
+      : typeof rawPolicy.allowAutoGitBootstrap === "boolean"
+        ? rawPolicy.allowAutoGitBootstrap
+        : (() => {
+            valid = false;
+            warnings.push(`${sourceLabel} invalid gitBootstrap.allowAutoGitBootstrap, ignoring`);
+            return false;
+          })();
+
+  return {
+    policy: {
+      allowAutoGitBootstrap,
+    },
+    warnings,
+    configSources: [...config.sources],
+    valid,
   };
 }

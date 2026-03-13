@@ -280,6 +280,23 @@ GitHub PR feedback sweep 결과를 project 단위로 요약한 값이다.
 - review finalize 로직
 - run sheet / handoff 갱신 로직
 - PR gate policy
+- git bootstrap policy
+
+프로젝트가 non-git 상태인데 worktree 실행이 필요하면 아래처럼 명시적으로 opt-in 한다.
+
+```yaml
+# WORKFLOW.md front matter
+gitBootstrap:
+  allowAutoGitBootstrap: true
+```
+
+```json
+{
+  "gitBootstrap": {
+    "allowAutoGitBootstrap": true
+  }
+}
+```
 
 확인 포인트:
 

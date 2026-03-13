@@ -63,8 +63,8 @@ describe("worktree lifecycle branch collision handling", () => {
       taskWorktrees,
     });
 
-    const worktreePath = tools.createWorktree(repo, taskId, "Tester");
-    expect(worktreePath).toBeTruthy();
+    const result = tools.createWorktree(repo, taskId, "Tester");
+    expect(result.success).toBe(true);
     const info = taskWorktrees.get(taskId);
     expect(info?.branchName).toBe(`climpire/${shortId}`);
     expect(fs.existsSync(String(info?.worktreePath || ""))).toBe(true);
@@ -88,8 +88,8 @@ describe("worktree lifecycle branch collision handling", () => {
       taskWorktrees,
     });
 
-    const worktreePath = tools.createWorktree(repo, taskId, "Tester");
-    expect(worktreePath).toBeTruthy();
+    const result = tools.createWorktree(repo, taskId, "Tester");
+    expect(result.success).toBe(true);
     const info = taskWorktrees.get(taskId);
     expect(info?.branchName.startsWith(baseBranch)).toBe(true);
     expect(info?.branchName).not.toBe(baseBranch);
@@ -115,7 +115,7 @@ describe("worktree lifecycle path guard hardening", () => {
       taskWorktrees,
     });
 
-    expect(tools.createWorktree(repo, taskId, "Tester")).toBeNull();
+    expect(tools.createWorktree(repo, taskId, "Tester")).toMatchObject({ success: false });
     expect(taskWorktrees.has(taskId)).toBe(false);
   });
 
@@ -134,7 +134,7 @@ describe("worktree lifecycle path guard hardening", () => {
       taskWorktrees,
     });
 
-    expect(tools.createWorktree(linkedRepo, taskId, "Tester")).toBeNull();
+    expect(tools.createWorktree(linkedRepo, taskId, "Tester")).toMatchObject({ success: false });
     expect(taskWorktrees.has(taskId)).toBe(false);
   });
 
@@ -226,11 +226,11 @@ describe("worktree lifecycle path guard hardening", () => {
     });
 
     process.chdir(harness);
-    const worktreePath = tools.createWorktree(repo, taskId, "Tester");
+    const result = tools.createWorktree(repo, taskId, "Tester");
     process.chdir(originalCwd);
 
-    expect(worktreePath).toBeTruthy();
-    const propagatedPath = path.join(String(worktreePath), ".claude", "skills");
+    expect(result.success).toBe(true);
+    const propagatedPath = path.join(String(result.success ? result.worktreePath : ""), ".claude", "skills");
     expect(fs.existsSync(propagatedPath)).toBe(true);
     expect(fs.lstatSync(propagatedPath).isSymbolicLink()).toBe(true);
 
@@ -264,10 +264,58 @@ describe("worktree lifecycle path guard hardening", () => {
       taskWorktrees,
     });
 
-    const worktreePath = tools.createWorktree(repo, taskId, "Tester");
-    expect(worktreePath).toBeTruthy();
+    const result = tools.createWorktree(repo, taskId, "Tester");
+    expect(result.success).toBe(true);
     expect(taskWorktrees.get(taskId)?.branchName).toBe(`climpire/${getTaskShortId(taskId)}`);
 
     tools.cleanupWorktree(repo, taskId);
+  });
+
+  it("non-git 프로젝트는 정책 opt-in 없으면 bootstrap 없이 차단한다", () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "climpire-wt-no-bootstrap-"));
+    tempDirs.push(projectDir);
+    const logs: string[] = [];
+    const taskId = "nogit001-0000-0000-0000-000000000000";
+    const tools = createWorktreeLifecycleTools({
+      appendTaskLog: (_taskId, _kind, message) => logs.push(message),
+      taskWorktrees: new Map(),
+    });
+
+    const result = tools.createWorktree(projectDir, taskId, "Tester");
+
+    expect(result).toMatchObject({
+      success: false,
+      failureCode: "git_bootstrap_disabled",
+      manualSetupCommands: ['git init', 'git add -A', 'git commit -m "initial commit"'],
+    });
+    expect(fs.existsSync(path.join(projectDir, ".git"))).toBe(false);
+    expect(logs.some((entry) => entry.includes("Auto git bootstrap is disabled by project policy"))).toBe(true);
+  });
+
+  it("non-git 프로젝트도 gitBootstrap opt-in이 있으면 bootstrap 후 worktree를 만든다", () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "climpire-wt-bootstrap-optin-"));
+    const taskId = "optin001-0000-0000-0000-000000000000";
+    tempDirs.push(projectDir);
+    fs.writeFileSync(
+      path.join(projectDir, "WORKFLOW.md"),
+      `---
+gitBootstrap:
+  allowAutoGitBootstrap: true
+---
+`,
+      "utf8",
+    );
+    fs.writeFileSync(path.join(projectDir, "README.md"), "bootstrap me\n", "utf8");
+    const tools = createWorktreeLifecycleTools({
+      appendTaskLog: () => {},
+      taskWorktrees: new Map(),
+    });
+
+    const result = tools.createWorktree(projectDir, taskId, "Tester");
+
+    expect(result.success).toBe(true);
+    expect(fs.existsSync(path.join(projectDir, ".git"))).toBe(true);
+    runGit(projectDir, ["rev-parse", "HEAD"]);
+    tools.cleanupWorktree(projectDir, taskId);
   });
 });

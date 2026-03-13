@@ -122,7 +122,12 @@ function createHarness(options?: {
     agentId: agent.id,
     provider: "claude",
   }));
-  const createWorktree = vi.fn(() => null);
+  const createWorktree = vi.fn(() => ({
+    success: false as const,
+    failureCode: "worktree_add_failed" as const,
+    message: "simulated failure",
+    projectPath: options?.projectPath ?? task.project_path,
+  }));
   const projectPath = options?.projectPath ?? null;
 
   const db = {
@@ -297,6 +302,33 @@ describe("registerTaskRunRoute", () => {
     expect(res.payload).toMatchObject({ error: "conflicting_project_path_sources" });
     expect(harness.ensureTaskExecutionSession).not.toHaveBeenCalled();
     expect(harness.createWorktree).not.toHaveBeenCalled();
+  });
+
+  it("git bootstrap disabled면 수동 git 초기화 안내를 반환한다", () => {
+    resetPathEnv();
+    const projectDir = createTempDir("claw-run-bootstrap-policy-");
+    const harness = createHarness({ taskOverrides: { project_path: projectDir } });
+    harness.createWorktree.mockReturnValue({
+      success: false,
+      failureCode: "git_bootstrap_disabled",
+      message: "auto bootstrap disabled",
+      projectPath: projectDir,
+      manualSetupCommands: ['git init', 'git add -A', 'git commit -m "initial commit"'],
+    });
+    const res = createFakeResponse();
+
+    harness.handler?.({ params: { id: "task-1" }, body: {} }, res);
+
+    expect(res.statusCode).toBe(409);
+    expect(res.payload).toMatchObject({
+      error: "worktree_required",
+      message: expect.stringContaining("git init"),
+    });
+    expect(harness.appendTaskLog).toHaveBeenCalledWith(
+      "task-1",
+      "error",
+      expect.stringContaining("git_bootstrap_disabled"),
+    );
   });
 
   it("rejects a runtime realpath that escapes allowed roots via symlink", () => {
