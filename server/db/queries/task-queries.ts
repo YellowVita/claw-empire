@@ -125,7 +125,22 @@ export function listPendingDelegationParentTaskIds(db: DatabaseSync): string[] {
         )
         OR (
           COALESCE(t.orchestration_version, 1) >= 2
-          AND t.orchestration_stage IN ('owner_integrate', 'finalize', 'foreign_collab')
+          AND (
+            t.orchestration_stage IN ('owner_integrate', 'finalize', 'foreign_collab')
+            OR (
+              t.orchestration_stage = 'review'
+              AND EXISTS (
+                SELECT 1
+                FROM subtasks s2
+                WHERE s2.task_id = t.id
+                  AND s2.status NOT IN ('done', 'cancelled')
+                  AND (
+                    s2.target_department_id IS NOT NULL
+                    OR s2.orchestration_phase IN ('foreign_collab', 'owner_integrate', 'finalize')
+                  )
+              )
+            )
+          )
         )
       )
     ORDER BY t.updated_at ASC

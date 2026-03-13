@@ -241,6 +241,42 @@ describe("initializeSubtaskDelegation V2", () => {
     }
   });
 
+  it("review 단계에서 foreign_collab가 끝나고 owner_integrate만 남으면 owner integration을 재개한다", () => {
+    const db = setupDb();
+    try {
+      insertTask(db, {
+        id: "task-review-owner-integrate",
+        status: "review",
+        orchestration_version: 2,
+        orchestration_stage: "review",
+      });
+      insertSubtask(db, {
+        id: "review-owner-integrate",
+        task_id: "task-review-owner-integrate",
+        title: "[검토보완] 반영 결과 통합 및 재검토 제출",
+        status: "pending",
+        created_at: 1,
+        orchestration_phase: "owner_integrate",
+      });
+
+      const { tools, startTaskExecutionForAgent } = createDelegationTools(db);
+      tools.processSubtaskDelegations("task-review-owner-integrate");
+
+      const task = db.prepare("SELECT status, orchestration_stage FROM tasks WHERE id = ?").get("task-review-owner-integrate") as {
+        status: string;
+        orchestration_stage: string | null;
+      };
+      expect(task).toEqual({
+        status: "planned",
+        orchestration_stage: "owner_integrate",
+      });
+      expect(delegateSubtaskBatch).not.toHaveBeenCalled();
+      expect(startTaskExecutionForAgent).toHaveBeenCalledTimes(1);
+    } finally {
+      db.close();
+    }
+  });
+
   it("legacy development root task는 owner_prep blocker가 남아 있으면 owner_prep으로만 승격한다", () => {
     const db = setupDb();
     try {

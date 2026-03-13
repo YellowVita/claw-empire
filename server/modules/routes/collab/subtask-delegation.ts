@@ -599,7 +599,22 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
 
     if (relevantForeignSubtasks.length === 0) {
       clearDelegationRetry(taskId);
-      if (isV2 && orchestrationStage === "foreign_collab") {
+      const ownerIntegrateRemaining = isV2
+        ? (
+            db
+              .prepare(
+                `
+                  SELECT COUNT(*) AS cnt
+                  FROM subtasks
+                  WHERE task_id = ?
+                    AND status NOT IN ('done', 'cancelled')
+                    AND (orchestration_phase = 'owner_integrate' OR (orchestration_phase IS NULL AND target_department_id IS NULL))
+                `,
+              )
+              .get(taskId) as { cnt: number }
+          ).cnt
+        : 0;
+      if (isV2 && (orchestrationStage === "foreign_collab" || orchestrationStage === "review") && ownerIntegrateRemaining > 0) {
         updateTaskOrchestrationStage(taskId, "owner_integrate", "collaborating");
         resumeOwnerIntegrationTask(taskId);
       }
@@ -841,8 +856,8 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
       );
       const finalizeOpen = allOpenSubtasks.filter((subtask) => inferOrchestrationPhaseFromSubtask(subtask) === "finalize");
 
-      if (orchestrationStage === "foreign_collab") {
-        if (foreignOpen.length === 0) {
+      if (orchestrationStage === "foreign_collab" || orchestrationStage === "review") {
+        if (foreignOpen.length === 0 && ownerIntegrateOpen.length > 0) {
           updateTaskOrchestrationStage(parentTaskId, "owner_integrate", "collaborating");
           resumeOwnerIntegrationTask(parentTaskId);
         }

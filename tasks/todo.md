@@ -198,3 +198,27 @@
 - 검증
   - `pnpm exec vitest --config server/vitest.config.ts run server/modules/routes/core/tasks/crud.workflow-pack-filter.test.ts server/modules/routes/collab/direct-chat-task-flow.pack-inference.test.ts server/modules/routes/collab/subtask-delegation.v2.test.ts server/modules/routes/collab/task-delegation.skip-v2.test.ts` 통과
   - `pnpm run typecheck` 통과
+
+# Owner Integrate Stall Investigation
+
+- [x] `owner_integrate` 서브태스크 생성부터 실행 트리거까지의 코드 경로 확인
+- [x] 현재 멈춘 루트 태스크 `490b8eda-753b-47d5-a307-7d4cda5c4657`의 재개 가능 경로 확인
+- [x] 재발 원인 수정 또는 운영상 우회 조치 적용
+- [x] 회귀 테스트와 실제 DB/상태 조회로 검증
+
+## Review Results
+
+- 원인 1: V2 루트 태스크가 `review` 상태에서 `owner_integrate` 서브태스크를 기다릴 때, `processSubtaskDelegations()`가 `foreign_collab -> owner_integrate` 전환만 처리하고 `review -> owner_integrate` 복귀를 처리하지 못함
+- 원인 2: `listPendingDelegationParentTaskIds()`가 `review` 단계의 V2 루트 태스크를 sweep 대상으로 포함하지 않아, 서버 재시작/주기 sweep으로도 정지 상태를 복구하지 못함
+- 수정:
+  - `server/modules/routes/collab/subtask-delegation.ts`
+    - `review` 단계에서 foreign 협업이 끝나고 `owner_integrate`만 남은 경우 `owner_integrate`로 승격 후 owner 실행 재개
+    - 즉시 완료 감지 경로(`maybeNotifyAllSubtasksComplete`)도 동일 규칙 반영
+  - `server/db/queries/task-queries.ts`
+    - `review` 상태이면서 `foreign_collab`/`owner_integrate`/`finalize` 성격의 미완료 서브태스크가 남은 V2 루트 태스크를 delegation sweep 대상에 포함
+  - 테스트 추가:
+    - `server/db/queries/task-queries.test.ts`
+    - `server/modules/routes/collab/subtask-delegation.v2.test.ts`
+- 검증:
+  - `pnpm exec vitest --config server/vitest.config.ts run server/db/queries/task-queries.test.ts server/modules/routes/collab/subtask-delegation.v2.test.ts` 통과
+  - 실제 실행 중 서버(nodemon)가 패치 후 재시작되며 stalled task `490b8eda-753b-47d5-a307-7d4cda5c4657`가 `in_progress / owner_integrate`로 자동 복귀
