@@ -12,6 +12,8 @@ export type TaskRunSheetStage =
   | "in_progress"
   | "review_ready"
   | "ready_for_parent_ingest"
+  | "merge_conflict_resolution"
+  | "integration_repair"
   | "human_review"
   | "merging"
   | "done"
@@ -688,6 +690,8 @@ export function buildTaskRunSheetSnapshot(db: DbLike, params: {
         reviewEnteredAt != null ||
         params.stage === "review_ready" ||
         params.stage === "ready_for_parent_ingest" ||
+        params.stage === "merge_conflict_resolution" ||
+        params.stage === "integration_repair" ||
         params.stage === "human_review" ||
         params.stage === "merging" ||
         params.stage === "done",

@@ -21,6 +21,7 @@ import { computeTaskQualitySummary, loadTaskQualityItems } from "../../routes/co
 import {
   computeRetryDelayMs,
   deleteTaskRetryQueueRow,
+  getMaxAutoRetriesForReason,
   readTaskExecutionPolicy,
   readTaskRetryQueueRow,
   runTaskExecutionHooks,
@@ -30,6 +31,7 @@ import {
 } from "./task-execution-policy.ts";
 import { recordTaskExecutionEvent } from "./task-execution-events.ts";
 import { upsertTaskRunSheet } from "./task-run-sheets.ts";
+import { clearIntegrationRepairContext, readIntegrationRepairContext, writeIntegrationRepairContext } from "./integration-repair-context.ts";
 
 type CreateRunCompleteHandlerDeps = Record<string, any>;
 
@@ -84,6 +86,10 @@ export function createRunCompleteHandler(deps: CreateRunCompleteHandlerDeps) {
     return null;
   }
 
+  function shouldPreserveWorktreeForRetry(reason: TaskRetryReason): boolean {
+    return reason === "integration_validation_failed";
+  }
+
   function scheduleAutomaticRetry(task: {
     id: string;
     title: string;
@@ -94,13 +100,14 @@ export function createRunCompleteHandler(deps: CreateRunCompleteHandlerDeps) {
 
     const existingRow = readTaskRetryQueueRow(db as any, task.id);
     const attemptCount = (existingRow?.attempt_count ?? 0) + 1;
+    const maxRetries = getMaxAutoRetriesForReason(policy, reason);
     const lang = resolveLang(task.description ?? task.title);
 
-    if (attemptCount > policy.max_auto_retries) {
+    if (attemptCount > maxRetries) {
       deleteTaskRetryQueueRow(db as any, task.id);
       const exhaustedAt = nowMs();
       db.prepare("UPDATE tasks SET status = 'inbox', updated_at = ? WHERE id = ?").run(exhaustedAt, task.id);
-      const exhaustedMessage = `Automatic retry exhausted (${reason}, max=${policy.max_auto_retries}) -> inbox`;
+      const exhaustedMessage = `Automatic retry exhausted (${reason}, max=${maxRetries}) -> inbox`;
       appendTaskLog(task.id, "system", exhaustedMessage);
       recordTaskExecutionEvent(db as any, {
         taskId: task.id,
@@ -109,7 +116,7 @@ export function createRunCompleteHandler(deps: CreateRunCompleteHandlerDeps) {
         status: "warning",
         message: exhaustedMessage,
         attemptCount,
-        details: { reason, max_auto_retries: policy.max_auto_retries },
+        details: { reason, max_auto_retries: maxRetries },
         createdAt: exhaustedAt,
       });
       notifyTaskStatus(task.id, task.title, "inbox", lang);
@@ -770,6 +777,7 @@ export function createRunCompleteHandler(deps: CreateRunCompleteHandlerDeps) {
 
     if (finalExitCode === 0) {
       // ── SUCCESS: Move to 'review' for team leader check ──
+      clearIntegrationRepairContext(db as any, taskId, t);
       db.prepare("UPDATE tasks SET status = 'review', updated_at = ? WHERE id = ?").run(t, taskId);
 
       appendTaskLog(taskId, "system", "Status → review (team leader review pending)");
@@ -960,7 +968,8 @@ export function createRunCompleteHandler(deps: CreateRunCompleteHandlerDeps) {
         }, 2500);
       }, 2500);
     } else {
-      if (task && !task.source_task_id) {
+      const integrationRepairContext = task ? readIntegrationRepairContext(db as any, taskId) : null;
+      if (task && !task.source_task_id && !integrationRepairContext) {
         const childRows = db
           .prepare("SELECT id FROM tasks WHERE source_task_id = ?")
           .all(taskId) as Array<{ id: string }>;
@@ -972,19 +981,44 @@ export function createRunCompleteHandler(deps: CreateRunCompleteHandlerDeps) {
           });
         }
       }
-      const retryReason = detectRetryReason(result);
+      let retryReason = detectRetryReason(result);
+      if (!retryReason && integrationRepairContext) {
+        retryReason = "integration_validation_failed";
+        writeIntegrationRepairContext(db as any, {
+          taskId,
+          mode: "integration_repair",
+          childTaskId: integrationRepairContext.child_task_id,
+          childTitle: integrationRepairContext.child_title,
+          childBranchName: integrationRepairContext.child_branch_name,
+          parentHeadSha: integrationRepairContext.parent_head_sha,
+          childHeadSha: integrationRepairContext.child_head_sha,
+          conflicts: integrationRepairContext.conflicts,
+          lastError:
+            result && result.trim()
+              ? result.slice(-800)
+              : `run_exit_${finalExitCode}`,
+          updatedAt: t,
+        });
+      }
       if (task && retryReason) {
         const retryOutcome = scheduleAutomaticRetry({ id: taskId, title: task.title, description: task.description }, retryReason);
         if (retryOutcome === "scheduled" || retryOutcome === "exhausted") {
           upsertTaskRunSheet(db as any, {
             taskId,
-            stage: retryOutcome === "scheduled" ? "in_progress" : "rework",
+            stage:
+              retryReason === "integration_validation_failed"
+                ? retryOutcome === "scheduled"
+                  ? "integration_repair"
+                  : "human_review"
+                : retryOutcome === "scheduled"
+                  ? "in_progress"
+                  : "rework",
             updatedAt: nowMs(),
           });
           const updatedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId);
           broadcast("task_update", updatedTask);
           const failWtInfo = taskWorktrees.get(taskId);
-          if (failWtInfo) {
+          if (failWtInfo && !shouldPreserveWorktreeForRetry(retryReason)) {
             cleanupWorktree(failWtInfo.projectPath, taskId);
             appendTaskLog(taskId, "system", "Worktree cleaned up after retry scheduling");
           }
@@ -1014,6 +1048,7 @@ export function createRunCompleteHandler(deps: CreateRunCompleteHandlerDeps) {
         cleanupWorktree(failWtInfo.projectPath, taskId);
         appendTaskLog(taskId, "system", "Worktree cleaned up (task failed)");
       }
+      clearIntegrationRepairContext(db as any, taskId, t);
 
       if (task) {
         const leader = resolveScopedTeamLeader({

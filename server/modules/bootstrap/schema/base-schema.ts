@@ -215,7 +215,7 @@ CREATE TABLE IF NOT EXISTS task_artifacts (
 CREATE TABLE IF NOT EXISTS task_run_sheets (
   task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
   workflow_pack_key TEXT NOT NULL,
-  stage TEXT NOT NULL CHECK(stage IN ('queued','in_progress','review_ready','human_review','merging','done','rework')),
+  stage TEXT NOT NULL CHECK(stage IN ('queued','in_progress','review_ready','ready_for_parent_ingest','merge_conflict_resolution','integration_repair','human_review','merging','done','rework')),
   status TEXT NOT NULL,
   summary_markdown TEXT NOT NULL,
   snapshot_json TEXT NOT NULL,

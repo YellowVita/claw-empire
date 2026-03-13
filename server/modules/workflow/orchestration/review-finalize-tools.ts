@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import {
   discoverVideoArtifact,
   resolveVideoArtifactRelativeCandidates,
@@ -18,13 +19,29 @@ import {
   type TaskGithubPrGateSnapshot,
 } from "./github-pr-feedback-gate.ts";
 import { recordTaskArtifact, recordTaskQualityRun } from "./task-quality-evidence.ts";
+import { autoCommitWorktreePendingChanges } from "../core/worktree/shared.ts";
 import { upsertTaskRunSheet } from "./task-run-sheets.ts";
 import { upsertDevelopmentReviewAuditMetadata } from "./development-handoff.ts";
 import {
   listPendingParentIngestionChildren,
+  markCollabBranchArtifactConflictPending,
   markCollabBranchArtifactIngested,
   readCollabBranchArtifactMetadata,
 } from "./collab-branch-artifacts.ts";
+import {
+  clearIntegrationRepairContext,
+  readIntegrationRepairContext,
+  writeIntegrationRepairContext,
+} from "./integration-repair-context.ts";
+import { recoverTaskWorktreeInfo } from "../core/worktree/worktree-registry.ts";
+import {
+  computeRetryDelayMs,
+  getMaxAutoRetriesForReason,
+  readTaskExecutionPolicy,
+  readTaskRetryQueueRow,
+  shouldRetryForReason,
+  upsertTaskRetryQueueRow,
+} from "./task-execution-policy.ts";
 
 type CreateReviewFinalizeToolsDeps = Record<string, any>;
 
@@ -72,6 +89,18 @@ export function createReviewFinalizeTools(deps: CreateReviewFinalizeToolsDeps) {
       ? ingestChildBranchIntoParent
       : () => ({ success: false, message: "child ingestion helper unavailable" });
 
+  function recoverReviewWorktrees(taskId: string, projectPath: string | null): void {
+    recoverTaskWorktreeInfo(db as any, taskId, taskWorktrees, {
+      projectPath,
+    });
+    const pendingChildren = listPendingParentIngestionChildren(db as any, taskId);
+    for (const child of pendingChildren) {
+      recoverTaskWorktreeInfo(db as any, child.id, taskWorktrees, {
+        projectPath,
+      });
+    }
+  }
+
   function recordGithubPrGateSnapshot(taskId: string, gateSnapshot: TaskGithubPrGateSnapshot, t: number): string {
     const gateSummary = summarizeTaskGithubPrGateSnapshot(gateSnapshot);
     recordTaskQualityRun(db as any, {
@@ -92,6 +121,65 @@ export function createReviewFinalizeTools(deps: CreateReviewFinalizeToolsDeps) {
     });
     appendTaskLog(taskId, "system", gateSummary);
     return gateSummary;
+  }
+
+  function readTaskRunSheetStage(taskId: string): string | null {
+    try {
+      const row = db.prepare("SELECT stage FROM task_run_sheets WHERE task_id = ?").get(taskId) as
+        | { stage?: string | null }
+        | undefined;
+      return typeof row?.stage === "string" && row.stage.trim() ? row.stage.trim() : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function queueIntegrationRetry(taskId: string, taskTitle: string, taskDescription: string | null, reasonMessage: string): void {
+    const policy = readTaskExecutionPolicy(db as any);
+    if (!shouldRetryForReason(policy, "integration_validation_failed")) return;
+    const existingRow = readTaskRetryQueueRow(db as any, taskId);
+    const attemptCount = (existingRow?.attempt_count ?? 0) + 1;
+    const maxRetries = getMaxAutoRetriesForReason(policy, "integration_validation_failed");
+    const t = nowMs();
+    const lang = resolveLang(taskDescription ?? taskTitle);
+    if (attemptCount > maxRetries) {
+      appendTaskLog(
+        taskId,
+        "system",
+        `Integration retry exhausted (integration_validation_failed, max=${maxRetries})`,
+      );
+      db.prepare("UPDATE tasks SET status = 'review', updated_at = ? WHERE id = ?").run(t, taskId);
+      upsertTaskRunSheet(db as any, {
+        taskId,
+        stage: "human_review",
+        updatedAt: t,
+      });
+      notifyTaskStatus(taskId, taskTitle, "review", lang);
+      return;
+    }
+
+    const delayMs = computeRetryDelayMs(policy, attemptCount);
+    upsertTaskRetryQueueRow(db as any, {
+      task_id: taskId,
+      attempt_count: attemptCount,
+      next_run_at: t + delayMs,
+      last_reason: "integration_validation_failed",
+      created_at: existingRow?.created_at ?? t,
+      updated_at: t,
+    });
+    db.prepare("UPDATE tasks SET status = 'pending', updated_at = ? WHERE id = ?").run(t, taskId);
+    appendTaskLog(
+      taskId,
+      "system",
+      `Automatic retry scheduled (integration_validation_failed, attempt=${attemptCount}, delay_ms=${delayMs})`,
+    );
+    appendTaskLog(taskId, "system", reasonMessage);
+    upsertTaskRunSheet(db as any, {
+      taskId,
+      stage: "integration_repair",
+      updatedAt: t,
+    });
+    notifyTaskStatus(taskId, taskTitle, "pending", lang);
   }
 
   function reconcileDelegatedSubtasksAfterRun(taskId: string, exitCode: number): void {
@@ -192,6 +280,15 @@ export function createReviewFinalizeTools(deps: CreateReviewFinalizeToolsDeps) {
         }
       | undefined;
     if (!currentTask || currentTask.status !== "review") return; // Already moved or cancelled
+    const currentRunSheetStage = readTaskRunSheetStage(taskId);
+    if (currentRunSheetStage === "merge_conflict_resolution" || currentRunSheetStage === "integration_repair") {
+      appendTaskLog(
+        taskId,
+        "system",
+        `Review hold: task is still in ${currentRunSheetStage} and cannot re-enter project-level review yet`,
+      );
+      return;
+    }
     upsertTaskRunSheet(db as any, {
       taskId,
       stage: "human_review",
@@ -705,11 +802,156 @@ export function createReviewFinalizeTools(deps: CreateReviewFinalizeToolsDeps) {
             return;
           }
         } else {
+          recoverReviewWorktrees(taskId, latestTask.project_path ?? null);
+          const parentWtInfo = taskWorktrees.get(taskId);
+          const integrationContext = readIntegrationRepairContext(db as any, taskId);
+          if (integrationContext?.child_task_id && parentWtInfo) {
+            const childArtifact = readCollabBranchArtifactMetadata(db as any, integrationContext.child_task_id);
+            if (childArtifact?.ingestion_state === "conflict_pending_resolution") {
+              const unresolved = execFileSync("git", ["diff", "--name-only", "--diff-filter=U"], {
+                cwd: parentWtInfo.worktreePath,
+                stdio: "pipe",
+                timeout: 5000,
+              })
+                .toString()
+                .trim();
+              if (unresolved) {
+                queueIntegrationRetry(
+                  taskId,
+                  taskTitle,
+                  null,
+                  "Integration retry requested: unresolved merge markers still remain in the parent worktree.",
+                );
+                reviewRoundState.delete(taskId);
+                reviewInFlight.delete(taskId);
+                broadcast("task_update", db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId));
+                return;
+              }
+
+              const finalizeCommit = autoCommitWorktreePendingChanges(taskId, parentWtInfo, appendTaskLog);
+              if (finalizeCommit.error || !finalizeCommit.commitSha) {
+                queueIntegrationRetry(
+                  taskId,
+                  taskTitle,
+                  null,
+                  `Integration retry requested: failed to capture resolved parent ingestion changes (${finalizeCommit.error ?? "missing_commit_sha"}).`,
+                );
+                reviewRoundState.delete(taskId);
+                reviewInFlight.delete(taskId);
+                broadcast("task_update", db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId));
+                return;
+              }
+
+              markCollabBranchArtifactIngested(db as any, {
+                taskId: integrationContext.child_task_id,
+                parentTaskId: taskId,
+                ingestedCommitSha: finalizeCommit.commitSha,
+                updatedAt: t,
+              });
+              db.prepare("UPDATE tasks SET status = 'done', completed_at = ?, updated_at = ? WHERE id = ?").run(
+                t,
+                t,
+                integrationContext.child_task_id,
+              );
+              upsertTaskRunSheet(db as any, {
+                taskId: integrationContext.child_task_id,
+                stage: "done",
+                updatedAt: t,
+              });
+              const childInfo =
+                taskWorktrees.get(integrationContext.child_task_id) ??
+                (recoverTaskWorktreeInfo(db as any, integrationContext.child_task_id, taskWorktrees, {
+                  projectPath: parentWtInfo.projectPath,
+                }).ok
+                  ? taskWorktrees.get(integrationContext.child_task_id)
+                  : undefined);
+              if (childInfo) {
+                cleanupWorktree(childInfo.projectPath, integrationContext.child_task_id);
+                appendTaskLog(integrationContext.child_task_id, "system", "Worktree cleaned up after parent conflict resolution");
+              }
+              clearIntegrationRepairContext(db as any, taskId, t);
+              appendTaskLog(
+                taskId,
+                "system",
+                `Child branch conflict resolved and ingested: ${integrationContext.child_title ?? integrationContext.child_task_id}`,
+              );
+              broadcast("task_update", db.prepare("SELECT * FROM tasks WHERE id = ?").get(integrationContext.child_task_id));
+            }
+          }
+
           const pendingChildren = listPendingParentIngestionChildren(db as any, taskId);
           for (const child of pendingChildren) {
+            const childArtifact = readCollabBranchArtifactMetadata(db as any, child.id);
+            if (childArtifact?.ingestion_state === "conflict_pending_resolution") {
+              continue;
+            }
             const ingestResult = ingestChildBranchIntoParentSafe(taskId, child.id);
             if (!ingestResult.success) {
               appendTaskLog(taskId, "system", `Child branch ingestion failed: ${ingestResult.message}`);
+              if (ingestResult.conflicts?.length && ingestResult.needsAiResolution) {
+                const policy = readTaskExecutionPolicy(db as any);
+                if (!shouldRetryForReason(policy, "integration_validation_failed")) {
+                  upsertTaskRunSheet(db as any, {
+                    taskId,
+                    stage: "human_review",
+                    updatedAt: t,
+                  });
+                  reviewRoundState.delete(taskId);
+                  reviewInFlight.delete(taskId);
+                  broadcast("task_update", db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId));
+                  return;
+                }
+                const existingRow = readTaskRetryQueueRow(db as any, taskId);
+                const attemptCount = (existingRow?.attempt_count ?? 0) + 1;
+                const maxRetries = getMaxAutoRetriesForReason(policy, "integration_validation_failed");
+                if (attemptCount > maxRetries) {
+                  upsertTaskRunSheet(db as any, {
+                    taskId,
+                    stage: "human_review",
+                    updatedAt: t,
+                  });
+                  reviewRoundState.delete(taskId);
+                  reviewInFlight.delete(taskId);
+                  broadcast("task_update", db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId));
+                  return;
+                }
+                writeIntegrationRepairContext(db as any, {
+                  taskId,
+                  mode: "merge_conflict_resolution",
+                  childTaskId: child.id,
+                  childTitle: child.title,
+                  childBranchName: readCollabBranchArtifactMetadata(db as any, child.id)?.branch_name ?? null,
+                  parentHeadSha: ingestResult.parentHeadSha ?? null,
+                  childHeadSha: ingestResult.childHeadSha ?? null,
+                  conflicts: ingestResult.conflicts,
+                  lastError: ingestResult.message,
+                  updatedAt: t,
+                });
+                markCollabBranchArtifactConflictPending(db as any, {
+                  taskId: child.id,
+                  updatedAt: t,
+                });
+                db.prepare("UPDATE tasks SET status = 'pending', updated_at = ? WHERE id = ?").run(t, taskId);
+                const delayMs = computeRetryDelayMs(policy, attemptCount);
+                upsertTaskRetryQueueRow(db as any, {
+                  task_id: taskId,
+                  attempt_count: attemptCount,
+                  next_run_at: t + delayMs,
+                  last_reason: "integration_validation_failed",
+                  created_at: existingRow?.created_at ?? t,
+                  updated_at: t,
+                });
+                upsertTaskRunSheet(db as any, {
+                  taskId,
+                  stage: "merge_conflict_resolution",
+                  updatedAt: t,
+                });
+                notifyTaskStatus(taskId, taskTitle, "pending", lang);
+                broadcast("task_update", db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId));
+                reviewRoundState.delete(taskId);
+                reviewInFlight.delete(taskId);
+                return;
+              }
               if (ingestResult.conflicts?.length) {
                 notifyCeo(
                   pickL(
@@ -764,7 +1006,13 @@ export function createReviewFinalizeTools(deps: CreateReviewFinalizeToolsDeps) {
               stage: "done",
               updatedAt: t,
             });
-            const childInfo = taskWorktrees.get(child.id);
+            const childInfo =
+              taskWorktrees.get(child.id) ??
+              (recoverTaskWorktreeInfo(db as any, child.id, taskWorktrees, {
+                projectPath: latestTask.project_path ?? null,
+              }).ok
+                ? taskWorktrees.get(child.id)
+                : undefined);
             if (childInfo) {
               cleanupWorktree(childInfo.projectPath, child.id);
               appendTaskLog(child.id, "system", "Worktree cleaned up after parent branch ingestion");
@@ -1042,6 +1290,7 @@ export function createReviewFinalizeTools(deps: CreateReviewFinalizeToolsDeps) {
           }
         }
 
+        clearIntegrationRepairContext(db as any, taskId, t);
         db.prepare("UPDATE tasks SET status = 'done', completed_at = ?, updated_at = ? WHERE id = ?").run(t, t, taskId);
         setTaskCreationAuditCompletion(taskId, true);
         upsertTaskRunSheet(db as any, {

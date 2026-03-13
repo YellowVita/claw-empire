@@ -2,7 +2,11 @@ import type { DatabaseSync } from "node:sqlite";
 
 type DbLike = Pick<DatabaseSync, "prepare">;
 
-export type CollabBranchIngestionState = "ready_for_parent_ingest" | "ingested" | "orphaned";
+export type CollabBranchIngestionState =
+  | "ready_for_parent_ingest"
+  | "conflict_pending_resolution"
+  | "ingested"
+  | "orphaned";
 
 export type CollabBranchArtifactMetadata = {
   branch_name: string;
@@ -43,7 +47,12 @@ export function normalizeCollabBranchArtifactMetadata(raw: unknown): CollabBranc
   const updatedAt =
     typeof source.updated_at === "number" ? source.updated_at : Number(source.updated_at ?? 0);
   if (!branchName || !headSha) return null;
-  if (ingestionState !== "ready_for_parent_ingest" && ingestionState !== "ingested" && ingestionState !== "orphaned") {
+  if (
+    ingestionState !== "ready_for_parent_ingest" &&
+    ingestionState !== "conflict_pending_resolution" &&
+    ingestionState !== "ingested" &&
+    ingestionState !== "orphaned"
+  ) {
     return null;
   }
   return {
@@ -165,6 +174,29 @@ export function markCollabBranchArtifactIngested(
   );
 }
 
+export function markCollabBranchArtifactConflictPending(
+  db: DbLike,
+  input: {
+    taskId: string;
+    updatedAt?: number;
+  },
+): void {
+  const existing = readCollabBranchArtifactMetadata(db, input.taskId);
+  if (!existing || existing.ingestion_state === "ingested") return;
+  const updatedAt = input.updatedAt ?? Date.now();
+  upsertCollabBranchArtifactMetadata(
+    db,
+    input.taskId,
+    {
+      ...existing,
+      ingestion_state: "conflict_pending_resolution",
+      updated_at: updatedAt,
+      orphaned_reason: null,
+    },
+    updatedAt,
+  );
+}
+
 export function markCollabBranchArtifactOrphaned(
   db: DbLike,
   input: {
@@ -221,7 +253,11 @@ export function listPendingParentIngestionChildren(
     return rows.filter((row) => {
       const workflowMeta = parseWorkflowMetaObject(row.workflow_meta_json);
       const artifact = normalizeCollabBranchArtifactMetadata(workflowMeta.collab_branch_artifact);
-      return artifact?.ingestion_state === "ready_for_parent_ingest" && !artifact.ingested_at;
+      return (
+        (artifact?.ingestion_state === "ready_for_parent_ingest" ||
+          artifact?.ingestion_state === "conflict_pending_resolution") &&
+        !artifact.ingested_at
+      );
     });
   } catch {
     return [];

@@ -61,6 +61,17 @@ function setupDb(): DatabaseSync {
       created_at INTEGER
     );
 
+    CREATE TABLE task_run_sheets (
+      task_id TEXT PRIMARY KEY,
+      workflow_pack_key TEXT NOT NULL DEFAULT 'development',
+      stage TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'review',
+      summary_markdown TEXT NOT NULL DEFAULT '',
+      snapshot_json TEXT NOT NULL DEFAULT '{}',
+      created_at INTEGER NOT NULL DEFAULT 0,
+      updated_at INTEGER NOT NULL DEFAULT 0
+    );
+
     CREATE TABLE project_review_decision_events (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       project_id TEXT,
@@ -249,6 +260,62 @@ describe("project-timeout-items scope reset", () => {
       expect(items[0]?.summary).toContain("기획팀장 의견 취합 완료");
       expect(items[0]?.summary).toContain("미완료 서브태스크 1건");
       expect(items[0]?.options).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("does not show project review card while a root task is repairing merge conflicts", () => {
+    const db = setupDb();
+    try {
+      db.prepare("INSERT INTO projects (id, name, project_path, default_pack_key) VALUES (?, ?, ?, ?)").run(
+        "proj-1",
+        "Scoped Project",
+        "C:/work/scoped",
+        "development",
+      );
+      db.prepare(
+        "INSERT INTO tasks (id, title, updated_at, created_at, status, project_id, source_task_id) VALUES (?, ?, ?, ?, 'review', ?, NULL)",
+      ).run("task-1", "Review task", 3000, 900, "proj-1");
+      db.prepare(
+        "INSERT INTO task_run_sheets (task_id, workflow_pack_key, stage, status, summary_markdown, snapshot_json, created_at, updated_at) VALUES (?, 'development', ?, 'review', '', '{}', 1, 1)",
+      ).run("task-1", "merge_conflict_resolution");
+
+      const decisionState: ProjectReviewDecisionState = {
+        project_id: "proj-1",
+        snapshot_hash: "snap-2",
+        status: "ready",
+        planner_summary: "기획팀장 요약",
+        planner_agent_id: "planning-global",
+        planner_agent_name: "Planning Lead",
+        created_at: 2000,
+        updated_at: 2200,
+      };
+
+      const items = createProjectAndTimeoutDecisionItems({
+        db,
+        nowMs: () => 2300,
+        getPreferredLanguage: () => "ko",
+        pickL: (pool: unknown, lang: string) => {
+          const localized = pool as Record<string, string[]>;
+          return localized[lang]?.[0] ?? localized.en?.[0] ?? localized.ko?.[0] ?? "";
+        },
+        l: (ko: string[], en: string[], ja: string[], zh: string[]) => ({ ko, en, ja, zh }),
+        buildProjectReviewSnapshotHash: () => "snap-2",
+        getProjectReviewDecisionState: () => decisionState,
+        upsertProjectReviewDecisionState: vi.fn(),
+        resolvePlanningLeadMeta: (_lang: string, _scope, state) => ({
+          agent_id: state?.planner_agent_id ?? null,
+          agent_name: state?.planner_agent_name ?? "Planning Lead",
+          agent_name_ko: state?.planner_agent_name ?? "기획팀장",
+          agent_avatar: "lead",
+        }),
+        formatPlannerSummaryForDisplay: (text: string) => text,
+        queueProjectReviewPlanningConsolidation: vi.fn(),
+        PROJECT_REVIEW_TASK_SELECTED_LOG_PREFIX: "Decision inbox:",
+      }).buildProjectReviewDecisionItems();
+
+      expect(items).toEqual([]);
     } finally {
       db.close();
     }

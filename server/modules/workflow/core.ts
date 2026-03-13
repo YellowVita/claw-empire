@@ -23,6 +23,7 @@ import { createOneShotRunner } from "./core/one-shot-runner.ts";
 import { createReplyCoreTools } from "./core/reply-core-tools.ts";
 import { createWorktreeLifecycleTools, type WorktreeInfo } from "./core/worktree/lifecycle.ts";
 import { createWorktreeMergeTools } from "./core/worktree/merge.ts";
+import { markTaskWorktreeCleaned, writeTaskWorktreeRef } from "./core/worktree/worktree-registry.ts";
 
 export function initializeWorkflowPartA(ctx: RuntimeContext): WorkflowCoreExports {
   const __ctx: RuntimeContext = ctx;
@@ -198,10 +199,36 @@ export function initializeWorkflowPartA(ctx: RuntimeContext): WorkflowCoreExport
   // ---------------------------------------------------------------------------
   const taskWorktrees = new Map<string, WorktreeInfo>();
 
-  const { isGitRepo, createWorktree, cleanupWorktree } = createWorktreeLifecycleTools({
+  const { isGitRepo, createWorktree: rawCreateWorktree, cleanupWorktree: rawCleanupWorktree } = createWorktreeLifecycleTools({
     appendTaskLog,
     taskWorktrees,
   });
+
+  function createWorktree(projectPath: string, taskId: string, agentName: string, baseBranch?: string) {
+    const result = rawCreateWorktree(projectPath, taskId, agentName, baseBranch);
+    if (result.success) {
+      writeTaskWorktreeRef(db as any, {
+        taskId,
+        info: {
+          branchName: result.branchName,
+          projectPath: result.projectPath,
+          worktreePath: result.worktreePath,
+        },
+      });
+    }
+    return result;
+  }
+
+  function cleanupWorktree(projectPath: string, taskId: string): void {
+    const existingInfo = taskWorktrees.get(taskId) ?? null;
+    rawCleanupWorktree(projectPath, taskId);
+    if (existingInfo && !taskWorktrees.has(taskId)) {
+      markTaskWorktreeCleaned(db as any, {
+        taskId,
+        info: existingInfo,
+      });
+    }
+  }
 
   const {
     mergeWorktree,

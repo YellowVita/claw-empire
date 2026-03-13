@@ -244,7 +244,7 @@ export function applyTaskSchemaMigrations(db: DbLike): void {
       CREATE TABLE IF NOT EXISTS task_run_sheets (
         task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
         workflow_pack_key TEXT NOT NULL,
-        stage TEXT NOT NULL CHECK(stage IN ('queued','in_progress','review_ready','human_review','merging','done','rework')),
+        stage TEXT NOT NULL CHECK(stage IN ('queued','in_progress','review_ready','ready_for_parent_ingest','merge_conflict_resolution','integration_repair','human_review','merging','done','rework')),
         status TEXT NOT NULL,
         summary_markdown TEXT NOT NULL,
         snapshot_json TEXT NOT NULL,
@@ -289,6 +289,7 @@ export function applyTaskSchemaMigrations(db: DbLike): void {
 
   migrateMessagesDirectiveType(db);
   migrateLegacyTasksStatusSchema(db);
+  migrateTaskRunSheetStageSchema(db);
   repairLegacyTaskForeignKeys(db);
   ensureMessagesIdempotencySchema(db);
 }
@@ -715,6 +716,80 @@ function migrateLegacyTasksStatusSchema(db: DbLike): void {
       db.exec("CREATE INDEX IF NOT EXISTS idx_tasks_dept ON tasks(department_id)");
       db.exec("CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id, updated_at DESC)");
       db.exec("CREATE INDEX IF NOT EXISTS idx_tasks_workflow_pack ON tasks(workflow_pack_key, updated_at DESC)");
+      db.exec("COMMIT");
+    } catch (err) {
+      db.exec("ROLLBACK");
+      throw err;
+    }
+  } finally {
+    db.exec("PRAGMA foreign_keys = ON");
+  }
+}
+
+function migrateTaskRunSheetStageSchema(db: DbLike): void {
+  const row = db
+    .prepare(
+      `
+    SELECT sql
+    FROM sqlite_master
+    WHERE type = 'table' AND name = 'task_run_sheets'
+  `,
+    )
+    .get() as { sql?: string } | undefined;
+  const ddl = (row?.sql ?? "").toLowerCase();
+  if (
+    ddl.includes("'ready_for_parent_ingest'") &&
+    ddl.includes("'merge_conflict_resolution'") &&
+    ddl.includes("'integration_repair'")
+  ) {
+    return;
+  }
+
+  console.log("[Claw-Empire] Migrating task_run_sheets.stage CHECK constraint");
+  const newTable = "task_run_sheets_stage_migration_new";
+  db.exec("PRAGMA foreign_keys = OFF");
+  try {
+    db.exec("BEGIN");
+    try {
+      db.exec(`DROP TABLE IF EXISTS ${newTable}`);
+      db.exec(`
+        CREATE TABLE ${newTable} (
+          task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+          workflow_pack_key TEXT NOT NULL,
+          stage TEXT NOT NULL CHECK(stage IN ('queued','in_progress','review_ready','ready_for_parent_ingest','merge_conflict_resolution','integration_repair','human_review','merging','done','rework')),
+          status TEXT NOT NULL,
+          summary_markdown TEXT NOT NULL,
+          snapshot_json TEXT NOT NULL,
+          created_at INTEGER DEFAULT (unixepoch()*1000),
+          updated_at INTEGER DEFAULT (unixepoch()*1000)
+        )
+      `);
+
+      db.exec(`
+        INSERT INTO ${newTable} (
+          task_id, workflow_pack_key, stage, status, summary_markdown, snapshot_json, created_at, updated_at
+        )
+        SELECT
+          task_id,
+          workflow_pack_key,
+          CASE
+            WHEN stage IN ('queued','in_progress','review_ready','ready_for_parent_ingest','merge_conflict_resolution','integration_repair','human_review','merging','done','rework')
+              THEN stage
+            ELSE 'queued'
+          END,
+          status,
+          summary_markdown,
+          snapshot_json,
+          created_at,
+          updated_at
+        FROM task_run_sheets
+      `);
+
+      db.exec("DROP TABLE task_run_sheets");
+      db.exec(`ALTER TABLE ${newTable} RENAME TO task_run_sheets`);
+      db.exec(
+        "CREATE INDEX IF NOT EXISTS idx_task_run_sheets_pack_stage_updated ON task_run_sheets(workflow_pack_key, stage, updated_at DESC)",
+      );
       db.exec("COMMIT");
     } catch (err) {
       db.exec("ROLLBACK");

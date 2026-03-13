@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { createProjectPathPolicy } from "../../../routes/core/projects/path-policy.ts";
 import { readProjectGitBootstrapPolicy } from "../../packs/project-config.ts";
+import { ensureRuntimeTaskArtifactLocalExcludes } from "./shared.ts";
 
 export type WorktreeInfo = {
   worktreePath: string;
@@ -313,6 +314,7 @@ export function createWorktreeLifecycleTools(deps: CreateWorktreeLifecycleToolsD
         const prefix = existingExclude && !existingExclude.endsWith("\n") ? "\n" : "";
         fs.appendFileSync(excludePath, `${prefix}${appendLines.join("\n")}\n`, "utf8");
       }
+      ensureRuntimeTaskArtifactLocalExcludes(projectPath);
 
       const readConfig = (key: string): string => {
         try {
@@ -399,6 +401,7 @@ export function createWorktreeLifecycleTools(deps: CreateWorktreeLifecycleToolsD
       }
       fs.mkdirSync(worktreeBase, { recursive: true });
       execFileSync("git", ["worktree", "prune"], { cwd: approvedProjectPath, stdio: "pipe", timeout: 5000 });
+      ensureRuntimeTaskArtifactLocalExcludes(approvedProjectPath);
 
       // Get current branch/HEAD as base
       let base: string;
@@ -435,6 +438,20 @@ export function createWorktreeLifecycleTools(deps: CreateWorktreeLifecycleToolsD
         }
         try {
           if (fs.existsSync(candidatePath)) {
+            const existingBranch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+              cwd: candidatePath,
+              stdio: "pipe",
+              timeout: 5000,
+            })
+              .toString()
+              .trim();
+            if (existingBranch === candidateBranch) {
+              ensureRuntimeTaskArtifactLocalExcludes(candidatePath);
+              selectedBranch = candidateBranch;
+              selectedWorktreePath = candidatePath;
+              created = true;
+              break;
+            }
             fs.rmSync(candidatePath, { recursive: true, force: true });
           }
         } catch {
@@ -466,6 +483,7 @@ export function createWorktreeLifecycleTools(deps: CreateWorktreeLifecycleToolsD
           });
           selectedBranch = candidateBranch;
           selectedWorktreePath = candidatePath;
+          ensureRuntimeTaskArtifactLocalExcludes(selectedWorktreePath);
           created = true;
           break;
         } catch (err: unknown) {

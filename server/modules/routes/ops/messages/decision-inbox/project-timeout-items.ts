@@ -112,6 +112,27 @@ export function createProjectAndTimeoutDecisionItems(
     }
   }
 
+  function countProjectReviewRepairStages(projectId: string): number {
+    try {
+      const row = db
+        .prepare(
+          `
+        SELECT COUNT(*) AS cnt
+        FROM tasks t
+        JOIN task_run_sheets trs ON trs.task_id = t.id
+        WHERE t.project_id = ?
+          AND t.status = 'review'
+          AND t.source_task_id IS NULL
+          AND trs.stage IN ('merge_conflict_resolution', 'integration_repair')
+      `,
+        )
+        .get(projectId) as { cnt: number } | undefined;
+      return row?.cnt ?? 0;
+    } catch {
+      return 0;
+    }
+  }
+
   function buildProjectReviewDecisionItems(): ProjectReviewDecisionItem[] {
     const lang = getPreferredLanguage();
     const t = (ko: string, en: string, ja: string, zh: string) => pickL(l([ko], [en], [ja], [zh]), lang);
@@ -335,6 +356,8 @@ export function createProjectAndTimeoutDecisionItems(
         String(decisionState?.planner_summary ?? latestPlanningSummaryEvent?.summary ?? "").trim(),
       );
       const hasPlannerSummary = plannerSummary.length > 0;
+      const repairStageCount = countProjectReviewRepairStages(row.project_id);
+      if (repairStageCount > 0) continue;
       const blockedRemediationCount = countUnfinishedReviewSubtasks(row.project_id);
       const isReviewMeetingBlocked =
         pendingChoices.length === 0 &&

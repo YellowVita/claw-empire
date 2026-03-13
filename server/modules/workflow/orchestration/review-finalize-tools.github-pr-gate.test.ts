@@ -445,12 +445,15 @@ describe("review finalize GitHub PR gate", () => {
     }
   });
 
-  it("child ingestion conflict가 나면 parent는 review에 남고 main/dev merge를 시작하지 않는다", async () => {
+  it("child ingestion conflict가 나면 parent는 pending repair로 전환되고 main/dev merge를 시작하지 않는다", async () => {
     const { db, tools, mergeToDevAndCreatePR } = createTools({
       ingestChildResult: {
         success: false,
         message: "Child branch ingestion conflict: 1 file(s) require manual resolution.",
         conflicts: ["src/app.ts"],
+        needsAiResolution: true,
+        parentHeadSha: "parentsha111",
+        childHeadSha: "childsha999",
       },
     });
     db.prepare(
@@ -486,14 +489,39 @@ describe("review finalize GitHub PR gate", () => {
       tools.finishReview("task-1", "Ship feature", { bypassProjectDecisionGate: true, trigger: "test" });
       await vi.waitFor(() => {
         const parent = db.prepare("SELECT status FROM tasks WHERE id = ?").get("task-1") as { status: string };
-        expect(parent.status).toBe("review");
+        expect(parent.status).toBe("pending");
       });
 
       expect(mergeToDevAndCreatePR).not.toHaveBeenCalled();
       const runSheet = db.prepare("SELECT stage FROM task_run_sheets WHERE task_id = ?").get("task-1") as
         | { stage: string }
         | undefined;
-      expect(runSheet?.stage).toBe("human_review");
+      expect(runSheet?.stage).toBe("merge_conflict_resolution");
+      const retryRow = db.prepare("SELECT attempt_count, last_reason FROM task_retry_queue WHERE task_id = ?").get(
+        "task-1",
+      ) as { attempt_count: number; last_reason: string } | undefined;
+      expect(retryRow).toEqual({
+        attempt_count: 1,
+        last_reason: "integration_validation_failed",
+      });
+      const childMeta = db.prepare("SELECT workflow_meta_json FROM tasks WHERE id = ?").get("child-conflict") as {
+        workflow_meta_json: string | null;
+      };
+      expect(JSON.parse(childMeta.workflow_meta_json ?? "{}").collab_branch_artifact).toEqual(
+        expect.objectContaining({
+          ingestion_state: "conflict_pending_resolution",
+        }),
+      );
+      const parentMeta = db.prepare("SELECT workflow_meta_json FROM tasks WHERE id = ?").get("task-1") as {
+        workflow_meta_json: string | null;
+      };
+      expect(JSON.parse(parentMeta.workflow_meta_json ?? "{}").integration_repair_context).toEqual(
+        expect.objectContaining({
+          mode: "merge_conflict_resolution",
+          child_task_id: "child-conflict",
+          conflicts: ["src/app.ts"],
+        }),
+      );
     } finally {
       db.close();
     }

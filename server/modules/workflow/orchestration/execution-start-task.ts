@@ -12,6 +12,7 @@ import {
   consumeInterruptPrompts,
   loadPendingInterruptPrompts,
 } from "../core/interrupt-injection-tools.ts";
+import { buildIntegrationRepairPromptBlock, normalizeIntegrationRepairContext } from "./integration-repair-context.ts";
 import { deleteTaskRetryQueueRow, runTaskExecutionHooks } from "./task-execution-policy.ts";
 import { upsertTaskRunSheet } from "./task-run-sheets.ts";
 
@@ -293,6 +294,18 @@ export function createExecutionStartTaskTools(deps: CreateExecutionStartTaskTool
       workflowPackGuidance,
       projectWorkflowPolicyMarkdown: projectWorkflowConfig?.policyMarkdown ?? null,
     });
+    const integrationRepairContext = normalizeIntegrationRepairContext(
+      (() => {
+        if (typeof taskData.workflow_meta_json !== "string") return null;
+        try {
+          const parsed = JSON.parse(taskData.workflow_meta_json);
+          return parsed?.integration_repair_context ?? null;
+        } catch {
+          return null;
+        }
+      })(),
+    );
+    const integrationRepairPromptBlock = buildIntegrationRepairPromptBlock(integrationRepairContext);
     const conversationCtx = getRecentConversationContext(execAgent.id);
     const continuationCtx = getTaskContinuationContext(taskId);
     const recentChanges = getRecentChanges(projPath, taskId);
@@ -341,6 +354,7 @@ export function createExecutionStartTaskTools(deps: CreateExecutionStartTaskTool
         `[Task] ${taskData.title}`,
         taskData.description ? `\n${taskData.description}` : "",
         ...workflowPackPromptSections,
+        integrationRepairPromptBlock ? `\n${integrationRepairPromptBlock}` : "",
         continuationCtx,
         conversationCtx,
         `\n---`,

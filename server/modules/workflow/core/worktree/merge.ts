@@ -1,11 +1,15 @@
 import { execFileSync } from "node:child_process";
 import { buildGitHubApiHeaders, getGitHubAccessToken } from "../../../github/auth.ts";
 import { getTaskShortId, type WorktreeInfo } from "./lifecycle.ts";
+import { recoverTaskWorktreeInfo } from "./worktree-registry.ts";
 import {
   autoCommitWorktreePendingChanges,
+  discardRuntimeTaskArtifactChanges,
   DIFF_SUMMARY_ERROR,
   DIFF_SUMMARY_NONE,
+  filterRuntimeTaskArtifactPaths,
   hasVisibleDiffSummary,
+  isRuntimeTaskArtifactPath,
   readGitHeadSha,
   readWorktreeStatusShort,
 } from "./shared.ts";
@@ -45,6 +49,9 @@ export type ChildBranchIngestionResult = {
   conflicts?: string[];
   autoCommitSha?: string;
   ingestCommitSha?: string;
+  parentHeadSha?: string;
+  childHeadSha?: string;
+  needsAiResolution?: boolean;
 };
 
 function readHeadSha(projectPath: string): string | null {
@@ -59,6 +66,53 @@ function readHeadSha(projectPath: string): string | null {
   } catch {
     return null;
   }
+}
+
+function readNamedRefSha(projectPath: string, ref: string): string | null {
+  try {
+    return execFileSync("git", ["rev-parse", ref], {
+      cwd: projectPath,
+      stdio: "pipe",
+      timeout: 5000,
+    })
+      .toString()
+      .trim();
+  } catch {
+    return null;
+  }
+}
+
+function readFilteredBranchDiffStat(projectPath: string, baseRef: string, headRef: string): string {
+  try {
+    return execFileSync(
+      "git",
+      ["diff", `${baseRef}...${headRef}`, "--stat", "--", ".", ":(exclude)tasks/todo.md", ":(exclude)tasks/lessons.md", ":(exclude)tasks/review.md", ":(exclude)tasks/runtime/", ":(exclude)tasks/subtasks/"],
+      {
+        cwd: projectPath,
+        stdio: "pipe",
+        timeout: 10000,
+      },
+    )
+      .toString()
+      .trim();
+  } catch {
+    return "";
+  }
+}
+
+function resolveRuntimeTaskConflicts(worktreePath: string, conflicts: string[]): void {
+  const runtimeConflicts = conflicts.filter((entry) => isRuntimeTaskArtifactPath(entry));
+  if (runtimeConflicts.length <= 0) return;
+  execFileSync("git", ["checkout", "--ours", "--", ...runtimeConflicts], {
+    cwd: worktreePath,
+    stdio: "pipe",
+    timeout: 10000,
+  });
+  execFileSync("git", ["add", "--", ...runtimeConflicts], {
+    cwd: worktreePath,
+    stdio: "pipe",
+    timeout: 10000,
+  });
 }
 
 function readChildBranchNameFromTaskMetadata(db: DbLike, taskId: string): string | null {
@@ -90,6 +144,26 @@ function resetSquashMergeState(worktreePath: string): void {
 
 export function createWorktreeMergeTools(deps: CreateWorktreeMergeToolsDeps) {
   const { db, taskWorktrees, appendTaskLog, cleanupWorktree, resolveLang, l, pickL, fetchImpl = fetch } = deps;
+
+  function readTaskProjectPath(taskId: string): string | null {
+    try {
+      const row = db.prepare("SELECT project_path FROM tasks WHERE id = ?").get(taskId) as
+        | { project_path?: string | null }
+        | undefined;
+      return typeof row?.project_path === "string" && row.project_path.trim() ? row.project_path.trim() : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function getTaskWorktreeInfo(taskId: string, projectPath?: string | null): WorktreeInfo | null {
+    const cached = taskWorktrees.get(taskId);
+    if (cached) return cached;
+    const recovered = recoverTaskWorktreeInfo(db as any, taskId, taskWorktrees, {
+      projectPath: projectPath ?? readTaskProjectPath(taskId),
+    });
+    return recovered.ok ? recovered.info : null;
+  }
 
   function parseGithubRepo(githubRepo: string): { owner: string; repo: string } | null {
     const trimmed = String(githubRepo ?? "").trim();
@@ -174,7 +248,7 @@ export function createWorktreeMergeTools(deps: CreateWorktreeMergeToolsDeps) {
   }
 
   function mergeWorktree(projectPath: string, taskId: string): WorktreeMergeResult {
-    const info = taskWorktrees.get(taskId);
+    const info = getTaskWorktreeInfo(taskId, projectPath);
     if (!info) return { success: false, message: "No worktree found for this task" };
     const taskRow = db.prepare("SELECT title, description FROM tasks WHERE id = ?").get(taskId) as
       | {
@@ -237,13 +311,7 @@ export function createWorktreeMergeTools(deps: CreateWorktreeMergeToolsDeps) {
         .trim();
 
       try {
-        const diffCheck = execFileSync("git", ["diff", `${currentBranch}...${info.branchName}`, "--stat"], {
-          cwd: projectPath,
-          stdio: "pipe",
-          timeout: 10000,
-        })
-          .toString()
-          .trim();
+        const diffCheck = readFilteredBranchDiffStat(projectPath, currentBranch, info.branchName);
         if (!diffCheck) {
           const postMergeHeadSha = readHeadSha(projectPath);
           return {
@@ -344,9 +412,9 @@ export function createWorktreeMergeTools(deps: CreateWorktreeMergeToolsDeps) {
   }
 
   function ingestChildBranchIntoParent(parentTaskId: string, childTaskId: string): ChildBranchIngestionResult {
-    const parentInfo = taskWorktrees.get(parentTaskId);
+    const parentInfo = getTaskWorktreeInfo(parentTaskId);
     if (!parentInfo) return { success: false, message: "No parent worktree found for this task" };
-    const childInfo = taskWorktrees.get(childTaskId);
+    const childInfo = getTaskWorktreeInfo(childTaskId, parentInfo.projectPath);
     const childBranchName = childInfo?.branchName ?? readChildBranchNameFromTaskMetadata(db, childTaskId);
     if (!childBranchName) return { success: false, message: "No child branch metadata found for this task" };
 
@@ -385,17 +453,7 @@ export function createWorktreeMergeTools(deps: CreateWorktreeMergeToolsDeps) {
         };
       }
 
-      const diffCheck = execFileSync(
-        "git",
-        ["diff", `${parentInfo.branchName}...${childBranchName}`, "--stat"],
-        {
-          cwd: parentInfo.worktreePath,
-          stdio: "pipe",
-          timeout: 10000,
-        },
-      )
-        .toString()
-        .trim();
+      const diffCheck = readFilteredBranchDiffStat(parentInfo.worktreePath, parentInfo.branchName, childBranchName);
       if (!diffCheck) {
         return {
           success: true,
@@ -409,6 +467,7 @@ export function createWorktreeMergeTools(deps: CreateWorktreeMergeToolsDeps) {
         stdio: "pipe",
         timeout: 30000,
       });
+      discardRuntimeTaskArtifactChanges(parentInfo.worktreePath);
 
       execFileSync(
         "git",
@@ -419,7 +478,7 @@ export function createWorktreeMergeTools(deps: CreateWorktreeMergeToolsDeps) {
           "user.email=claw-empire@local",
           "commit",
           "-m",
-          `chore: ingest child branch ${getTaskShortId(childTaskId)} (${childInfo.branchName})`,
+          `chore: ingest child branch ${getTaskShortId(childTaskId)} (${childBranchName})`,
         ],
         {
           cwd: parentInfo.worktreePath,
@@ -446,13 +505,45 @@ export function createWorktreeMergeTools(deps: CreateWorktreeMergeToolsDeps) {
         const conflicts = unmerged ? unmerged.split("\n").filter(Boolean) : [];
 
         if (conflicts.length > 0) {
-          resetSquashMergeState(parentInfo.worktreePath);
+          resolveRuntimeTaskConflicts(parentInfo.worktreePath, conflicts);
+          const actionableConflicts = filterRuntimeTaskArtifactPaths(conflicts);
+          if (actionableConflicts.length <= 0) {
+            discardRuntimeTaskArtifactChanges(parentInfo.worktreePath);
+            execFileSync(
+              "git",
+              [
+                "-c",
+                "user.name=Claw-Empire",
+                "-c",
+                "user.email=claw-empire@local",
+                "commit",
+                "-m",
+                `chore: ingest child branch ${getTaskShortId(childTaskId)} (${childBranchName})`,
+              ],
+              {
+                cwd: parentInfo.worktreePath,
+                stdio: "pipe",
+                timeout: 15000,
+              },
+            );
+            return {
+              success: true,
+              autoCommitSha,
+              ingestCommitSha: readGitHeadSha(parentInfo.worktreePath) ?? undefined,
+              parentHeadSha: readGitHeadSha(parentInfo.worktreePath) ?? undefined,
+              childHeadSha: readNamedRefSha(parentInfo.worktreePath, childBranchName) ?? undefined,
+              message: `Child branch ingested via squash after resolving runtime task artifacts: ${childBranchName} -> ${parentInfo.branchName}`,
+            };
+          }
 
           return {
             success: false,
             autoCommitSha,
-            message: `Child branch ingestion conflict: ${conflicts.length} file(s) require manual resolution.`,
-            conflicts,
+            parentHeadSha: readGitHeadSha(parentInfo.worktreePath) ?? undefined,
+            childHeadSha: readNamedRefSha(parentInfo.worktreePath, childBranchName) ?? undefined,
+            needsAiResolution: true,
+            message: `Child branch ingestion conflict: ${actionableConflicts.length} file(s) require AI resolution.`,
+            conflicts: actionableConflicts,
           };
         }
       } catch {
@@ -462,16 +553,19 @@ export function createWorktreeMergeTools(deps: CreateWorktreeMergeToolsDeps) {
       resetSquashMergeState(parentInfo.worktreePath);
 
       const msg = err instanceof Error ? err.message : String(err);
+      resetSquashMergeState(parentInfo.worktreePath);
       return {
         success: false,
         autoCommitSha,
+        parentHeadSha: readGitHeadSha(parentInfo.worktreePath) ?? undefined,
+        childHeadSha: readNamedRefSha(parentInfo.worktreePath, childBranchName) ?? undefined,
         message: `Child branch ingestion failed: ${msg}`,
       };
     }
   }
 
   async function mergeToDevAndCreatePR(projectPath: string, taskId: string, githubRepo: string): Promise<WorktreeMergeResult> {
-    const info = taskWorktrees.get(taskId);
+    const info = getTaskWorktreeInfo(taskId, projectPath);
     if (!info) return { success: false, message: "No worktree found for this task" };
     const taskRow = db.prepare("SELECT title FROM tasks WHERE id = ?").get(taskId) as { title: string } | undefined;
     const taskShortId = getTaskShortId(taskId);
@@ -636,7 +730,7 @@ export function createWorktreeMergeTools(deps: CreateWorktreeMergeToolsDeps) {
     taskId: string,
     githubRepo: string,
   ): Promise<WorktreeMergeResult> {
-    const info = taskWorktrees.get(taskId);
+    const info = getTaskWorktreeInfo(taskId, projectPath);
     if (!info) return { success: false, message: "No worktree found for this task" };
     const taskRow = db.prepare("SELECT title FROM tasks WHERE id = ?").get(taskId) as { title: string } | undefined;
     const taskShortId = getTaskShortId(taskId);
@@ -706,7 +800,7 @@ export function createWorktreeMergeTools(deps: CreateWorktreeMergeToolsDeps) {
   }
 
   function getWorktreeDiffSummary(projectPath: string, taskId: string): string {
-    const info = taskWorktrees.get(taskId);
+    const info = getTaskWorktreeInfo(taskId, projectPath);
     if (!info) return "";
 
     try {
@@ -718,13 +812,7 @@ export function createWorktreeMergeTools(deps: CreateWorktreeMergeToolsDeps) {
         .toString()
         .trim();
 
-      const stat = execFileSync("git", ["diff", `${currentBranch}...${info.branchName}`, "--stat"], {
-        cwd: projectPath,
-        stdio: "pipe",
-        timeout: 10000,
-      })
-        .toString()
-        .trim();
+      const stat = readFilteredBranchDiffStat(projectPath, currentBranch, info.branchName);
 
       const worktreePending = readWorktreeStatusShort(info.worktreePath);
       if (stat && worktreePending) return `${stat}\n\n[uncommitted worktree changes]\n${worktreePending}`;
@@ -737,7 +825,7 @@ export function createWorktreeMergeTools(deps: CreateWorktreeMergeToolsDeps) {
   }
 
   function rollbackTaskWorktree(taskId: string, reason: string): boolean {
-    const info = taskWorktrees.get(taskId);
+    const info = getTaskWorktreeInfo(taskId);
     if (!info) return false;
 
     const diffSummary = getWorktreeDiffSummary(info.projectPath, taskId);

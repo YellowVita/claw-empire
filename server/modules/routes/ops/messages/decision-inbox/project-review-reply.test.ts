@@ -36,6 +36,17 @@ function createDb(): DatabaseSync {
       target_department_id TEXT,
       created_at INTEGER
     );
+
+    CREATE TABLE task_run_sheets (
+      task_id TEXT PRIMARY KEY,
+      workflow_pack_key TEXT NOT NULL DEFAULT 'development',
+      stage TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'review',
+      summary_markdown TEXT NOT NULL DEFAULT '',
+      snapshot_json TEXT NOT NULL DEFAULT '{}',
+      created_at INTEGER NOT NULL DEFAULT 0,
+      updated_at INTEGER NOT NULL DEFAULT 0
+    );
   `);
   return db;
 }
@@ -210,6 +221,43 @@ describe("project review reply", () => {
       expect((deps.recordProjectReviewDecisionEvent as any).mock.calls[0]?.[0]?.event_type).toBe(
         "start_review_meeting",
       );
+    } finally {
+      db.close();
+    }
+  });
+
+  it("merge conflict resolution 단계의 루트 task가 있으면 start_project_review를 거부한다", () => {
+    const db = createDb();
+    try {
+      db.prepare(
+        `
+          INSERT INTO tasks (id, title, project_id, status, workflow_pack_key, source_task_id, created_at, updated_at)
+          VALUES ('task-1', '영상 최종 검토', 'proj-1', 'review', 'video_preprod', NULL, 1, 1)
+        `,
+      ).run();
+      db.prepare(
+        "INSERT INTO task_run_sheets (task_id, workflow_pack_key, stage, status, summary_markdown, snapshot_json, created_at, updated_at) VALUES ('task-1', 'development', 'merge_conflict_resolution', 'review', '', '{}', 1, 1)",
+      ).run();
+
+      const input = createBaseInput(db);
+      const { deps, req, res, resPayload, currentItem, selectedOption } = input;
+
+      const handled = handleProjectReviewDecisionReply({
+        req,
+        res,
+        currentItem,
+        selectedOption,
+        optionNumber: 1,
+        deps,
+      });
+
+      expect(handled).toBe(true);
+      expect(resPayload.status).toBe(409);
+      expect(resPayload.body).toMatchObject({
+        error: "project_review_integration_in_progress",
+        repair_stage_count: 1,
+      });
+      expect(deps.finishReview).not.toHaveBeenCalled();
     } finally {
       db.close();
     }

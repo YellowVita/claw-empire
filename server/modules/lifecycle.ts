@@ -21,6 +21,10 @@ import {
   type StartupOrphanWorktreeCleanupDeps,
   type StartupOrphanWorktreeCleanupSummary,
 } from "./lifecycle/startup-orphan-worktree-cleanup.ts";
+import {
+  hydrateStartupWorktrees,
+  type StartupWorktreeHydrationSummary,
+} from "./lifecycle/startup-worktree-hydration.ts";
 import { filterStartupReviewRecoveryRows } from "./lifecycle/review-recovery.ts";
 import { sweepTaskRetryQueue } from "./lifecycle/task-retry-sweep.ts";
 
@@ -28,6 +32,8 @@ export {
   cleanupStartupOrphanWorktrees,
   type StartupOrphanWorktreeCleanupDeps,
   type StartupOrphanWorktreeCleanupSummary,
+  hydrateStartupWorktrees,
+  type StartupWorktreeHydrationSummary,
 };
 
 function pruneDuplicateReviewMeetings(ctx: RuntimeContext): void {
@@ -75,6 +81,7 @@ function recoverInterruptedWorkflowOnStartup(ctx: RuntimeContext): void {
   );
   recoverOrphanWorkingAgents({ db: ctx.db as any, broadcast: ctx.broadcast }, "startup");
   cleanupStartupOrphanWorktrees({ db: ctx.db as any });
+  hydrateStartupWorktrees({ db: ctx.db as any, taskWorktrees: ctx.taskWorktrees });
 
   filterStartupReviewRecoveryRows(listStartupReviewTasks(ctx.db as any)).forEach((task, idx) => {
     const delay = 1200 + idx * 400;

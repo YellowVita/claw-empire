@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { DatabaseSync } from "node:sqlite";
 import type { ProjectReviewReplyInput, ProjectReviewTaskChoice } from "./types.ts";
 
 type ReviewStartBlockedTask = {
@@ -31,6 +32,27 @@ function buildVideoFinalRenderRequestDescription(taskTitle: string): string {
     "- 자막/텍스트 safe area(좌우 8%, 상하 10%) 준수",
     "- 결과 보고에 초 단위 씬 타임라인과 품질 체크리스트 포함",
   ].join("\n");
+}
+
+function countProjectReviewRepairStages(db: DatabaseSync, projectId: string): number {
+  try {
+    const row = db
+      .prepare(
+        `
+        SELECT COUNT(*) AS cnt
+        FROM tasks t
+        JOIN task_run_sheets trs ON trs.task_id = t.id
+        WHERE t.project_id = ?
+          AND t.status = 'review'
+          AND t.source_task_id IS NULL
+          AND trs.stage IN ('merge_conflict_resolution', 'integration_repair')
+      `,
+      )
+      .get(projectId) as { cnt: number } | undefined;
+    return row?.cnt ?? 0;
+  } catch {
+    return 0;
+  }
 }
 
 export function handleProjectReviewDecisionReply(input: ProjectReviewReplyInput): boolean {
@@ -244,6 +266,15 @@ export function handleProjectReviewDecisionReply(input: ProjectReviewReplyInput)
   }
 
   if (selectedAction === "start_project_review") {
+    const repairStageCount = countProjectReviewRepairStages(db as DatabaseSync, projectId);
+    if (repairStageCount > 0) {
+      res.status(409).json({
+        error: "project_review_integration_in_progress",
+        repair_stage_count: repairStageCount,
+      });
+      return true;
+    }
+
     const reviewTaskChoices = getProjectReviewTaskChoices(projectId);
     const requiresRepresentativeSelection = reviewTaskChoices.length > 1;
     const pendingChoices = requiresRepresentativeSelection

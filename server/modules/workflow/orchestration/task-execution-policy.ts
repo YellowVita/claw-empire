@@ -8,7 +8,11 @@ type DbLike = Pick<DatabaseSync, "prepare">;
 export const TASK_EXECUTION_POLICY_SETTING_KEY = "taskExecutionPolicy";
 export const TASK_EXECUTION_HOOKS_SETTING_KEY = "taskExecutionHooks";
 
-export type TaskRetryReason = "idle_timeout" | "hard_timeout" | "orphan_recovery";
+export type TaskRetryReason =
+  | "idle_timeout"
+  | "hard_timeout"
+  | "orphan_recovery"
+  | "integration_validation_failed";
 export type TaskHookStage = "before_run" | "after_run_success" | "after_run_failure";
 
 export type TaskExecutionPolicy = {
@@ -54,7 +58,7 @@ export const DEFAULT_TASK_EXECUTION_POLICY: TaskExecutionPolicy = {
   base_backoff_ms: 10_000,
   max_backoff_ms: 300_000,
   jitter_ratio: 0.15,
-  retry_on: ["idle_timeout", "hard_timeout", "orphan_recovery"],
+  retry_on: ["idle_timeout", "hard_timeout", "orphan_recovery", "integration_validation_failed"],
   queue_sweep_ms: 5_000,
 };
 
@@ -105,7 +109,12 @@ function toNonNegativeInt(value: unknown, fallback: number): number {
 }
 
 function normalizeRetryReasonList(value: unknown, fallback: TaskRetryReason[]): TaskRetryReason[] {
-  const allowed = new Set<TaskRetryReason>(["idle_timeout", "hard_timeout", "orphan_recovery"]);
+  const allowed = new Set<TaskRetryReason>([
+    "idle_timeout",
+    "hard_timeout",
+    "orphan_recovery",
+    "integration_validation_failed",
+  ]);
   if (!Array.isArray(value)) return [...fallback];
   const next = value
     .map((item) => (typeof item === "string" ? item.trim() : ""))
@@ -295,6 +304,13 @@ export function resolveTaskExecutionHooksForStage(
 
 export function shouldRetryForReason(policy: TaskExecutionPolicy, reason: TaskRetryReason): boolean {
   return Boolean(policy.enabled && policy.retry_on.includes(reason));
+}
+
+export function getMaxAutoRetriesForReason(policy: TaskExecutionPolicy, reason: TaskRetryReason): number {
+  if (reason === "integration_validation_failed") {
+    return Math.min(policy.max_auto_retries, 2);
+  }
+  return policy.max_auto_retries;
 }
 
 export function computeRetryDelayMs(policy: TaskExecutionPolicy, attemptCount: number): number {

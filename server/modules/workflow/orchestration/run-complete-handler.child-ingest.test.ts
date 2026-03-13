@@ -279,4 +279,87 @@ describe("run complete handler child branch artifact capture", () => {
       db.close();
     }
   });
+
+  it("integration repair failure reuses retry queue and preserves the worktree", async () => {
+    const repo = createRepo();
+    const db = createDb();
+    try {
+      runGit(repo, ["checkout", "-b", "climpire/parent-task"]);
+      fs.writeFileSync(path.join(repo, "README.md"), "seed\nrepair\n", "utf8");
+
+      db.prepare(
+        `
+          INSERT INTO tasks (
+            id, title, description, status, workflow_pack_key, assigned_agent_id,
+            department_id, project_id, project_path, workflow_meta_json, created_at, started_at, updated_at
+          ) VALUES (?, ?, ?, 'in_progress', 'development', ?, 'planning', 'project-1', ?, ?, 1, 2, 3)
+        `,
+      ).run(
+        "parent-task",
+        "부모 통합",
+        "통합 복구",
+        "lead-agent-1",
+        repo,
+        JSON.stringify({
+          integration_repair_context: {
+            mode: "merge_conflict_resolution",
+            child_task_id: "child-task",
+            child_title: "충돌 child",
+            child_branch_name: "climpire/child-task",
+            parent_head_sha: "parentsha111",
+            child_head_sha: "childsha222",
+            conflicts: ["src/app.ts"],
+            updated_at: 100,
+          },
+        }),
+      );
+      db.prepare(
+        `
+          INSERT INTO agents (id, name, name_ko, status, current_task_id, department_id, stats_tasks_done, stats_xp)
+          VALUES ('lead-agent-1', 'Sage', '세이지', 'working', 'parent-task', 'planning', 0, 0)
+        `,
+      ).run();
+
+      const deps = createDeps(db);
+      deps.taskWorktrees.set("parent-task", {
+        worktreePath: repo,
+        projectPath: repo,
+        branchName: "climpire/parent-task",
+      });
+      deps.activeProcesses.set("parent-task", { pid: 88 });
+      deps.cleanupWorktree = vi.fn();
+
+      const { handleTaskRunComplete } = createRunCompleteHandler(deps);
+      await handleTaskRunComplete("parent-task", 1);
+
+      const task = db.prepare("SELECT status, workflow_meta_json FROM tasks WHERE id = ?").get("parent-task") as {
+        status: string;
+        workflow_meta_json: string | null;
+      };
+      const runSheet = db.prepare("SELECT stage FROM task_run_sheets WHERE task_id = ?").get("parent-task") as
+        | { stage: string }
+        | undefined;
+      const retryRow = db.prepare("SELECT attempt_count, last_reason FROM task_retry_queue WHERE task_id = ?").get(
+        "parent-task",
+      ) as { attempt_count: number; last_reason: string } | undefined;
+      const meta = JSON.parse(task.workflow_meta_json ?? "{}");
+
+      expect(task.status).toBe("pending");
+      expect(runSheet?.stage).toBe("integration_repair");
+      expect(retryRow).toEqual({
+        attempt_count: 1,
+        last_reason: "integration_validation_failed",
+      });
+      expect(meta.integration_repair_context).toEqual(
+        expect.objectContaining({
+          mode: "integration_repair",
+          child_task_id: "child-task",
+          conflicts: ["src/app.ts"],
+        }),
+      );
+      expect(deps.cleanupWorktree).not.toHaveBeenCalled();
+    } finally {
+      db.close();
+    }
+  });
 });

@@ -2,11 +2,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { encryptSecret } from "../../../../oauth/helpers.ts";
+import { createWorktreeLifecycleTools } from "./lifecycle.ts";
 import { createWorktreeMergeTools } from "./merge.ts";
 import { autoCommitWorktreePendingChanges } from "./shared.ts";
+import { writeTaskWorktreeRef } from "./worktree-registry.ts";
 
 function runGit(cwd: string, args: string[]): string {
   return execFileSync("git", args, { cwd, stdio: "pipe", timeout: 15000 }).toString().trim();
@@ -26,6 +29,20 @@ function initRepo(basePrefix: string): string {
   runGit(dir, ["add", "."]);
   runGit(dir, ["commit", "-m", "seed"]);
   return dir;
+}
+
+function initTaskDb(): DatabaseSync {
+  const db = new DatabaseSync(":memory:");
+  db.exec(`
+    CREATE TABLE tasks (
+      id TEXT PRIMARY KEY,
+      title TEXT,
+      description TEXT,
+      project_path TEXT,
+      workflow_meta_json TEXT
+    );
+  `);
+  return db;
 }
 
 const tempDirs: string[] = [];
@@ -66,6 +83,24 @@ describe("worktree merge audit helpers", () => {
 
     expect(result.committed).toBe(false);
     expect(result.commitSha).toBeUndefined();
+  });
+
+  it("ignores runtime task artifacts during auto-commit", () => {
+    const repo = initRepo("claw-auto-commit-runtime-tasks-");
+    tempDirs.push(repo);
+    fs.mkdirSync(path.join(repo, "tasks"), { recursive: true });
+    fs.writeFileSync(path.join(repo, "tasks", "todo.md"), "- local checklist\n", "utf8");
+    fs.writeFileSync(path.join(repo, "feature.txt"), "feature\n", "utf8");
+
+    const result = autoCommitWorktreePendingChanges(
+      "task-12345678",
+      { worktreePath: repo, branchName: "climpire/12345678" },
+      () => {},
+    );
+
+    expect(result.committed).toBe(true);
+    expect(runGit(repo, ["show", "--name-only", "--pretty=format:%s", "HEAD"])).toContain("feature.txt");
+    expect(runGit(repo, ["show", "--name-only", "--pretty=format:%s", "HEAD"])).not.toContain("tasks/todo.md");
   });
 
   it("returns post-merge HEAD SHA and target branch on merge success", () => {
@@ -111,6 +146,46 @@ describe("worktree merge audit helpers", () => {
     expect(result.success).toBe(true);
     expect(result.targetBranch).toBe("main");
     expect(result.postMergeHeadSha).toBe(runGit(repo, ["rev-parse", "HEAD"]));
+  });
+
+  it("recovers worktree metadata on merge when the in-memory cache is empty", () => {
+    const repo = initRepo("claw-merge-recover-");
+    tempDirs.push(repo);
+    const taskId = "recover01-0000-0000-0000-000000000000";
+    const db = initTaskDb();
+    db.prepare("INSERT INTO tasks (id, title, description, project_path, workflow_meta_json) VALUES (?, ?, ?, ?, NULL)")
+      .run(taskId, "Recovered merge", "Recover from metadata", repo);
+
+    const taskWorktrees = new Map();
+    const lifecycleTools = createWorktreeLifecycleTools({
+      appendTaskLog: () => {},
+      taskWorktrees,
+    });
+    const createResult = lifecycleTools.createWorktree(repo, taskId, "Tester");
+    expect(createResult.success).toBe(true);
+    const info = taskWorktrees.get(taskId)!;
+    fs.writeFileSync(path.join(info.worktreePath, "feature.txt"), "feature\n", "utf8");
+    runGit(info.worktreePath, ["add", "."]);
+    runGit(info.worktreePath, ["commit", "-m", "feature"]);
+    writeTaskWorktreeRef(db as any, { taskId, info });
+    taskWorktrees.clear();
+    runGit(repo, ["checkout", "main"]);
+
+    const tools = createWorktreeMergeTools({
+      db: db as any,
+      taskWorktrees,
+      appendTaskLog: () => {},
+      cleanupWorktree: () => {},
+      resolveLang: () => "en",
+      l: (ko: string[], en: string[], ja: string[], zh: string[]) => ({ ko, en, ja, zh }),
+      pickL: (pool: any, lang: string) => pool?.[lang]?.[0] ?? pool?.en?.[0] ?? "",
+    });
+
+    const result = tools.mergeWorktree(repo, taskId);
+
+    expect(result.success).toBe(true);
+    expect(taskWorktrees.get(taskId)?.branchName).toBe(info.branchName);
+    expect(fs.readFileSync(path.join(repo, "feature.txt"), "utf8").replace(/\r\n/g, "\n")).toBe("feature\n");
   });
 
   it("task_branch_pr helper pushes the task branch and returns PR metadata", async () => {
@@ -262,7 +337,7 @@ describe("worktree merge audit helpers", () => {
     expect(fs.readFileSync(path.join(repo, "feature.txt"), "utf8").replace(/\r\n/g, "\n")).toBe("feature\n");
   });
 
-  it("squash ingest helper reports conflicts and aborts the merge state", () => {
+  it("squash ingest helper leaves non-runtime conflicts for AI resolution", () => {
     const repo = initRepo("claw-child-ingest-conflict-");
     tempDirs.push(repo);
 
@@ -322,6 +397,71 @@ describe("worktree merge audit helpers", () => {
 
     expect(result.success).toBe(false);
     expect(result.conflicts).toContain("shared.txt");
-    expect(runGit(repo, ["status", "--short"])).toBe("");
+    expect(result.needsAiResolution).toBe(true);
+    expect(runGit(repo, ["status", "--short"])).toMatch(/shared\.txt/);
+  });
+
+  it("squash ingest helper auto-resolves runtime task artifact conflicts", () => {
+    const repo = initRepo("claw-child-ingest-runtime-task-conflict-");
+    tempDirs.push(repo);
+    fs.mkdirSync(path.join(repo, "tasks"), { recursive: true });
+    fs.writeFileSync(path.join(repo, "tasks", "todo.md"), "seed\n", "utf8");
+    runGit(repo, ["add", "."]);
+    runGit(repo, ["commit", "-m", "seed tasks"]);
+
+    runGit(repo, ["checkout", "-b", "climpire/parent0003"]);
+    fs.writeFileSync(path.join(repo, "tasks", "todo.md"), "parent\n", "utf8");
+    runGit(repo, ["add", "."]);
+    runGit(repo, ["commit", "-m", "parent todo"]);
+
+    runGit(repo, ["checkout", "main"]);
+    runGit(repo, ["checkout", "-b", "climpire/child0003"]);
+    fs.writeFileSync(path.join(repo, "tasks", "todo.md"), "child\n", "utf8");
+    fs.writeFileSync(path.join(repo, "feature.txt"), "feature\n", "utf8");
+    runGit(repo, ["add", "."]);
+    runGit(repo, ["commit", "-m", "child todo"]);
+
+    runGit(repo, ["checkout", "climpire/parent0003"]);
+
+    const tools = createWorktreeMergeTools({
+      db: {
+        prepare() {
+          return {
+            get() {
+              return { title: "Parent task", description: "Parent ingest" };
+            },
+          };
+        },
+      } as any,
+      taskWorktrees: new Map([
+        [
+          "parent-0003",
+          {
+            branchName: "climpire/parent0003",
+            projectPath: repo,
+            worktreePath: repo,
+          },
+        ],
+        [
+          "child-0003",
+          {
+            branchName: "climpire/child0003",
+            projectPath: repo,
+            worktreePath: repo,
+          },
+        ],
+      ]),
+      appendTaskLog: () => {},
+      cleanupWorktree: () => {},
+      resolveLang: () => "en",
+      l: (ko: string[], en: string[], ja: string[], zh: string[]) => ({ ko, en, ja, zh }),
+      pickL: (pool: any, lang: string) => pool?.[lang]?.[0] ?? pool?.en?.[0] ?? "",
+    });
+
+    const result = tools.ingestChildBranchIntoParent("parent-0003", "child-0003");
+
+    expect(result.success).toBe(true);
+    expect(fs.readFileSync(path.join(repo, "feature.txt"), "utf8").replace(/\r\n/g, "\n")).toBe("feature\n");
+    expect(fs.readFileSync(path.join(repo, "tasks", "todo.md"), "utf8").replace(/\r\n/g, "\n")).toBe("parent\n");
   });
 });

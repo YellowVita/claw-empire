@@ -1,9 +1,24 @@
+import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { getTaskShortId } from "./lifecycle.ts";
 
 export const DIFF_SUMMARY_NONE = "__DIFF_NONE__";
 export const DIFF_SUMMARY_ERROR = "__DIFF_ERROR__";
+
+const RUNTIME_TASK_ARTIFACT_EXACT_PATHS = new Set([
+  "tasks/todo.md",
+  "tasks/lessons.md",
+  "tasks/review.md",
+]);
+const RUNTIME_TASK_ARTIFACT_PREFIXES = ["tasks/runtime/", "tasks/subtasks/"];
+const RUNTIME_TASK_ARTIFACT_RESET_TARGETS = [
+  "tasks/todo.md",
+  "tasks/lessons.md",
+  "tasks/review.md",
+  "tasks/runtime",
+  "tasks/subtasks",
+];
 
 const AUTO_COMMIT_ALLOWED_UNTRACKED_EXTENSIONS = new Set([
   ".ts",
@@ -99,9 +114,92 @@ export function hasVisibleDiffSummary(summary: string): boolean {
   return Boolean(summary && summary !== DIFF_SUMMARY_NONE && summary !== DIFF_SUMMARY_ERROR);
 }
 
+function normalizeRepoRelativePath(filePath: string): string {
+  return filePath.replace(/\\/g, "/").replace(/^\.\//, "").trim();
+}
+
+export function isRuntimeTaskArtifactPath(filePath: string): boolean {
+  const normalized = normalizeRepoRelativePath(filePath).toLowerCase();
+  if (!normalized) return false;
+  if (RUNTIME_TASK_ARTIFACT_EXACT_PATHS.has(normalized)) return true;
+  return RUNTIME_TASK_ARTIFACT_PREFIXES.some((prefix) => normalized.startsWith(prefix));
+}
+
+export function filterRuntimeTaskArtifactPaths(filePaths: string[]): string[] {
+  return filePaths.filter((entry) => !isRuntimeTaskArtifactPath(entry));
+}
+
+function buildRuntimeTaskArtifactExcludePathspecs(): string[] {
+  return [...RUNTIME_TASK_ARTIFACT_EXACT_PATHS, ...RUNTIME_TASK_ARTIFACT_PREFIXES].map(
+    (entry) => `:(exclude)${entry}`,
+  );
+}
+
+function buildGitScopeArgs(): string[] {
+  return ["--", ".", ...buildRuntimeTaskArtifactExcludePathspecs()];
+}
+
+function resolveGitDirPath(repoPath: string): string | null {
+  try {
+    const gitDir = execFileSync("git", ["rev-parse", "--git-dir"], {
+      cwd: repoPath,
+      stdio: "pipe",
+      timeout: 5000,
+    })
+      .toString()
+      .trim();
+    if (!gitDir) return null;
+    return path.resolve(repoPath, gitDir);
+  } catch {
+    return null;
+  }
+}
+
+export function ensureRuntimeTaskArtifactLocalExcludes(repoPath: string): void {
+  const gitDir = resolveGitDirPath(repoPath);
+  if (!gitDir) return;
+  const infoDir = path.join(gitDir, "info");
+  const excludePath = path.join(infoDir, "exclude");
+  const lines = [
+    "tasks/todo.md",
+    "tasks/lessons.md",
+    "tasks/review.md",
+    "tasks/runtime/",
+    "tasks/subtasks/",
+  ];
+  try {
+    fs.mkdirSync(infoDir, { recursive: true });
+    const existing = fs.existsSync(excludePath) ? fs.readFileSync(excludePath, "utf8") : "";
+    const appendLines = lines.filter((line) => !existing.includes(line));
+    if (appendLines.length <= 0) return;
+    const prefix = existing && !existing.endsWith("\n") ? "\n" : "";
+    fs.appendFileSync(excludePath, `${prefix}${appendLines.join("\n")}\n`, "utf8");
+  } catch {
+    // ignore exclude sync failures
+  }
+}
+
+export function discardRuntimeTaskArtifactChanges(worktreePath: string): string[] {
+  const restored: string[] = [];
+  for (const relPath of RUNTIME_TASK_ARTIFACT_RESET_TARGETS) {
+    try {
+      execFileSync("git", ["restore", "--staged", "--worktree", "--source=HEAD", "--", relPath], {
+        cwd: worktreePath,
+        stdio: "pipe",
+        timeout: 5000,
+      });
+      restored.push(relPath);
+    } catch {
+      // Ignore unmatched runtime paths.
+    }
+  }
+  return restored;
+}
+
 export function readWorktreeStatusShort(worktreePath: string): string {
   try {
-    return execFileSync("git", ["status", "--short"], {
+    ensureRuntimeTaskArtifactLocalExcludes(worktreePath);
+    return execFileSync("git", ["status", "--short", ...buildGitScopeArgs()], {
       cwd: worktreePath,
       stdio: "pipe",
       timeout: 5000,
@@ -140,10 +238,6 @@ function readGitNullSeparated(worktreePath: string, args: string[]): string[] {
   }
 }
 
-function normalizeRepoRelativePath(filePath: string): string {
-  return filePath.replace(/\\/g, "/").replace(/^\.\//, "").trim();
-}
-
 function isSafeUntrackedPathForAutoCommit(filePath: string): boolean {
   const normalized = normalizeRepoRelativePath(filePath);
   if (!normalized || normalized.startsWith("/") || normalized.includes("..")) return false;
@@ -173,19 +267,36 @@ function stageWorktreeChangesForAutoCommit(
   appendTaskLog: (taskId: string, kind: string, message: string) => void,
 ): { stagedPaths: string[]; blockedUntrackedPaths: string[]; error: string | null } {
   try {
+    ensureRuntimeTaskArtifactLocalExcludes(worktreePath);
+    const restoredRuntimePaths = discardRuntimeTaskArtifactChanges(worktreePath);
+    if (restoredRuntimePaths.length > 0) {
+      appendTaskLog(
+        taskId,
+        "system",
+        `Runtime task artifacts were reset before auto-commit: ${restoredRuntimePaths.join(", ")}`,
+      );
+    }
+
     // Tracked edits/deletions/renames are safe to stage in bulk.
-    execFileSync("git", ["add", "-u"], {
+    execFileSync("git", ["add", "-u", ...buildGitScopeArgs()], {
       cwd: worktreePath,
       stdio: "pipe",
       timeout: 10000,
     });
 
-    const untracked = readGitNullSeparated(worktreePath, ["ls-files", "--others", "--exclude-standard", "-z", "--"]);
+    const untracked = readGitNullSeparated(worktreePath, [
+      "ls-files",
+      "--others",
+      "--exclude-standard",
+      "-z",
+      ...buildGitScopeArgs(),
+    ]);
     const blockedUntrackedPaths: string[] = [];
     const safeUntrackedPaths: string[] = [];
     for (const rawPath of untracked) {
       const relPath = normalizeRepoRelativePath(rawPath);
       if (!relPath) continue;
+      if (isRuntimeTaskArtifactPath(relPath)) continue;
       if (!isSafeUntrackedPathForAutoCommit(relPath)) {
         blockedUntrackedPaths.push(relPath);
         continue;
@@ -215,7 +326,7 @@ function stageWorktreeChangesForAutoCommit(
       );
     }
 
-    const stagedPaths = readGitNullSeparated(worktreePath, ["diff", "--cached", "--name-only", "-z", "--"])
+    const stagedPaths = readGitNullSeparated(worktreePath, ["diff", "--cached", "--name-only", "-z", ...buildGitScopeArgs()])
       .map(normalizeRepoRelativePath)
       .filter(Boolean);
     return { stagedPaths, blockedUntrackedPaths, error: null };
