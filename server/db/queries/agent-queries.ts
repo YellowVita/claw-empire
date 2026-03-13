@@ -23,6 +23,14 @@ export type RetryAgentRow = {
   department_name: string;
 };
 
+export type WorkingAgentTaskStatusRow = {
+  agent_id: string;
+  agent_name: string | null;
+  current_task_id: string;
+  task_id: string | null;
+  task_status: string | null;
+};
+
 export function listBreakRotationAgents(db: DatabaseSync): BreakRotationAgentRow[] {
   return db
     .prepare("SELECT id, department_id, status FROM agents WHERE status IN ('idle','break')")
@@ -35,6 +43,32 @@ export function updateAgentStatus(db: DatabaseSync, agentId: string, status: str
 
 export function setAgentIdleAndClearTask(db: DatabaseSync, agentId: string): void {
   db.prepare("UPDATE agents SET status = 'idle', current_task_id = NULL WHERE id = ?").run(agentId);
+}
+
+export function clearWorkingAgentIfTaskMatches(db: DatabaseSync, agentId: string, currentTaskId: string): number {
+  const result = db
+    .prepare("UPDATE agents SET status = 'idle', current_task_id = NULL WHERE id = ? AND current_task_id = ?")
+    .run(agentId, currentTaskId) as { changes?: number };
+  return result.changes ?? 0;
+}
+
+export function listWorkingAgentsWithTaskStatus(db: DatabaseSync): WorkingAgentTaskStatusRow[] {
+  return db
+    .prepare(
+      `SELECT
+         a.id AS agent_id,
+         a.name AS agent_name,
+         a.current_task_id,
+         t.id AS task_id,
+         t.status AS task_status
+       FROM agents a
+       LEFT JOIN tasks t ON t.id = a.current_task_id
+       WHERE a.status = 'working'
+         AND a.current_task_id IS NOT NULL
+         AND TRIM(a.current_task_id) != ''
+       ORDER BY a.name ASC`,
+    )
+    .all() as WorkingAgentTaskStatusRow[];
 }
 
 export function getAgentById(db: DatabaseSync, agentId: string) {

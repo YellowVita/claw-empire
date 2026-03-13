@@ -1,6 +1,7 @@
 import type { Dispatch, SetStateAction } from "react";
 import type {
   ApiProvider,
+  ApiProviderOfficialPreset,
   ApiProviderType,
   DeviceCodeStart,
   OAuthConnectProvider,
@@ -16,6 +17,7 @@ import type {
   Department,
   MessengerChannelType,
   MessengerSessionConfig,
+  WorkflowPackKey,
 } from "../../types";
 
 export type Locale = UiLanguage;
@@ -46,6 +48,7 @@ export interface ApiFormState {
   type: ApiProviderType;
   base_url: string;
   api_key: string;
+  preset_key: string | null;
 }
 
 export type ApiTestResultMap = Record<string, { ok: boolean; msg: string }>;
@@ -53,6 +56,10 @@ export type ApiTestResultMap = Record<string, { ok: boolean; msg: string }>;
 export interface ApiAssignTarget {
   providerId: string;
   model: string;
+}
+
+export interface ApiAssignDepartment extends Department {
+  workflow_pack_key: WorkflowPackKey;
 }
 
 export interface CliSettingsTabProps {
@@ -102,23 +109,28 @@ export interface OAuthConnectCardProps {
 export interface ApiStateBundle {
   apiProviders: ApiProvider[];
   apiProvidersLoading: boolean;
+  apiOfficialPresets: Record<string, ApiProviderOfficialPreset>;
+  apiPresetsLoading: boolean;
   apiAddMode: boolean;
   apiEditingId: string | null;
   apiForm: ApiFormState;
   apiSaving: boolean;
+  apiSaveError: string | null;
   apiTesting: string | null;
   apiTestResult: ApiTestResultMap;
   apiModelsExpanded: Record<string, boolean>;
   apiAssignTarget: ApiAssignTarget | null;
   apiAssignAgents: Agent[];
-  apiAssignDepts: Department[];
+  apiAssignDepts: ApiAssignDepartment[];
   apiAssigning: boolean;
   setApiAddMode: Dispatch<SetStateAction<boolean>>;
   setApiEditingId: Dispatch<SetStateAction<string | null>>;
   setApiForm: Dispatch<SetStateAction<ApiFormState>>;
+  setApiSaveError: Dispatch<SetStateAction<string | null>>;
   setApiModelsExpanded: Dispatch<SetStateAction<Record<string, boolean>>>;
   setApiAssignTarget: Dispatch<SetStateAction<ApiAssignTarget | null>>;
   loadApiProviders: () => Promise<void>;
+  loadApiPresets: () => Promise<void>;
   handleApiProviderSave: () => Promise<void>;
   handleApiProviderDelete: (id: string) => Promise<void>;
   handleApiProviderTest: (id: string) => Promise<void>;

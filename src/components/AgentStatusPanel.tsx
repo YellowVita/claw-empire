@@ -33,6 +33,7 @@ function displayCliProvider(provider: CliProcessInfo["provider"]): string {
   if (provider === "claude") return "Claude";
   if (provider === "codex") return "Codex";
   if (provider === "gemini") return "Gemini";
+  if (provider === "kimi") return "Kimi";
   if (provider === "node") return "Node";
   if (provider === "python") return "Python";
   return "OpenCode";

@@ -47,6 +47,7 @@ export const CLI_LABELS: Record<string, string> = {
   codex: "Codex CLI",
   gemini: "Gemini CLI",
   opencode: "OpenCode",
+  kimi: "Kimi Code",
   copilot: "GitHub Copilot",
   antigravity: "Antigravity",
   api: "API Provider",

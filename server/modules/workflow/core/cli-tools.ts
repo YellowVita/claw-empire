@@ -90,6 +90,11 @@ export function createCliTools(deps: CreateCliToolsDeps) {
         }
         return args;
       }
+      case "kimi": {
+        const args = ["kimi", "--print", "--output-format=stream-json"];
+        if (model) args.push("-m", model);
+        return args;
+      }
       case "opencode": {
         const args = ["opencode", "run"];
         if (model) args.push("-m", model);

@@ -145,156 +145,168 @@ test.describe("CI API ops and docs coverage", () => {
   test("pause + inject + resume flow exposes interrupt control contract", async ({ request }) => {
     const seed = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
     const deptId = `ci_pause_dept_${seed}`;
+    const cleanup = {
+      taskIds: [] as string[],
+      agentIds: [] as string[],
+      departmentIds: [deptId],
+      projectIds: [] as string[],
+    };
 
-    const csrfToken = await establishApiSession(request);
+    try {
+      const csrfToken = await establishApiSession(request);
 
-    await expectOkJson(
-      await request.post("/api/departments", {
-        data: {
-          id: deptId,
-          name: `Pause Dept ${seed}`,
-          icon: "P",
-          color: "#2563eb",
-        },
-      }),
-      "POST /api/departments",
-    );
+      await expectOkJson(
+        await request.post("/api/departments", {
+          data: {
+            id: deptId,
+            name: `Pause Dept ${seed}`,
+            icon: "P",
+            color: "#2563eb",
+          },
+        }),
+        "POST /api/departments",
+      );
 
-    const agent = await expectOkJson<AgentResponse>(
-      await request.post("/api/agents", {
-        data: {
-          name: `pause-agent-${seed}`,
-          department_id: deptId,
-          role: "senior",
-          cli_provider: "api",
-          avatar_emoji: "P",
-        },
-      }),
-      "POST /api/agents",
-    );
-    const agentId = agent.agent.id;
+      const agent = await expectOkJson<AgentResponse>(
+        await request.post("/api/agents", {
+          data: {
+            name: `pause-agent-${seed}`,
+            department_id: deptId,
+            role: "senior",
+            cli_provider: "api",
+            avatar_emoji: "P",
+          },
+        }),
+        "POST /api/agents",
+      );
+      const agentId = agent.agent.id;
+      cleanup.agentIds.push(agentId);
 
-    const task = await expectOkJson<TaskResponse>(
-      await request.post("/api/tasks", {
-        data: {
-          title: `pause-task-${seed}`,
-          department_id: deptId,
-          assigned_agent_id: agentId,
-          status: "pending",
-          project_path: process.cwd(),
-        },
-      }),
-      "POST /api/tasks",
-    );
-    const taskId = task.id ?? task.task.id;
+      const task = await expectOkJson<TaskResponse>(
+        await request.post("/api/tasks", {
+          data: {
+            title: `pause-task-${seed}`,
+            department_id: deptId,
+            assigned_agent_id: agentId,
+            status: "pending",
+            project_path: process.cwd(),
+          },
+        }),
+        "POST /api/tasks",
+      );
+      const taskId = task.id ?? task.task.id;
+      cleanup.taskIds.push(taskId);
 
-    const terminalBeforePause = await expectOkJson<{
-      ok: boolean;
-      interrupt?: InterruptProof | null;
-    }>(await request.get(`/api/tasks/${taskId}/terminal?lines=50`), "GET /api/tasks/:id/terminal (before pause)");
-    expect(terminalBeforePause.ok).toBe(true);
-    expect(terminalBeforePause.interrupt).toBeUndefined();
+      const terminalBeforePause = await expectOkJson<{
+        ok: boolean;
+        interrupt?: InterruptProof | null;
+      }>(await request.get(`/api/tasks/${taskId}/terminal?lines=50`), "GET /api/tasks/:id/terminal (before pause)");
+      expect(terminalBeforePause.ok).toBe(true);
+      expect(terminalBeforePause.interrupt).toBeUndefined();
 
-    const proofRes = await expectOkJson<{
-      ok: boolean;
-      interrupt: InterruptProof;
-    }>(
-      await request.post(`/api/tasks/${taskId}/interrupt-proof`, {
-        data: {},
-        headers: {
-          "x-csrf-token": csrfToken,
-        },
-      }),
-      "POST /api/tasks/:id/interrupt-proof",
-    );
-    const interruptProof = proofRes.interrupt;
-    expect(interruptProof.session_id.length).toBeGreaterThan(0);
-    expect(interruptProof.control_token.length).toBeGreaterThan(0);
-    expect(interruptProof.requires_csrf).toBe(true);
+      const proofRes = await expectOkJson<{
+        ok: boolean;
+        interrupt: InterruptProof;
+      }>(
+        await request.post(`/api/tasks/${taskId}/interrupt-proof`, {
+          data: {},
+          headers: {
+            "x-csrf-token": csrfToken,
+          },
+        }),
+        "POST /api/tasks/:id/interrupt-proof",
+      );
+      const interruptProof = proofRes.interrupt;
+      expect(interruptProof.session_id.length).toBeGreaterThan(0);
+      expect(interruptProof.control_token.length).toBeGreaterThan(0);
+      expect(interruptProof.requires_csrf).toBe(true);
 
-    const pauseRes = await expectOkJson<{
-      ok: boolean;
-      status: string;
-    }>(
-      await request.post(`/api/tasks/${taskId}/stop`, {
-        data: {
-          mode: "pause",
-          session_id: interruptProof.session_id,
-          interrupt_token: interruptProof.control_token,
-        },
-        headers: {
-          "x-csrf-token": csrfToken,
-        },
-      }),
-      "POST /api/tasks/:id/stop",
-    );
-    expect(pauseRes.ok).toBe(true);
-    expect(pauseRes.status).toBe("pending");
+      const pauseRes = await expectOkJson<{
+        ok: boolean;
+        status: string;
+      }>(
+        await request.post(`/api/tasks/${taskId}/stop`, {
+          data: {
+            mode: "pause",
+            session_id: interruptProof.session_id,
+            interrupt_token: interruptProof.control_token,
+          },
+          headers: {
+            "x-csrf-token": csrfToken,
+          },
+        }),
+        "POST /api/tasks/:id/stop",
+      );
+      expect(pauseRes.ok).toBe(true);
+      expect(pauseRes.status).toBe("pending");
 
-    const injectRes = await expectOkJson<{
-      ok: boolean;
-      queued: boolean;
-      session_id: string;
-      pending_count: number;
-    }>(
-      await request.post(`/api/tasks/${taskId}/inject`, {
-        data: {
-          prompt: "Summarize the latest state before resuming.",
-          session_id: interruptProof.session_id,
-          interrupt_token: interruptProof.control_token,
-        },
-        headers: {
-          "x-csrf-token": csrfToken,
-        },
-      }),
-      "POST /api/tasks/:id/inject",
-    );
-    expect(injectRes.ok).toBe(true);
-    expect(injectRes.queued).toBe(true);
-    expect(injectRes.session_id).toBe(interruptProof.session_id);
-    expect(injectRes.pending_count).toBeGreaterThan(0);
+      const injectRes = await expectOkJson<{
+        ok: boolean;
+        queued: boolean;
+        session_id: string;
+        pending_count: number;
+      }>(
+        await request.post(`/api/tasks/${taskId}/inject`, {
+          data: {
+            prompt: "Summarize the latest state before resuming.",
+            session_id: interruptProof.session_id,
+            interrupt_token: interruptProof.control_token,
+          },
+          headers: {
+            "x-csrf-token": csrfToken,
+          },
+        }),
+        "POST /api/tasks/:id/inject",
+      );
+      expect(injectRes.ok).toBe(true);
+      expect(injectRes.queued).toBe(true);
+      expect(injectRes.session_id).toBe(interruptProof.session_id);
+      expect(injectRes.pending_count).toBeGreaterThan(0);
 
-    const minutesRes = await expectOkJson<{ meetings: unknown[] }>(
-      await request.get(`/api/tasks/${taskId}/meeting-minutes`),
-      "GET /api/tasks/:id/meeting-minutes",
-    );
-    expect(Array.isArray(minutesRes.meetings)).toBe(true);
+      const minutesRes = await expectOkJson<{ meetings: unknown[] }>(
+        await request.get(`/api/tasks/${taskId}/meeting-minutes`),
+        "GET /api/tasks/:id/meeting-minutes",
+      );
+      expect(Array.isArray(minutesRes.meetings)).toBe(true);
 
-    await expectOkJson(
-      await request.patch(`/api/agents/${agentId}`, {
-        data: {
-          status: "offline",
-        },
-      }),
-      "PATCH /api/agents/:id(status=offline)",
-    );
+      await expectOkJson(
+        await request.patch(`/api/agents/${agentId}`, {
+          data: {
+            status: "offline",
+          },
+        }),
+        "PATCH /api/agents/:id(status=offline)",
+      );
 
-    const resumeRes = await expectOkJson<{
-      ok: boolean;
-      status: string;
-      auto_resumed: boolean;
-    }>(
-      await request.post(`/api/tasks/${taskId}/resume`, {
-        data: {
-          session_id: interruptProof.session_id,
-          interrupt_token: interruptProof.control_token,
-        },
-        headers: {
-          "x-csrf-token": csrfToken,
-        },
-      }),
-      "POST /api/tasks/:id/resume",
-    );
-    expect(resumeRes.ok).toBe(true);
-    expect(resumeRes.status).toBe("planned");
-    expect(resumeRes.auto_resumed).toBe(false);
+      const resumeRes = await expectOkJson<{
+        ok: boolean;
+        status: string;
+        auto_resumed: boolean;
+      }>(
+        await request.post(`/api/tasks/${taskId}/resume`, {
+          data: {
+            session_id: interruptProof.session_id,
+            interrupt_token: interruptProof.control_token,
+          },
+          headers: {
+            "x-csrf-token": csrfToken,
+          },
+        }),
+        "POST /api/tasks/:id/resume",
+      );
+      expect(resumeRes.ok).toBe(true);
+      expect(resumeRes.status).toBe("planned");
+      expect(resumeRes.auto_resumed).toBe(false);
 
-    const taskAfterResume = await expectOkJson<TaskResponse>(
-      await request.get(`/api/tasks/${taskId}`),
-      "GET /api/tasks/:id",
-    );
-    expect(taskAfterResume.task.status).toBe("planned");
-    expect(taskAfterResume.task.assigned_agent_id).toBe(agentId);
+      const taskAfterResume = await expectOkJson<TaskResponse>(
+        await request.get(`/api/tasks/${taskId}`),
+        "GET /api/tasks/:id",
+      );
+      expect(taskAfterResume.task.status).toBe("planned");
+      expect(taskAfterResume.task.assigned_agent_id).toBe(agentId);
+    } finally {
+      await cleanupE2EResources(request, cleanup);
+    }
   });
 
   test("project path helpers + api provider CRUD + ops diagnostics are reachable in CI", async ({ request }) => {

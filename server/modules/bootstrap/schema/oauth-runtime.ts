@@ -23,6 +23,15 @@ export type OAuthRuntimeHelpers = {
 export function initializeOAuthRuntime(deps: OAuthRuntimeDeps): OAuthRuntimeHelpers {
   const { db, nowMs, runInTransaction } = deps;
 
+  function hasColumn(table: string, column: string): boolean {
+    try {
+      const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name?: string }>;
+      return cols.some((col) => col.name === column);
+    } catch {
+      return false;
+    }
+  }
+
   // Add columns to oauth_credentials for web-oauth tokens (safe to run repeatedly)
   try {
     db.exec("ALTER TABLE oauth_credentials ADD COLUMN access_token_enc TEXT");
@@ -114,41 +123,122 @@ export function initializeOAuthRuntime(deps: OAuthRuntimeDeps): OAuthRuntimeHelp
   } catch {
     /* already exists or duplicate data */
   }
-  // 기존 DB의 cli_provider CHECK 제약 확장 (SQLite는 ALTER CHECK 미지원이므로 새 행만 해당)
+  // 기존 DB의 provider CHECK 제약 확장 (SQLite는 ALTER CHECK 미지원이므로 테이블 재구성이 필요)
   try {
-    const hasApiCheck = (
-      db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='agents'").get() as any
-    )?.sql?.includes("'api'");
-    if (!hasApiCheck) {
-      db.exec(`
-      CREATE TABLE IF NOT EXISTS agents_new (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        name_ko TEXT NOT NULL DEFAULT '',
-        name_ja TEXT NOT NULL DEFAULT '',
-        name_zh TEXT NOT NULL DEFAULT '',
-        department_id TEXT REFERENCES departments(id),
-        role TEXT NOT NULL CHECK(role IN ('team_leader','senior','junior','intern')),
-        acts_as_planning_leader INTEGER NOT NULL DEFAULT 0 CHECK(acts_as_planning_leader IN (0,1)),
-        cli_provider TEXT CHECK(cli_provider IN ('claude','codex','gemini','opencode','copilot','antigravity','api')),
-        oauth_account_id TEXT,
-        api_provider_id TEXT,
-        api_model TEXT,
-        cli_model TEXT,
-        cli_reasoning_level TEXT,
-        avatar_emoji TEXT NOT NULL DEFAULT '🤖',
-        sprite_number INTEGER,
-        personality TEXT,
-        status TEXT NOT NULL DEFAULT 'idle' CHECK(status IN ('idle','working','break','offline')),
-        current_task_id TEXT,
-        stats_tasks_done INTEGER DEFAULT 0,
-        stats_xp INTEGER DEFAULT 0,
-        created_at INTEGER DEFAULT (unixepoch()*1000)
-      );
-      INSERT INTO agents_new SELECT id, name, name_ko, '', '', department_id, role, 0, cli_provider, oauth_account_id, NULL, NULL, NULL, NULL, avatar_emoji, NULL, personality, status, current_task_id, stats_tasks_done, stats_xp, created_at FROM agents;
-      DROP TABLE agents;
-      ALTER TABLE agents_new RENAME TO agents;
-    `);
+    const agentSql =
+      (db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='agents'").get() as any)?.sql ?? "";
+    if (agentSql && !agentSql.includes("'kimi'")) {
+      const workflowPackExpr = hasColumn("agents", "workflow_pack_key")
+        ? "COALESCE(workflow_pack_key, 'development')"
+        : "'development'";
+      runInTransaction(() => {
+        db.exec(`
+        DROP TABLE IF EXISTS agents_new;
+        CREATE TABLE agents_new (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          name_ko TEXT NOT NULL DEFAULT '',
+          name_ja TEXT NOT NULL DEFAULT '',
+          name_zh TEXT NOT NULL DEFAULT '',
+          department_id TEXT REFERENCES departments(id),
+          workflow_pack_key TEXT NOT NULL DEFAULT 'development',
+          role TEXT NOT NULL CHECK(role IN ('team_leader','senior','junior','intern')),
+          acts_as_planning_leader INTEGER NOT NULL DEFAULT 0 CHECK(acts_as_planning_leader IN (0,1)),
+          cli_provider TEXT CHECK(cli_provider IN ('claude','codex','gemini','opencode','kimi','copilot','antigravity','api')),
+          oauth_account_id TEXT,
+          api_provider_id TEXT,
+          api_model TEXT,
+          cli_model TEXT,
+          cli_reasoning_level TEXT,
+          avatar_emoji TEXT NOT NULL DEFAULT '🤖',
+          sprite_number INTEGER,
+          personality TEXT,
+          status TEXT NOT NULL DEFAULT 'idle' CHECK(status IN ('idle','working','break','offline')),
+          current_task_id TEXT,
+          stats_tasks_done INTEGER DEFAULT 0,
+          stats_xp INTEGER DEFAULT 0,
+          created_at INTEGER DEFAULT (unixepoch()*1000)
+        );
+        INSERT INTO agents_new (
+          id, name, name_ko, name_ja, name_zh, department_id, workflow_pack_key,
+          role, acts_as_planning_leader, cli_provider, oauth_account_id,
+          api_provider_id, api_model, cli_model, cli_reasoning_level,
+          avatar_emoji, sprite_number, personality, status, current_task_id,
+          stats_tasks_done, stats_xp, created_at
+        )
+        SELECT
+          id,
+          name,
+          name_ko,
+          name_ja,
+          name_zh,
+          department_id,
+          ${workflowPackExpr},
+          role,
+          COALESCE(acts_as_planning_leader, 0),
+          cli_provider,
+          oauth_account_id,
+          api_provider_id,
+          api_model,
+          cli_model,
+          cli_reasoning_level,
+          avatar_emoji,
+          sprite_number,
+          personality,
+          status,
+          current_task_id,
+          stats_tasks_done,
+          stats_xp,
+          created_at
+        FROM agents;
+        DROP TABLE agents;
+        ALTER TABLE agents_new RENAME TO agents;
+      `);
+      });
+    }
+  } catch {
+    /* migration already done or not needed */
+  }
+  try {
+    const historySql =
+      (db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='skill_learning_history'").get() as any)
+        ?.sql ?? "";
+    if (historySql && !historySql.includes("'kimi'")) {
+      runInTransaction(() => {
+        db.exec(`
+        DROP TABLE IF EXISTS skill_learning_history_new;
+        CREATE TABLE skill_learning_history_new (
+          id TEXT PRIMARY KEY,
+          job_id TEXT NOT NULL,
+          provider TEXT NOT NULL CHECK(provider IN ('claude','codex','gemini','opencode','kimi','copilot','antigravity','api')),
+          repo TEXT NOT NULL,
+          skill_id TEXT NOT NULL,
+          skill_label TEXT NOT NULL,
+          status TEXT NOT NULL CHECK(status IN ('queued','running','succeeded','failed')),
+          command TEXT NOT NULL,
+          error TEXT,
+          run_started_at INTEGER,
+          run_completed_at INTEGER,
+          created_at INTEGER DEFAULT (unixepoch()*1000),
+          updated_at INTEGER DEFAULT (unixepoch()*1000),
+          UNIQUE(job_id, provider)
+        );
+        INSERT INTO skill_learning_history_new (
+          id, job_id, provider, repo, skill_id, skill_label, status, command,
+          error, run_started_at, run_completed_at, created_at, updated_at
+        )
+        SELECT
+          id, job_id, provider, repo, skill_id, skill_label, status, command,
+          error, run_started_at, run_completed_at, created_at, updated_at
+        FROM skill_learning_history;
+        DROP TABLE skill_learning_history;
+        ALTER TABLE skill_learning_history_new RENAME TO skill_learning_history;
+        CREATE INDEX IF NOT EXISTS idx_skill_learning_history_provider_status_updated
+          ON skill_learning_history(provider, status, updated_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_skill_learning_history_skill_lookup
+          ON skill_learning_history(provider, repo, skill_id, updated_at DESC);
+      `);
+      });
     }
   } catch {
     /* migration already done or not needed */
@@ -168,24 +258,36 @@ export function initializeOAuthRuntime(deps: OAuthRuntimeDeps): OAuthRuntimeHelp
   try {
     const apiProvSql =
       (db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='api_providers'").get() as any)?.sql ?? "";
-    if (apiProvSql && !apiProvSql.includes("'cerebras'")) {
-      db.exec(`
-      CREATE TABLE IF NOT EXISTS api_providers_new (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        type TEXT NOT NULL DEFAULT 'openai' CHECK(type IN ('openai','anthropic','google','ollama','openrouter','together','groq','cerebras','custom')),
-        base_url TEXT NOT NULL,
-        api_key_enc TEXT,
-        enabled INTEGER NOT NULL DEFAULT 1,
-        models_cache TEXT,
-        models_cached_at INTEGER,
-        created_at INTEGER DEFAULT (unixepoch()*1000),
-        updated_at INTEGER DEFAULT (unixepoch()*1000)
-      );
-      INSERT INTO api_providers_new SELECT * FROM api_providers;
-      DROP TABLE api_providers;
-      ALTER TABLE api_providers_new RENAME TO api_providers;
-    `);
+    const apiProvCols = db.prepare("PRAGMA table_info(api_providers)").all() as Array<{ name: string }>;
+    const hasPresetKey = apiProvCols.some((c) => c.name === "preset_key");
+    if (apiProvSql && (!apiProvSql.includes("'cerebras'") || !hasPresetKey)) {
+      runInTransaction(() => {
+        db.exec(`
+        CREATE TABLE IF NOT EXISTS api_providers_new (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          type TEXT NOT NULL DEFAULT 'openai' CHECK(type IN ('openai','anthropic','google','ollama','openrouter','together','groq','cerebras','custom')),
+          base_url TEXT NOT NULL,
+          api_key_enc TEXT,
+          preset_key TEXT,
+          enabled INTEGER NOT NULL DEFAULT 1,
+          models_cache TEXT,
+          models_cached_at INTEGER,
+          created_at INTEGER DEFAULT (unixepoch()*1000),
+          updated_at INTEGER DEFAULT (unixepoch()*1000)
+        );
+        INSERT INTO api_providers_new (
+          id, name, type, base_url, api_key_enc, preset_key, enabled,
+          models_cache, models_cached_at, created_at, updated_at
+        )
+        SELECT
+          id, name, type, base_url, api_key_enc, ${hasPresetKey ? "preset_key" : "NULL"},
+          enabled, models_cache, models_cached_at, created_at, updated_at
+        FROM api_providers;
+        DROP TABLE api_providers;
+        ALTER TABLE api_providers_new RENAME TO api_providers;
+      `);
+      });
     }
   } catch {
     /* migration already done or not needed */
@@ -252,8 +354,7 @@ export function initializeOAuthRuntime(deps: OAuthRuntimeDeps): OAuthRuntimeHelp
     const hasCompositePk = providerPk === 1 && accountPk === 2;
     if (hasCompositePk) return;
 
-    db.exec("BEGIN");
-    try {
+    runInTransaction(() => {
       db.exec("ALTER TABLE oauth_active_accounts RENAME TO oauth_active_accounts_legacy");
       db.exec(`
       CREATE TABLE oauth_active_accounts (
@@ -270,11 +371,7 @@ export function initializeOAuthRuntime(deps: OAuthRuntimeDeps): OAuthRuntimeHelp
       WHERE provider IS NOT NULL AND account_id IS NOT NULL
     `);
       db.exec("DROP TABLE oauth_active_accounts_legacy");
-      db.exec("COMMIT");
-    } catch (err) {
-      db.exec("ROLLBACK");
-      throw err;
-    }
+    });
   }
 
   migrateOAuthActiveAccountsTable();

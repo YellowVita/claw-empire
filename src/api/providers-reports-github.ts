@@ -18,6 +18,7 @@ export interface ApiProvider {
   name: string;
   type: ApiProviderType;
   base_url: string;
+  preset_key: string | null;
   has_api_key: boolean;
   enabled: boolean;
   models_cache: string[];
@@ -32,6 +33,18 @@ export interface ApiProviderPreset {
   auth_header: string;
 }
 
+export interface ApiProviderOfficialPreset {
+  label: string;
+  description: string;
+  type: Extract<ApiProviderType, "openai" | "anthropic">;
+  base_url: string;
+  docs_url: string;
+  api_key_hint: string;
+  api_key_placeholder: string;
+  fallback_models: string[];
+  required_api_key_prefix?: string;
+}
+
 export async function getApiProviders(): Promise<ApiProvider[]> {
   const j = await request<{ ok: boolean; providers: ApiProvider[] }>("/api/api-providers");
   return j.providers;
@@ -42,6 +55,7 @@ export async function createApiProvider(input: {
   type: ApiProviderType;
   base_url: string;
   api_key?: string;
+  preset_key?: string | null;
 }): Promise<{ ok: boolean; id: string }> {
   return post("/api/api-providers", input) as Promise<{ ok: boolean; id: string }>;
 }
@@ -54,6 +68,7 @@ export async function updateApiProvider(
     base_url?: string;
     api_key?: string;
     enabled?: boolean;
+    preset_key?: string | null;
   },
 ): Promise<{ ok: boolean }> {
   return put(`/api/api-providers/${id}`, patch_data) as Promise<{ ok: boolean }>;
@@ -85,9 +100,19 @@ export async function getApiProviderModels(
   );
 }
 
-export async function getApiProviderPresets(): Promise<Record<string, ApiProviderPreset>> {
-  const j = await request<{ ok: boolean; presets: Record<string, ApiProviderPreset> }>("/api/api-providers/presets");
-  return j.presets;
+export async function getApiProviderPresets(): Promise<{
+  presets: Record<ApiProviderType, ApiProviderPreset>;
+  official_presets: Record<string, ApiProviderOfficialPreset>;
+}> {
+  const j = await request<{
+    ok: boolean;
+    presets: Record<ApiProviderType, ApiProviderPreset>;
+    official_presets: Record<string, ApiProviderOfficialPreset>;
+  }>("/api/api-providers/presets");
+  return {
+    presets: j.presets,
+    official_presets: j.official_presets ?? {},
+  };
 }
 
 // ── Task Reports ─────────────────────────────────────────────────────────────
@@ -426,7 +451,7 @@ export async function getActiveAgents(): Promise<ActiveAgentInfo[]> {
 export interface CliProcessInfo {
   pid: number;
   ppid: number | null;
-  provider: "claude" | "codex" | "gemini" | "opencode" | "node" | "python";
+  provider: "claude" | "codex" | "gemini" | "opencode" | "kimi" | "node" | "python";
   executable: string;
   command: string;
   is_tracked: boolean;

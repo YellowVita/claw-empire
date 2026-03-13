@@ -285,7 +285,7 @@ export function localizeAuditStatus(status: string, t: TFunction): string {
   return status;
 }
 
-export const LEARN_PROVIDER_ORDER: SkillLearnProvider[] = ["claude", "codex", "gemini", "opencode"];
+export const LEARN_PROVIDER_ORDER: SkillLearnProvider[] = ["claude", "codex", "gemini", "opencode", "kimi"];
 export const LEARNED_PROVIDER_ORDER: SkillHistoryProvider[] = [
   "claude",
   "codex",
@@ -316,6 +316,7 @@ export function providerLabel(provider: SkillLearnProvider): string {
   if (provider === "claude") return "Claude Code";
   if (provider === "codex") return "Codex";
   if (provider === "gemini") return "Gemini";
+  if (provider === "kimi") return "Kimi Code";
   return "OpenCode";
 }
 
@@ -324,6 +325,7 @@ export function learnedProviderLabel(provider: SkillHistoryProvider): string {
   if (provider === "codex") return "Codex CLI";
   if (provider === "gemini") return "Gemini CLI";
   if (provider === "opencode") return "OpenCode";
+  if (provider === "kimi") return "Kimi Code";
   if (provider === "copilot") return "GitHub Copilot";
   if (provider === "antigravity") return "Antigravity";
   return "API Provider";
@@ -362,10 +364,20 @@ function CliGeminiLogo({ className = "h-3.5 w-3.5" }: { className?: string }) {
   );
 }
 
+function CliKimiLogo({ className = "h-3.5 w-3.5" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="12" cy="12" r="11" fill="#111827" />
+      <path d="M8 6h2.5v5.1L15 6h3l-4.7 5.66L18.4 18H15.3l-3.72-4.84-1.08 1.24V18H8V6z" fill="#F9FAFB" />
+    </svg>
+  );
+}
+
 export function cliProviderIcon(provider: SkillHistoryProvider) {
   if (provider === "claude") return <CliClaudeLogo />;
   if (provider === "codex") return <CliCodexLogo />;
   if (provider === "gemini") return <CliGeminiLogo />;
+  if (provider === "kimi") return <CliKimiLogo />;
   if (provider === "opencode") return <span className="text-[11px] text-slate-200">⚪</span>;
   if (provider === "copilot") return <span className="text-[11px] text-slate-200">🚀</span>;
   if (provider === "antigravity") return <span className="text-[11px] text-slate-200">🌌</span>;

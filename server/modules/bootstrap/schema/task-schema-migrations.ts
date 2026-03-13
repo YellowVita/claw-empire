@@ -41,6 +41,11 @@ export function applyTaskSchemaMigrations(db: DbLike): void {
   } catch {
     /* project_id not ready yet */
   }
+  try {
+    db.exec("ALTER TABLE api_providers ADD COLUMN preset_key TEXT");
+  } catch {
+    /* already exists */
+  }
   // Task creation audit completion flag
   try {
     db.exec("ALTER TABLE task_creation_audits ADD COLUMN completed INTEGER NOT NULL DEFAULT 0");

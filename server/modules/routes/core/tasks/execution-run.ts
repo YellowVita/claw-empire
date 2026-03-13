@@ -405,7 +405,7 @@ export function registerTaskRunRoute(deps: TaskRunRouteDeps): void {
     }
 
     const provider = agent.cli_provider || "claude";
-    if (!["claude", "codex", "gemini", "opencode", "copilot", "antigravity", "api"].includes(provider)) {
+    if (!["claude", "codex", "gemini", "opencode", "kimi", "copilot", "antigravity", "api"].includes(provider)) {
       return res.status(400).json({ error: "unsupported_provider", provider });
     }
     ensureVideoPreprodRemotionBestPracticesSkill({

@@ -122,7 +122,7 @@ export async function getSkillDetail(source: string, skillId: string): Promise<S
   return j.detail;
 }
 
-export type SkillLearnProvider = "claude" | "codex" | "gemini" | "opencode";
+export type SkillLearnProvider = "claude" | "codex" | "gemini" | "opencode" | "kimi";
 export type SkillLearnStatus = "queued" | "running" | "succeeded" | "failed";
 export type SkillHistoryProvider = SkillLearnProvider | "copilot" | "antigravity" | "api";
 

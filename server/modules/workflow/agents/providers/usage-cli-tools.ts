@@ -198,6 +198,17 @@ export function createUsageCliTools(deps: CreateUsageCliToolsDeps) {
       },
     },
     {
+      name: "kimi",
+      authHint: "Run: kimi auth login",
+      checkAuth: () => {
+        const home = os.homedir();
+        if (fileExistsNonEmpty(path.join(home, ".kimi", "credentials.json"))) return true;
+        if (fileExistsNonEmpty(path.join(home, ".kimi", "auth.json"))) return true;
+        if (process.env.MOONSHOT_API_KEY) return true;
+        return false;
+      },
+    },
+    {
       name: "opencode",
       authHint: "Run: opencode auth",
       checkAuth: () => {

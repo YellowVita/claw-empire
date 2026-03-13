@@ -14,6 +14,7 @@ import { readTaskExecutionPolicy } from "./workflow/orchestration/task-execution
 import { registerGracefulShutdownHandlers } from "./lifecycle/register-graceful-shutdown.ts";
 import { rotateBreaks } from "./lifecycle/break-rotation.ts";
 import { recoverOrphanInProgressTasks } from "./lifecycle/orphan-recovery.ts";
+import { recoverOrphanWorkingAgents } from "./lifecycle/orphan-working-agent-recovery.ts";
 import { sweepPendingSubtaskDelegations } from "./lifecycle/pending-subtask-delegation-sweep.ts";
 import {
   cleanupStartupOrphanWorktrees,
@@ -72,6 +73,7 @@ function recoverInterruptedWorkflowOnStartup(ctx: RuntimeContext): void {
     },
     "startup",
   );
+  recoverOrphanWorkingAgents({ db: ctx.db as any, broadcast: ctx.broadcast }, "startup");
   cleanupStartupOrphanWorktrees({ db: ctx.db as any });
 
   filterStartupReviewRecoveryRows(listStartupReviewTasks(ctx.db as any)).forEach((task, idx) => {
@@ -207,6 +209,10 @@ export function startLifecycle(ctx: RuntimeContext): void {
         },
         "interval",
       ),
+    ctx.IN_PROGRESS_ORPHAN_SWEEP_MS,
+  );
+  setInterval(
+    () => recoverOrphanWorkingAgents({ db: ctx.db as any, broadcast }, "interval"),
     ctx.IN_PROGRESS_ORPHAN_SWEEP_MS,
   );
   scheduleTaskRetrySweep(ctx, 4_000);

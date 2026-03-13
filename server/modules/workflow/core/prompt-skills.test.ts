@@ -83,6 +83,29 @@ describe("createPromptSkillsHelper", () => {
     }
   });
 
+  it("kimi provider도 provider 학습 스킬을 우선 노출한다", () => {
+    const db = createDb();
+    try {
+      insertLearnedSkill(db, {
+        provider: "kimi",
+        repo: "moonshot/skills",
+        skillId: "motion",
+        skillLabel: "moonshot/skills#motion",
+        at: 120,
+      });
+
+      const { buildAvailableSkillsPromptBlock } = createPromptSkillsHelper(db);
+      const block = buildAvailableSkillsPromptBlock("kimi");
+
+      expect(block).toContain("[scope=provider]");
+      expect(block).toContain("[provider=Kimi Code]");
+      expect(block).toContain("moonshot/skills#motion");
+      expect(block).toContain("Prioritize provider-matched learned skills");
+    } finally {
+      db.close();
+    }
+  });
+
   it("provider 학습 스킬이 없으면 global 학습 스킬을 사용한다", () => {
     const db = createDb();
     try {

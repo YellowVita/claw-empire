@@ -495,7 +495,7 @@ export function createSubtaskDelegationBatch(deps: BatchDeps) {
       };
 
       const execProvider = execAgent.cli_provider || "claude";
-      if (["claude", "codex", "gemini", "opencode", "copilot", "antigravity", "api"].includes(execProvider)) {
+      if (["claude", "codex", "gemini", "opencode", "kimi", "copilot", "antigravity", "api"].includes(execProvider)) {
         let delegatedProcessStarted = false;
         try {
           const projPath = resolveProjectPath({

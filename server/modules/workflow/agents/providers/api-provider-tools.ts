@@ -251,6 +251,7 @@ export function createApiProviderTools(deps: CreateApiProviderToolsDeps) {
     logPath: string,
     controller: AbortController,
     fakePid: number,
+    onComplete?: (exitCode: number) => void,
   ): void {
     const logStream = fs.createWriteStream(logPath, { flags: "a" });
     const { safeWrite, safeEnd } = createSafeLogStreamOps(logStream);
@@ -300,7 +301,11 @@ export function createApiProviderTools(deps: CreateApiProviderToolsDeps) {
         } catch {
           /* ignore */
         }
-        handleTaskRunComplete(taskId, exitCode);
+        if (onComplete) {
+          onComplete(exitCode);
+        } else {
+          handleTaskRunComplete(taskId, exitCode);
+        }
       }
     })();
 

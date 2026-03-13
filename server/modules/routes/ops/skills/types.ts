@@ -17,7 +17,7 @@ export interface SkillDetail {
   audits: Array<{ name: string; status: string }>;
 }
 
-export type SkillLearnProvider = "claude" | "codex" | "gemini" | "opencode";
+export type SkillLearnProvider = "claude" | "codex" | "gemini" | "opencode" | "kimi";
 export type SkillHistoryProvider = SkillLearnProvider | "copilot" | "antigravity" | "api";
 export type SkillLearnStatus = "queued" | "running" | "succeeded" | "failed";
 

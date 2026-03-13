@@ -320,7 +320,7 @@ export function registerAgentCrudRoutes(ctx: RuntimeContext): void {
           : "junior";
       const cli_provider =
         typeof body.cli_provider === "string" &&
-        ["claude", "codex", "gemini", "opencode", "copilot", "antigravity", "api"].includes(body.cli_provider)
+        ["claude", "codex", "gemini", "opencode", "kimi", "copilot", "antigravity", "api"].includes(body.cli_provider)
           ? body.cli_provider
           : "claude";
       const avatar_emoji =
@@ -457,7 +457,7 @@ export function registerAgentCrudRoutes(ctx: RuntimeContext): void {
     const nextProvider = nextProviderRaw ?? "claude";
     const nextOAuthProvider =
       nextProvider === "copilot" ? "github" : nextProvider === "antigravity" ? "google_antigravity" : null;
-    const supportsCliModelOverride = ["claude", "codex", "gemini", "opencode"].includes(nextProvider);
+    const supportsCliModelOverride = ["claude", "codex", "gemini", "opencode", "kimi"].includes(nextProvider);
     const supportsCliReasoningOverride = nextProvider === "codex";
     const providerChanged = "cli_provider" in body && nextProvider !== String(existing.cli_provider ?? "claude");
 

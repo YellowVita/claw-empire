@@ -21,7 +21,7 @@ export interface Department {
 // Agent roles
 export type AgentRole = "team_leader" | "senior" | "junior" | "intern";
 export type AgentStatus = "idle" | "working" | "break" | "offline";
-export type CliProvider = "claude" | "codex" | "gemini" | "opencode" | "copilot" | "antigravity" | "api";
+export type CliProvider = "claude" | "codex" | "gemini" | "opencode" | "kimi" | "copilot" | "antigravity" | "api";
 export type MeetingReviewDecision = "reviewing" | "approved" | "hold";
 
 export interface Agent {
@@ -31,6 +31,7 @@ export interface Agent {
   name_ja?: string | null;
   name_zh?: string | null;
   department_id: string | null;
+  workflow_pack_key?: WorkflowPackKey | null;
   department?: Department;
   role: AgentRole;
   acts_as_planning_leader?: number | null;

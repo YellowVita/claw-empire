@@ -56,6 +56,8 @@ export function initializeCollabCoordination(ctx: RuntimeContext): any {
   const handleTaskRunComplete = __ctx.handleTaskRunComplete;
   const hasExplicitWarningFixRequest = __ctx.hasExplicitWarningFixRequest;
   const isTaskWorkflowInterrupted = __ctx.isTaskWorkflowInterrupted;
+  const launchApiProviderAgent = __ctx.launchApiProviderAgent;
+  const launchHttpAgent = __ctx.launchHttpAgent;
   const l = __ctx.l;
   const logsDir = __ctx.logsDir;
   const notifyCeo = __ctx.notifyCeo;
@@ -66,6 +68,7 @@ export function initializeCollabCoordination(ctx: RuntimeContext): any {
   const resolveLang = __ctx.resolveLang;
   const sendAgentMessage = __ctx.sendAgentMessage;
   const spawnCliAgent = __ctx.spawnCliAgent;
+  const getNextHttpAgentPid = __ctx.getNextHttpAgentPid;
   const startProgressTimer = __ctx.startProgressTimer;
   const startTaskExecutionForAgent = __ctx.startTaskExecutionForAgent;
 
@@ -302,6 +305,9 @@ export function initializeCollabCoordination(ctx: RuntimeContext): any {
     ensureTaskExecutionSession,
     getProviderModelConfig,
     spawnCliAgent,
+    launchApiProviderAgent,
+    launchHttpAgent,
+    getNextHttpAgentPid,
     handleSubtaskDelegationComplete,
     handleTaskRunComplete,
     startProgressTimer,

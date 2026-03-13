@@ -6,16 +6,16 @@
 
 <p align="center">
   <strong>Command Your AI Agent Empire from the CEO Desk</strong><br>
-  A local-first AI agent office simulator that orchestrates <b>CLI</b>, <b>OAuth</b>, and <b>API-connected</b> providers (including <b>Claude Code</b>, <b>Codex CLI</b>, <b>Gemini CLI</b>, <b>OpenCode</b>, <b>GitHub Copilot</b>, and <b>Antigravity</b>) as a virtual company of autonomous agents.
+  A local-first AI agent office simulator that orchestrates <b>CLI</b>, <b>OAuth</b>, and <b>API-connected</b> providers (including <b>Claude Code</b>, <b>Codex CLI</b>, <b>Gemini CLI</b>, <b>OpenCode</b>, <b>Kimi Code</b>, <b>GitHub Copilot</b>, and <b>Antigravity</b>) as a virtual company of autonomous agents.
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-2.0.3-blue" alt="Releases" />
+  <img src="https://img.shields.io/badge/version-2.0.4-blue" alt="Releases" />
   <a href="https://github.com/GreenSheep01201/claw-empire/actions/workflows/ci-fast.yml"><img src="https://github.com/GreenSheep01201/claw-empire/actions/workflows/ci-fast.yml/badge.svg?branch=main" alt="CI Fast" /></a>
   <img src="https://img.shields.io/badge/node-%3E%3D22-brightgreen" alt="Node.js 22+" />
   <img src="https://img.shields.io/badge/license-Apache%202.0-orange" alt="License" />
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey" alt="Platform" />
-  <img src="https://img.shields.io/badge/AI-Claude%20%7C%20Codex%20%7C%20Gemini%20%7C%20OpenCode%20%7C%20Copilot%20%7C%20Antigravity-purple" alt="AI Agents" />
+  <img src="https://img.shields.io/badge/AI-Claude%20%7C%20Codex%20%7C%20Gemini%20%7C%20OpenCode%20%7C%20Kimi%20%7C%20Copilot%20%7C%20Antigravity-purple" alt="AI Agents" />
 </p>
 
 <p align="center">
@@ -201,8 +201,8 @@ Usage path: **Chat window > Report Request button**, then enter your request.
 | **Office Pack Profiles**       | Pack-scoped office profiles apply dedicated department topology, naming/theme presets, and isolated agent/department data per pack (except DB-backed development baseline)              |
 | **Kanban Task Board**          | Full task lifecycle — Inbox, Planned, Collaborating, In Progress, Review, Done — with drag-and-drop                                                                                     |
 | **CEO Chat & Directives**      | Direct communication with team leaders; `$` directives support meeting choice plus project path/context routing (`project_path`, `project_context`)                                     |
-| **Multi-Provider Support**     | Claude Code, Codex CLI, Gemini CLI, OpenCode, Antigravity — all from one dashboard                                                                                                      |
-| **External API Providers**     | Connect agents to external LLM APIs (OpenAI, Anthropic, Google, Ollama, OpenRouter, Together, Groq, Cerebras, custom) via Settings > API tab                                            |
+| **Multi-Provider Support**     | Claude Code, Codex CLI, Gemini CLI, OpenCode, Kimi Code, Antigravity — all from one dashboard                                                                                           |
+| **External API Providers**     | Connect agents to external LLM APIs (OpenAI, Anthropic, Google, Ollama, OpenRouter, Together, Groq, Cerebras, custom) via Settings > API tab, with official presets for OpenCode Go and Bailian Coding Plan |
 | **OAuth Integration**          | GitHub & Google OAuth with AES-encrypted token storage in local SQLite                                                                                                                  |
 | **Real-time WebSocket**        | Live status updates, activity feed, and agent state synchronization                                                                                                                     |
 | **Active Agent Control**       | Active-agent monitor with process/activity/idle metadata and direct kill action for stuck tasks                                                                                         |
@@ -642,7 +642,9 @@ Claw-Empire now splits CI into two gates:
    - runs build, browser install, and the full web/api/e2e test stack
    - canonical command: `pnpm run ci:full`
 
-Recommended local checks:
+Note: `pnpm run test:e2e` now boots an isolated `.tmp/e2e-runtime` database and clears it again after the run. Set `PW_REUSE_EXISTING_SERVER=1` only when you intentionally want to reuse an already-running local server on `8810`.
+
+Recommended local pre-PR check:
 
 ```bash
 # Before opening a PR
@@ -737,6 +739,7 @@ For CLI mode, install at least one:
 | [Codex CLI](https://github.com/openai/codex)                  | `npm i -g @openai/codex`             | Set `OPENAI_API_KEY` in `.env` |
 | [Gemini CLI](https://github.com/google-gemini/gemini-cli)     | `npm i -g @google/gemini-cli`        | OAuth via Settings panel       |
 | [OpenCode](https://github.com/opencode-ai/opencode)           | `npm i -g opencode`                  | Provider-specific              |
+| [Kimi Code](https://github.com/MoonshotAI/kimi-cli)           | `uv tool install --python 3.13 kimi-cli` | `kimi auth login`          |
 
 Configure providers and models in the **Settings > CLI Tools** panel within the app.
 

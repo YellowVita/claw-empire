@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { WorktreeCreateResult } from "../../../workflow/core/worktree/lifecycle.ts";
 import type { TaskRunRouteDeps } from "./execution-run.ts";
 import { registerTaskRunRoute } from "./execution-run.ts";
 
@@ -122,7 +123,7 @@ function createHarness(options?: {
     agentId: agent.id,
     provider: "claude",
   }));
-  const createWorktree = vi.fn(() => ({
+  const createWorktree = vi.fn<() => WorktreeCreateResult>(() => ({
     success: false as const,
     failureCode: "worktree_add_failed" as const,
     message: "simulated failure",

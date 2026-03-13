@@ -119,6 +119,7 @@ function resolveAgentSkillDir(agent: string): string | null {
   if (agent === "claude-code") return path.join(process.cwd(), ".claude", "skills");
   if (agent === "codex") return path.join(process.cwd(), ".codex", "skills");
   if (agent === "gemini-cli") return path.join(process.cwd(), ".gemini", "skills");
+  if (agent === "kimi-code") return path.join(process.cwd(), ".kimi", "skills");
   if (agent === "opencode") return path.join(process.cwd(), ".opencode", "skills");
   if (agent === "github-copilot") return path.join(process.cwd(), ".copilot", "skills");
   if (agent === "antigravity") return path.join(process.cwd(), ".antigravity", "skills");

@@ -37,6 +37,25 @@ export function CliGeminiLogo() {
   );
 }
 
+export function CliKimiLogo() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+      <circle cx="12" cy="12" r="11" fill="#000" />
+      <text
+        x="12"
+        y="16.5"
+        textAnchor="middle"
+        fill="#fff"
+        fontSize="12"
+        fontWeight="bold"
+        fontFamily="Arial, sans-serif"
+      >
+        K
+      </text>
+    </svg>
+  );
+}
+
 export function GitHubCopilotLogo({ className }: { className?: string }) {
   return (
     <svg className={className || "w-5 h-5"} viewBox="0 0 24 24" fill="currentColor">

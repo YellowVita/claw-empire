@@ -8,7 +8,7 @@ type DbLike = {
   };
 };
 
-type InstallableProvider = "claude" | "codex" | "gemini" | "opencode" | "copilot" | "antigravity";
+type InstallableProvider = "claude" | "codex" | "gemini" | "opencode" | "kimi" | "copilot" | "antigravity";
 
 const REMOTION_SKILL_REPO = "remotion-dev/skills";
 const REMOTION_SKILL_ID = "remotion-best-practices";
@@ -23,6 +23,7 @@ const INSTALL_AGENT_BY_PROVIDER: Record<InstallableProvider, string> = {
   codex: "codex",
   gemini: "gemini-cli",
   opencode: "opencode",
+  kimi: "kimi-code",
   copilot: "github-copilot",
   antigravity: "antigravity",
 };
@@ -41,6 +42,7 @@ function isInstallableProvider(provider: string): provider is InstallableProvide
     provider === "codex" ||
     provider === "gemini" ||
     provider === "opencode" ||
+    provider === "kimi" ||
     provider === "copilot" ||
     provider === "antigravity"
   );

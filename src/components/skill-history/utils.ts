@@ -6,6 +6,7 @@ export const PROVIDER_ORDER: SkillHistoryProvider[] = [
   "codex",
   "gemini",
   "opencode",
+  "kimi",
   "copilot",
   "antigravity",
   "api",
@@ -25,6 +26,7 @@ export function providerLabel(provider: SkillHistoryProvider): string {
   if (provider === "codex") return "Codex";
   if (provider === "gemini") return "Gemini";
   if (provider === "opencode") return "OpenCode";
+  if (provider === "kimi") return "Kimi Code";
   if (provider === "copilot") return "GitHub Copilot";
   if (provider === "antigravity") return "Antigravity";
   return "API Provider";

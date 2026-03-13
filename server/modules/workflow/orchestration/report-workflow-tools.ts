@@ -118,7 +118,7 @@ export function createReportWorkflowTools(deps: CreateReportWorkflowToolsDeps) {
   SELECT *
   FROM agents
   WHERE department_id = 'design'
-    AND COALESCE(cli_provider, '') IN ('claude','codex','gemini','opencode','copilot','antigravity','api')
+    AND COALESCE(cli_provider, '') IN ('claude','codex','gemini','opencode','kimi','copilot','antigravity','api')
     ${scopeClause}
   ORDER BY
     CASE status

@@ -327,6 +327,7 @@ export function createHttpAgentTools(deps: CreateHttpAgentToolsDeps) {
     controller: AbortController,
     fakePid: number,
     preferredOAuthAccountId?: string | null,
+    onComplete?: (exitCode: number) => void,
   ): void {
     const logStream = fs.createWriteStream(logPath, { flags: "a" });
     const { safeWrite, safeEnd } = createSafeLogStreamOps(logStream);
@@ -387,7 +388,11 @@ export function createHttpAgentTools(deps: CreateHttpAgentToolsDeps) {
         } catch {
           /* ignore */
         }
-        handleTaskRunComplete(taskId, exitCode);
+        if (onComplete) {
+          onComplete(exitCode);
+        } else {
+          handleTaskRunComplete(taskId, exitCode);
+        }
       }
     })();
 

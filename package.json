@@ -1,6 +1,6 @@
 {
   "name": "climpire",
-  "version": "2.0.3",
+  "version": "2.0.4",
   "description": "Claw-Empire - AI Agent Company Simulation. Command your CLI agent empire from the CEO desk.",
   "type": "module",
   "scripts": {
@@ -39,7 +39,7 @@
     "pr:body:check:ci": "node scripts/qa/pr-body-check.mjs --ci",
     "test:web": "vitest --config vitest.config.ts",
     "test:api": "vitest --config server/vitest.config.ts",
-    "test:e2e": "playwright test --config playwright.config.ts",
+    "test:e2e": "node scripts/run-e2e.mjs",
     "test": "pnpm run test:web && pnpm run test:api",
     "test:ci": "pnpm run ci:full",
     "lint": "eslint src server",
