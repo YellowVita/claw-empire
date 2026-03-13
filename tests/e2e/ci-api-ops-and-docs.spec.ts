@@ -1,5 +1,6 @@
 import { expect, test, type APIRequestContext, type APIResponse } from "@playwright/test";
 import path from "node:path";
+import { cleanupE2EResources } from "./cleanup";
 
 type AgentResponse = {
   ok: boolean;

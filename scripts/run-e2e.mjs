@@ -5,13 +5,26 @@ import { spawn } from "node:child_process";
 const isWindows = process.platform === "win32";
 const pnpmBin = isWindows ? "pnpm.cmd" : "pnpm";
 const nodeBin = process.execPath;
+const comSpec = process.env.ComSpec || "cmd.exe";
+
+function quoteCmdArg(arg) {
+  if (!arg) return '""';
+  const escaped = String(arg).replace(/(["^&|<>()%!])/g, "^$1");
+  return /[\s"]/u.test(escaped) ? `"${escaped}"` : escaped;
+}
 
 function run(command, args) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
+    const child = spawn(
+      isWindows && command.toLowerCase().endsWith(".cmd") ? comSpec : command,
+      isWindows && command.toLowerCase().endsWith(".cmd")
+        ? ["/d", "/s", "/c", `${quoteCmdArg(command)} ${args.map(quoteCmdArg).join(" ")}`]
+        : args,
+      {
       stdio: "inherit",
       env: process.env,
-    });
+      },
+    );
 
     child.on("error", reject);
     child.on("exit", (code, signal) => {
