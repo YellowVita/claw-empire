@@ -113,7 +113,7 @@ export function readWorktreeStatusShort(worktreePath: string): string {
   }
 }
 
-function readGitHeadSha(worktreePath: string): string | null {
+export function readGitHeadSha(worktreePath: string): string | null {
   try {
     return execFileSync("git", ["rev-parse", "HEAD"], {
       cwd: worktreePath,
@@ -318,4 +318,45 @@ export function autoCommitWorktreePendingChanges(
       restrictedUntrackedCount: 0,
     };
   }
+}
+
+export function captureWorktreeBranchArtifact(
+  taskId: string,
+  info: { worktreePath: string; branchName: string },
+  appendTaskLog: (taskId: string, kind: string, message: string) => void,
+): {
+  success: boolean;
+  branchName: string;
+  headSha?: string;
+  autoCommitSha?: string;
+  message?: string;
+} {
+  const autoCommit = autoCommitWorktreePendingChanges(taskId, info, appendTaskLog);
+  if (autoCommit.error) {
+    return {
+      success: false,
+      branchName: info.branchName,
+      autoCommitSha: autoCommit.commitSha,
+      message: autoCommit.errorKind === "restricted_untracked"
+        ? `restricted_untracked:${autoCommit.restrictedUntrackedCount}`
+        : autoCommit.error,
+    };
+  }
+
+  const headSha = readGitHeadSha(info.worktreePath);
+  if (!headSha) {
+    return {
+      success: false,
+      branchName: info.branchName,
+      autoCommitSha: autoCommit.commitSha,
+      message: "missing_head_sha",
+    };
+  }
+
+  return {
+    success: true,
+    branchName: info.branchName,
+    headSha,
+    autoCommitSha: autoCommit.commitSha,
+  };
 }

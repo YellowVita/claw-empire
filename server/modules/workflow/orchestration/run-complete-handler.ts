@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { captureWorktreeBranchArtifact } from "../core/worktree/shared.ts";
 import {
   discoverVideoArtifact,
   resolveVideoArtifactRelativeCandidates,
@@ -12,6 +13,10 @@ import {
   inferOrchestrationPhaseFromSubtask,
   isTaskOrchestrationV2,
 } from "./subtask-orchestration-v2.ts";
+import {
+  markCollabBranchArtifactOrphaned,
+  markCollabBranchArtifactReady,
+} from "./collab-branch-artifacts.ts";
 import { computeTaskQualitySummary, loadTaskQualityItems } from "../../routes/core/tasks/quality.ts";
 import {
   computeRetryDelayMs,
@@ -369,6 +374,39 @@ export function createRunCompleteHandler(deps: CreateRunCompleteHandlerDeps) {
           "system",
           `Video render engine gate passed: Remotion evidence detected (${remotionGate.remotionEvidenceTaskIds.join(", ")})`,
         );
+      }
+    }
+    if (finalExitCode === 0 && task?.source_task_id) {
+      const childWtInfo = taskWorktrees.get(taskId) as
+        | { worktreePath?: string; projectPath?: string; branchName?: string }
+        | undefined;
+      if (childWtInfo?.worktreePath && childWtInfo.branchName) {
+        const artifact = captureWorktreeBranchArtifact(
+          taskId,
+          { worktreePath: childWtInfo.worktreePath, branchName: childWtInfo.branchName },
+          appendTaskLog,
+        );
+        if (!artifact.success || !artifact.headSha) {
+          finalExitCode = 87;
+          appendTaskLog(
+            taskId,
+            "system",
+            `Collaboration child artifact capture failed: ${artifact.message ?? "unknown error"}`,
+          );
+        } else {
+          markCollabBranchArtifactReady(db as any, {
+            taskId,
+            branchName: artifact.branchName,
+            headSha: artifact.headSha,
+            autoCommitSha: artifact.autoCommitSha ?? null,
+            updatedAt: nowMs(),
+          });
+          appendTaskLog(
+            taskId,
+            "system",
+            `Collaboration child artifact ready for parent ingest (${artifact.branchName}@${artifact.headSha.slice(0, 12)})`,
+          );
+        }
       }
     }
 
@@ -753,26 +791,31 @@ export function createRunCompleteHandler(deps: CreateRunCompleteHandlerDeps) {
         appendTaskLog(
           taskId,
           "system",
-          "Status → review (delegated collaboration task waiting for parent consolidation)",
+          "Status → review (delegated collaboration task ready for parent branch ingestion)",
         );
         notifyCeo(
           pickL(
             l(
               [
-                `'${task.title}' 협업 하위 태스크가 Review 대기 상태로 전환되었습니다. 상위 업무의 전체 취합 회의에서 일괄 검토/머지합니다.`,
+                `'${task.title}' 협업 하위 태스크가 상위 업무 브랜치 흡수 대기 상태로 전환되었습니다. 상위 owner_integrate에서 순차 통합합니다.`,
               ],
               [
-                `'${task.title}' collaboration child task is now waiting in Review. It will be consolidated in the parent task's single review/merge meeting.`,
+                `'${task.title}' collaboration child task is now ready for parent branch ingestion. The parent owner task will absorb it during consolidation.`,
               ],
               [
-                `'${task.title}' の協業子タスクはReview待機に入りました。上位タスクの一括レビュー/マージ会議で統合処理します。`,
+                `'${task.title}' の協業子タスクは親ブランチ取り込み待機に入りました。上位 owner_integrate で順次統合します。`,
               ],
-              [`'${task.title}' 协作子任务已进入 Review 等待。将在上级任务的一次性评审/合并会议中统一处理。`],
+              [`'${task.title}' 协作子任务已进入父分支吸收等待状态。将在上级 owner_integrate 中顺序整合。`],
             ),
             sourceLang,
           ),
           taskId,
         );
+        upsertTaskRunSheet(db as any, {
+          taskId,
+          stage: "ready_for_parent_ingest",
+          updatedAt: t,
+        });
 
         const nextDelay = 800 + Math.random() * 600;
         const nextCallback = crossDeptNextCallbacks.get(taskId);
@@ -917,6 +960,18 @@ export function createRunCompleteHandler(deps: CreateRunCompleteHandlerDeps) {
         }, 2500);
       }, 2500);
     } else {
+      if (task && !task.source_task_id) {
+        const childRows = db
+          .prepare("SELECT id FROM tasks WHERE source_task_id = ?")
+          .all(taskId) as Array<{ id: string }>;
+        for (const child of childRows) {
+          markCollabBranchArtifactOrphaned(db as any, {
+            taskId: child.id,
+            reason: `parent_failed:${taskId}`,
+            updatedAt: t,
+          });
+        }
+      }
       const retryReason = detectRetryReason(result);
       if (task && retryReason) {
         const retryOutcome = scheduleAutomaticRetry({ id: taskId, title: task.title, description: task.description }, retryReason);

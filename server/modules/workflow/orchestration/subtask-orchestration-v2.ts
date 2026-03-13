@@ -130,10 +130,10 @@ export function buildOwnerIntegrationInstruction(taskTitle: string): string {
     "[ORCHESTRATION V2]",
     "Current stage: owner_integrate",
     `Task: ${taskTitle}`,
-    "Integrate completed department deliverables into the owner worktree.",
-    "Read sibling delegated task worktrees as reference only.",
+    "Treat completed department child branches as official inputs to the owner branch.",
+    "Review sibling delegated task worktrees, but do not reimplement completed child work unless you are resolving a real integration gap.",
     "Do not spawn internal workers to impersonate foreign departments during owner_integrate.",
     "If additional foreign-department work is required, create a formal cross-department subtask so delegation can run through the official workflow.",
-    "Do not re-run foreign department work. Consolidate, resolve conflicts, and prepare the final review package.",
+    "Consolidate the owner branch, resolve integration issues, and prepare the final review package.",
   ].join("\n");
 }

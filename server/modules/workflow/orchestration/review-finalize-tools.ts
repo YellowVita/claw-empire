@@ -20,6 +20,11 @@ import {
 import { recordTaskArtifact, recordTaskQualityRun } from "./task-quality-evidence.ts";
 import { upsertTaskRunSheet } from "./task-run-sheets.ts";
 import { upsertDevelopmentReviewAuditMetadata } from "./development-handoff.ts";
+import {
+  listPendingParentIngestionChildren,
+  markCollabBranchArtifactIngested,
+  readCollabBranchArtifactMetadata,
+} from "./collab-branch-artifacts.ts";
 
 type CreateReviewFinalizeToolsDeps = Record<string, any>;
 
@@ -41,6 +46,7 @@ export function createReviewFinalizeTools(deps: CreateReviewFinalizeToolsDeps) {
     mergeToDevAndCreatePR,
     pushTaskBranchAndCreatePR,
     mergeWorktree,
+    ingestChildBranchIntoParent,
     cleanupWorktree,
     findTeamLeader,
     getAgentDisplayName,
@@ -61,6 +67,10 @@ export function createReviewFinalizeTools(deps: CreateReviewFinalizeToolsDeps) {
     processSubtaskDelegations,
     inspectTaskGithubPrFeedbackGate,
   } = deps;
+  const ingestChildBranchIntoParentSafe =
+    typeof ingestChildBranchIntoParent === "function"
+      ? ingestChildBranchIntoParent
+      : () => ({ success: false, message: "child ingestion helper unavailable" });
 
   function recordGithubPrGateSnapshot(taskId: string, gateSnapshot: TaskGithubPrGateSnapshot, t: number): string {
     const gateSummary = summarizeTaskGithubPrGateSnapshot(gateSnapshot);
@@ -675,6 +685,94 @@ export function createReviewFinalizeTools(deps: CreateReviewFinalizeToolsDeps) {
           updatedAt: t,
         });
 
+        if (currentTask.source_task_id) {
+          const artifact = readCollabBranchArtifactMetadata(db as any, taskId);
+          if (artifact && artifact.ingestion_state !== "ingested") {
+            appendTaskLog(
+              taskId,
+              "system",
+              "Review hold: delegated collaboration child is waiting for parent branch ingestion",
+            );
+            upsertTaskRunSheet(db as any, {
+              taskId,
+              stage: "ready_for_parent_ingest",
+              updatedAt: t,
+            });
+            reviewRoundState.delete(taskId);
+            reviewInFlight.delete(taskId);
+            const updatedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId);
+            broadcast("task_update", updatedTask);
+            return;
+          }
+        } else {
+          const pendingChildren = listPendingParentIngestionChildren(db as any, taskId);
+          for (const child of pendingChildren) {
+            const ingestResult = ingestChildBranchIntoParentSafe(taskId, child.id);
+            if (!ingestResult.success) {
+              appendTaskLog(taskId, "system", `Child branch ingestion failed: ${ingestResult.message}`);
+              if (ingestResult.conflicts?.length) {
+                notifyCeo(
+                  pickL(
+                    l(
+                      [
+                        `'${taskTitle}' 는 협업 child '${child.title}' 브랜치 흡수 중 충돌이 발생해 Review 단계에 머뭅니다. 충돌 파일: ${ingestResult.conflicts.join(", ")}`,
+                      ],
+                      [
+                        `'${taskTitle}' is staying in Review because child branch ingestion for '${child.title}' hit conflicts. Files: ${ingestResult.conflicts.join(", ")}`,
+                      ],
+                      [
+                        `'${taskTitle}' は child '${child.title}' ブランチ取り込みで競合が発生したため Review に留まります。競合ファイル: ${ingestResult.conflicts.join(", ")}`,
+                      ],
+                      [
+                        `'${taskTitle}' 因吸收 child '${child.title}' 分支时发生冲突，仍停留在 Review。冲突文件：${ingestResult.conflicts.join(", ")}`,
+                      ],
+                    ),
+                    lang,
+                  ),
+                  taskId,
+                );
+              }
+              upsertTaskRunSheet(db as any, {
+                taskId,
+                stage: "human_review",
+                updatedAt: t,
+              });
+              reviewRoundState.delete(taskId);
+              reviewInFlight.delete(taskId);
+              const updatedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId);
+              broadcast("task_update", updatedTask);
+              emitTaskReportEvent(taskId);
+              return;
+            }
+
+            appendTaskLog(taskId, "system", `Child branch ingested: ${child.title} (${ingestResult.message})`);
+            if (ingestResult.ingestCommitSha) {
+              markCollabBranchArtifactIngested(db as any, {
+                taskId: child.id,
+                parentTaskId: taskId,
+                ingestedCommitSha: ingestResult.ingestCommitSha,
+                updatedAt: t,
+              });
+            }
+            db.prepare("UPDATE tasks SET status = 'done', completed_at = ?, updated_at = ? WHERE id = ?").run(
+              t,
+              t,
+              child.id,
+            );
+            upsertTaskRunSheet(db as any, {
+              taskId: child.id,
+              stage: "done",
+              updatedAt: t,
+            });
+            const childInfo = taskWorktrees.get(child.id);
+            if (childInfo) {
+              cleanupWorktree(childInfo.projectPath, child.id);
+              appendTaskLog(child.id, "system", "Worktree cleaned up after parent branch ingestion");
+            }
+            broadcast("task_update", db.prepare("SELECT * FROM tasks WHERE id = ?").get(child.id));
+          }
+        }
+
         // If task has a worktree, merge the branch back before marking done
         const wtInfo = taskWorktrees.get(taskId);
         let mergeNote = "";
@@ -1001,21 +1099,7 @@ export function createReviewFinalizeTools(deps: CreateReviewFinalizeToolsDeps) {
         reviewRoundState.delete(taskId);
         reviewInFlight.delete(taskId);
 
-        // Parent final approval is the merge point for collaboration children in review.
         if (!currentTask.source_task_id) {
-          const childRows = db
-            .prepare("SELECT id, title FROM tasks WHERE source_task_id = ? AND status = 'review' ORDER BY created_at ASC")
-            .all(taskId) as Array<{ id: string; title: string }>;
-          if (childRows.length > 0) {
-            appendTaskLog(
-              taskId,
-              "system",
-              `Finalization: closing ${childRows.length} collaboration child task(s) after parent review`,
-            );
-            for (const child of childRows) {
-              finishReview(child.id, child.title);
-            }
-          }
           // Generate and archive one consolidated project report via planning leader model.
           void archivePlanningConsolidatedReport(taskId);
         }

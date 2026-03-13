@@ -205,6 +205,7 @@ export function initializeWorkflowPartA(ctx: RuntimeContext): WorkflowCoreExport
 
   const {
     mergeWorktree,
+    ingestChildBranchIntoParent,
     mergeToDevAndCreatePR,
     pushTaskBranchAndCreatePR,
     rollbackTaskWorktree,
@@ -332,6 +333,7 @@ export function initializeWorkflowPartA(ctx: RuntimeContext): WorkflowCoreExport
     taskWorktrees,
     createWorktree,
     mergeWorktree,
+    ingestChildBranchIntoParent,
     mergeToDevAndCreatePR,
     pushTaskBranchAndCreatePR,
     cleanupWorktree,

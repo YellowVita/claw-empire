@@ -199,4 +199,129 @@ describe("worktree merge audit helpers", () => {
       /* no-op */
     }
   });
+
+  it("squash ingest helper merges a child branch into the parent worktree and commits once", () => {
+    const repo = initRepo("claw-child-ingest-");
+    tempDirs.push(repo);
+
+    runGit(repo, ["checkout", "-b", "climpire/parent0001"]);
+    fs.writeFileSync(path.join(repo, "owner.txt"), "owner\n", "utf8");
+    runGit(repo, ["add", "."]);
+    runGit(repo, ["commit", "-m", "owner"]);
+
+    runGit(repo, ["checkout", "main"]);
+    runGit(repo, ["checkout", "-b", "climpire/child0001"]);
+    fs.writeFileSync(path.join(repo, "feature.txt"), "feature\n", "utf8");
+    runGit(repo, ["add", "."]);
+    runGit(repo, ["commit", "-m", "child"]);
+
+    runGit(repo, ["checkout", "climpire/parent0001"]);
+
+    const tools = createWorktreeMergeTools({
+      db: {
+        prepare() {
+          return {
+            get() {
+              return { title: "Parent task", description: "Parent ingest" };
+            },
+          };
+        },
+      } as any,
+      taskWorktrees: new Map([
+        [
+          "parent-0001",
+          {
+            branchName: "climpire/parent0001",
+            projectPath: repo,
+            worktreePath: repo,
+          },
+        ],
+        [
+          "child-0001",
+          {
+            branchName: "climpire/child0001",
+            projectPath: repo,
+            worktreePath: repo,
+          },
+        ],
+      ]),
+      appendTaskLog: () => {},
+      cleanupWorktree: () => {},
+      resolveLang: () => "en",
+      l: (ko: string[], en: string[], ja: string[], zh: string[]) => ({ ko, en, ja, zh }),
+      pickL: (pool: any, lang: string) => pool?.[lang]?.[0] ?? pool?.en?.[0] ?? "",
+    });
+
+    const result = tools.ingestChildBranchIntoParent("parent-0001", "child-0001");
+
+    expect(result.success).toBe(true);
+    expect(result.ingestCommitSha).toBe(runGit(repo, ["rev-parse", "HEAD"]));
+    expect(runGit(repo, ["show", "--stat", "--oneline", "-1"])).toContain(
+      "chore: ingest child branch child000 (climpire/child0001)",
+    );
+    expect(fs.readFileSync(path.join(repo, "feature.txt"), "utf8").replace(/\r\n/g, "\n")).toBe("feature\n");
+  });
+
+  it("squash ingest helper reports conflicts and aborts the merge state", () => {
+    const repo = initRepo("claw-child-ingest-conflict-");
+    tempDirs.push(repo);
+
+    runGit(repo, ["checkout", "-b", "climpire/parent0002"]);
+    fs.writeFileSync(path.join(repo, "shared.txt"), "parent\n", "utf8");
+    runGit(repo, ["add", "."]);
+    runGit(repo, ["commit", "-m", "parent"]);
+
+    runGit(repo, ["checkout", "main"]);
+    fs.writeFileSync(path.join(repo, "shared.txt"), "main\n", "utf8");
+    runGit(repo, ["add", "."]);
+    runGit(repo, ["commit", "-m", "main update"]);
+
+    runGit(repo, ["checkout", "-b", "climpire/child0002"]);
+    fs.writeFileSync(path.join(repo, "shared.txt"), "child\n", "utf8");
+    runGit(repo, ["add", "."]);
+    runGit(repo, ["commit", "-m", "child update"]);
+
+    runGit(repo, ["checkout", "climpire/parent0002"]);
+
+    const tools = createWorktreeMergeTools({
+      db: {
+        prepare() {
+          return {
+            get() {
+              return { title: "Parent task", description: "Parent ingest" };
+            },
+          };
+        },
+      } as any,
+      taskWorktrees: new Map([
+        [
+          "parent-0002",
+          {
+            branchName: "climpire/parent0002",
+            projectPath: repo,
+            worktreePath: repo,
+          },
+        ],
+        [
+          "child-0002",
+          {
+            branchName: "climpire/child0002",
+            projectPath: repo,
+            worktreePath: repo,
+          },
+        ],
+      ]),
+      appendTaskLog: () => {},
+      cleanupWorktree: () => {},
+      resolveLang: () => "en",
+      l: (ko: string[], en: string[], ja: string[], zh: string[]) => ({ ko, en, ja, zh }),
+      pickL: (pool: any, lang: string) => pool?.[lang]?.[0] ?? pool?.en?.[0] ?? "",
+    });
+
+    const result = tools.ingestChildBranchIntoParent("parent-0002", "child-0002");
+
+    expect(result.success).toBe(false);
+    expect(result.conflicts).toContain("shared.txt");
+    expect(runGit(repo, ["status", "--short"])).toBe("");
+  });
 });

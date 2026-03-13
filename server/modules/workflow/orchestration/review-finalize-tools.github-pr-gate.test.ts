@@ -169,6 +169,13 @@ function createTools(options?: {
   };
   projectPath?: string;
   mergeStrategyMode?: "shared_dev_pr" | "task_branch_pr";
+  ingestChildResult?: {
+    success: boolean;
+    message: string;
+    conflicts?: string[];
+    autoCommitSha?: string;
+    ingestCommitSha?: string;
+  };
 }) {
   const projectPath = options?.projectPath ?? createTempDir("claw-pr-gate-project-");
   if (options?.mergeStrategyMode) {
@@ -204,6 +211,14 @@ mergeStrategy:
         targetBranch: "dev",
         prUrl: "https://github.com/acme/repo/pull/21",
         strategy: "task_branch_pr",
+      },
+  );
+  const ingestChildBranchIntoParent = vi.fn(
+    () =>
+      options?.ingestChildResult ?? {
+        success: true,
+        message: "child ingested",
+        ingestCommitSha: "ingest123",
       },
   );
   const startReviewConsensusMeeting = vi.fn((_taskId, _taskTitle, _departmentId, onApproved) => {
@@ -253,6 +268,7 @@ mergeStrategy:
     mergeToDevAndCreatePR,
     pushTaskBranchAndCreatePR,
     mergeWorktree: vi.fn(() => ({ success: true, message: "merged" })),
+    ingestChildBranchIntoParent,
     cleanupWorktree: vi.fn(),
     findTeamLeader: vi.fn(() => null),
     getAgentDisplayName: vi.fn(() => "Team Lead"),
@@ -279,6 +295,7 @@ mergeStrategy:
     tools,
     mergeToDevAndCreatePR,
     pushTaskBranchAndCreatePR,
+    ingestChildBranchIntoParent,
     startReviewConsensusMeeting,
     inspectTaskGithubPrFeedbackGate,
   };
@@ -370,6 +387,118 @@ describe("review finalize GitHub PR gate", () => {
     }
   });
 
+  it("parent finalize는 ready child branch를 먼저 ingest하고 child를 done으로 닫는다", async () => {
+    const { db, tools, mergeToDevAndCreatePR, ingestChildBranchIntoParent } = createTools();
+    db.prepare(
+      `
+        INSERT INTO tasks (
+          id, title, description, status, department_id, source_task_id, project_id,
+          workflow_pack_key, project_path, workflow_meta_json, result, created_at, started_at, updated_at
+        ) VALUES (?, ?, ?, 'review', 'dev', ?, 'project-1', 'development', ?, ?, ?, 4, 5, 6)
+      `,
+    ).run(
+      "child-1",
+      "Child deliverable",
+      "Implements code",
+      "task-1",
+      "/tmp/project",
+      JSON.stringify({
+        collab_branch_artifact: {
+          branch_name: "climpire/child-1",
+          head_sha: "childsha123",
+          auto_commit_sha: "childauto123",
+          ingestion_state: "ready_for_parent_ingest",
+          updated_at: 9_000,
+          ingested_by_task_id: null,
+          ingested_commit_sha: null,
+          ingested_at: null,
+          orphaned_reason: null,
+        },
+      }),
+      "child result",
+    );
+
+    try {
+      tools.finishReview("task-1", "Ship feature", { bypassProjectDecisionGate: true, trigger: "test" });
+      await vi.waitFor(() => {
+        const parent = db.prepare("SELECT status FROM tasks WHERE id = ?").get("task-1") as { status: string };
+        const child = db.prepare("SELECT status FROM tasks WHERE id = ?").get("child-1") as { status: string };
+        expect(parent.status).toBe("done");
+        expect(child.status).toBe("done");
+      });
+
+      expect(ingestChildBranchIntoParent).toHaveBeenCalledWith("task-1", "child-1");
+      expect(mergeToDevAndCreatePR).toHaveBeenCalledTimes(1);
+      const childMeta = db.prepare("SELECT workflow_meta_json FROM tasks WHERE id = ?").get("child-1") as {
+        workflow_meta_json: string | null;
+      };
+      const parsed = JSON.parse(childMeta.workflow_meta_json ?? "{}");
+      expect(parsed.collab_branch_artifact).toEqual(
+        expect.objectContaining({
+          ingestion_state: "ingested",
+          ingested_by_task_id: "task-1",
+          ingested_commit_sha: "ingest123",
+        }),
+      );
+    } finally {
+      db.close();
+    }
+  });
+
+  it("child ingestion conflict가 나면 parent는 review에 남고 main/dev merge를 시작하지 않는다", async () => {
+    const { db, tools, mergeToDevAndCreatePR } = createTools({
+      ingestChildResult: {
+        success: false,
+        message: "Child branch ingestion conflict: 1 file(s) require manual resolution.",
+        conflicts: ["src/app.ts"],
+      },
+    });
+    db.prepare(
+      `
+        INSERT INTO tasks (
+          id, title, description, status, department_id, source_task_id, project_id,
+          workflow_pack_key, project_path, workflow_meta_json, result, created_at, started_at, updated_at
+        ) VALUES (?, ?, ?, 'review', 'dev', ?, 'project-1', 'development', ?, ?, ?, 4, 5, 6)
+      `,
+    ).run(
+      "child-conflict",
+      "Child conflict",
+      "Conflicting code",
+      "task-1",
+      "/tmp/project",
+      JSON.stringify({
+        collab_branch_artifact: {
+          branch_name: "climpire/child-conflict",
+          head_sha: "childsha999",
+          auto_commit_sha: "childauto999",
+          ingestion_state: "ready_for_parent_ingest",
+          updated_at: 9_000,
+          ingested_by_task_id: null,
+          ingested_commit_sha: null,
+          ingested_at: null,
+          orphaned_reason: null,
+        },
+      }),
+      "child result",
+    );
+
+    try {
+      tools.finishReview("task-1", "Ship feature", { bypassProjectDecisionGate: true, trigger: "test" });
+      await vi.waitFor(() => {
+        const parent = db.prepare("SELECT status FROM tasks WHERE id = ?").get("task-1") as { status: string };
+        expect(parent.status).toBe("review");
+      });
+
+      expect(mergeToDevAndCreatePR).not.toHaveBeenCalled();
+      const runSheet = db.prepare("SELECT stage FROM task_run_sheets WHERE task_id = ?").get("task-1") as
+        | { stage: string }
+        | undefined;
+      expect(runSheet?.stage).toBe("human_review");
+    } finally {
+      db.close();
+    }
+  });
+
   it("merge failure면 task를 review에 유지하고 done 전이를 중단한다", async () => {
     const db = createDb();
     const appendTaskLog = vi.fn((taskId: string, kind: string, message: string) => {
@@ -414,6 +543,7 @@ describe("review finalize GitHub PR gate", () => {
         autoCommitSha: "auto-conflict-1",
       })),
       mergeWorktree: vi.fn(() => ({ success: true, message: "merged" })),
+      ingestChildBranchIntoParent: vi.fn(() => ({ success: true, message: "child ingested", ingestCommitSha: "ingest123" })),
       cleanupWorktree,
       findTeamLeader: vi.fn(() => null),
       getAgentDisplayName: vi.fn(() => "Team Lead"),
@@ -540,6 +670,7 @@ describe("review finalize GitHub PR gate", () => {
       ]),
       mergeToDevAndCreatePR,
       mergeWorktree: vi.fn(() => ({ success: true, message: "merged" })),
+      ingestChildBranchIntoParent: vi.fn(() => ({ success: true, message: "child ingested", ingestCommitSha: "ingest123" })),
       cleanupWorktree: vi.fn(),
       findTeamLeader: vi.fn(() => null),
       getAgentDisplayName: vi.fn(() => "Team Lead"),
@@ -608,9 +739,25 @@ describe("review finalize GitHub PR gate", () => {
     }
   });
 
-  it("delegated child finalize는 delegated_review_finalize 감사 출처를 기록한다", async () => {
+  it("delegated child finalize는 parent ingestion 전에는 ready_for_parent_ingest에 머문다", async () => {
     const db = createDb();
     db.prepare("UPDATE tasks SET source_task_id = ? WHERE id = ?").run("parent-1", "task-1");
+    db.prepare("UPDATE tasks SET workflow_meta_json = ? WHERE id = ?").run(
+      JSON.stringify({
+        collab_branch_artifact: {
+          branch_name: "climpire/task-1",
+          head_sha: "abc123",
+          auto_commit_sha: "auto123",
+          ingestion_state: "ready_for_parent_ingest",
+          updated_at: 9_000,
+          ingested_by_task_id: null,
+          ingested_commit_sha: null,
+          ingested_at: null,
+          orphaned_reason: null,
+        },
+      }),
+      "task-1",
+    );
     const tools = createReviewFinalizeTools({
       db,
       nowMs: () => 10_000,
@@ -627,6 +774,7 @@ describe("review finalize GitHub PR gate", () => {
       taskWorktrees: new Map(),
       mergeToDevAndCreatePR: vi.fn(),
       mergeWorktree: vi.fn(),
+      ingestChildBranchIntoParent: vi.fn(() => ({ success: true, message: "child ingested", ingestCommitSha: "ingest123" })),
       cleanupWorktree: vi.fn(),
       findTeamLeader: vi.fn(() => null),
       getAgentDisplayName: vi.fn(() => "Team Lead"),
@@ -653,7 +801,11 @@ describe("review finalize GitHub PR gate", () => {
 
       await vi.waitFor(() => {
         const task = db.prepare("SELECT status FROM tasks WHERE id = ?").get("task-1") as { status: string };
-        expect(task.status).toBe("done");
+        const runSheet = db.prepare("SELECT stage FROM task_run_sheets WHERE task_id = ?").get("task-1") as
+          | { stage: string }
+          | undefined;
+        expect(task.status).toBe("review");
+        expect(runSheet?.stage).toBe("ready_for_parent_ingest");
       });
 
       expect(readReviewAudit(db, "task-1")).toEqual(

@@ -6,6 +6,7 @@ import {
   DIFF_SUMMARY_ERROR,
   DIFF_SUMMARY_NONE,
   hasVisibleDiffSummary,
+  readGitHeadSha,
   readWorktreeStatusShort,
 } from "./shared.ts";
 
@@ -38,6 +39,14 @@ export type WorktreeMergeResult = {
   strategy?: WorktreeGitHubMergeStrategy;
 };
 
+export type ChildBranchIngestionResult = {
+  success: boolean;
+  message: string;
+  conflicts?: string[];
+  autoCommitSha?: string;
+  ingestCommitSha?: string;
+};
+
 function readHeadSha(projectPath: string): string | null {
   try {
     return execFileSync("git", ["rev-parse", "HEAD"], {
@@ -49,6 +58,33 @@ function readHeadSha(projectPath: string): string | null {
       .trim();
   } catch {
     return null;
+  }
+}
+
+function readChildBranchNameFromTaskMetadata(db: DbLike, taskId: string): string | null {
+  try {
+    const row = db.prepare("SELECT workflow_meta_json FROM tasks WHERE id = ?").get(taskId) as
+      | { workflow_meta_json?: string | null }
+      | undefined;
+    if (!row?.workflow_meta_json) return null;
+    const parsed = JSON.parse(row.workflow_meta_json);
+    const branchName = parsed?.collab_branch_artifact?.branch_name;
+    return typeof branchName === "string" && branchName.trim() ? branchName.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+function resetSquashMergeState(worktreePath: string): void {
+  try {
+    execFileSync("git", ["merge", "--abort"], { cwd: worktreePath, stdio: "pipe", timeout: 5000 });
+  } catch {
+    /* ignore */
+  }
+  try {
+    execFileSync("git", ["reset", "--hard", "HEAD"], { cwd: worktreePath, stdio: "pipe", timeout: 5000 });
+  } catch {
+    /* ignore */
   }
 }
 
@@ -303,6 +339,133 @@ export function createWorktreeMergeTools(deps: CreateWorktreeMergeToolsDeps) {
           l([`병합 실패: ${msg}`], [`Merge failed: ${msg}`], [`マージ失敗: ${msg}`], [`合并失败: ${msg}`]),
           lang,
         ),
+      };
+    }
+  }
+
+  function ingestChildBranchIntoParent(parentTaskId: string, childTaskId: string): ChildBranchIngestionResult {
+    const parentInfo = taskWorktrees.get(parentTaskId);
+    if (!parentInfo) return { success: false, message: "No parent worktree found for this task" };
+    const childInfo = taskWorktrees.get(childTaskId);
+    const childBranchName = childInfo?.branchName ?? readChildBranchNameFromTaskMetadata(db, childTaskId);
+    if (!childBranchName) return { success: false, message: "No child branch metadata found for this task" };
+
+    let autoCommitSha: string | undefined;
+    try {
+      const autoCommit = autoCommitWorktreePendingChanges(parentTaskId, parentInfo, appendTaskLog);
+      autoCommitSha = autoCommit.commitSha;
+      if (autoCommit.error) {
+        if (autoCommit.errorKind === "restricted_untracked") {
+          return {
+            success: false,
+            autoCommitSha,
+            message: pickL(
+              l(
+                [
+                  `부모 통합 전 제한된 미추적 파일(${autoCommit.restrictedUntrackedCount}개) 때문에 자동 커밋이 차단되었습니다.`,
+                ],
+                [
+                  `Pre-ingestion auto-commit was blocked by restricted untracked files (${autoCommit.restrictedUntrackedCount}).`,
+                ],
+                [
+                  `親統合前の自動コミットは制限付き未追跡ファイル（${autoCommit.restrictedUntrackedCount}件）によりブロックされました。`,
+                ],
+                [
+                  `父任务吸收前自动提交因受限未跟踪文件（${autoCommit.restrictedUntrackedCount}个）被阻止。`,
+                ],
+              ),
+              resolveLang(""),
+            ),
+          };
+        }
+        return {
+          success: false,
+          autoCommitSha,
+          message: `Pre-ingestion auto-commit failed: ${autoCommit.error}`,
+        };
+      }
+
+      const diffCheck = execFileSync(
+        "git",
+        ["diff", `${parentInfo.branchName}...${childBranchName}`, "--stat"],
+        {
+          cwd: parentInfo.worktreePath,
+          stdio: "pipe",
+          timeout: 10000,
+        },
+      )
+        .toString()
+        .trim();
+      if (!diffCheck) {
+        return {
+          success: true,
+          autoCommitSha,
+          message: `No child changes to ingest from ${childBranchName}.`,
+        };
+      }
+
+      execFileSync("git", ["merge", "--squash", childBranchName], {
+        cwd: parentInfo.worktreePath,
+        stdio: "pipe",
+        timeout: 30000,
+      });
+
+      execFileSync(
+        "git",
+        [
+          "-c",
+          "user.name=Claw-Empire",
+          "-c",
+          "user.email=claw-empire@local",
+          "commit",
+          "-m",
+          `chore: ingest child branch ${getTaskShortId(childTaskId)} (${childInfo.branchName})`,
+        ],
+        {
+          cwd: parentInfo.worktreePath,
+          stdio: "pipe",
+          timeout: 15000,
+        },
+      );
+
+      return {
+        success: true,
+        autoCommitSha,
+        ingestCommitSha: readGitHeadSha(parentInfo.worktreePath) ?? undefined,
+        message: `Child branch ingested via squash: ${childBranchName} -> ${parentInfo.branchName}`,
+      };
+    } catch (err: unknown) {
+      try {
+        const unmerged = execFileSync("git", ["diff", "--name-only", "--diff-filter=U"], {
+          cwd: parentInfo.worktreePath,
+          stdio: "pipe",
+          timeout: 5000,
+        })
+          .toString()
+          .trim();
+        const conflicts = unmerged ? unmerged.split("\n").filter(Boolean) : [];
+
+        if (conflicts.length > 0) {
+          resetSquashMergeState(parentInfo.worktreePath);
+
+          return {
+            success: false,
+            autoCommitSha,
+            message: `Child branch ingestion conflict: ${conflicts.length} file(s) require manual resolution.`,
+            conflicts,
+          };
+        }
+      } catch {
+        /* ignore */
+      }
+
+      resetSquashMergeState(parentInfo.worktreePath);
+
+      const msg = err instanceof Error ? err.message : String(err);
+      return {
+        success: false,
+        autoCommitSha,
+        message: `Child branch ingestion failed: ${msg}`,
       };
     }
   }
@@ -589,6 +752,7 @@ export function createWorktreeMergeTools(deps: CreateWorktreeMergeToolsDeps) {
 
   return {
     mergeWorktree,
+    ingestChildBranchIntoParent,
     mergeToDevAndCreatePR,
     pushTaskBranchAndCreatePR,
     rollbackTaskWorktree,

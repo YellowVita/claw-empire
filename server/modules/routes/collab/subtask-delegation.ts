@@ -328,9 +328,9 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
     }
     if (lines.length === 0) return "";
     return [
-      "[Read-only Department Deliverables]",
-      "Read the following delegated-task worktrees and integrate their outputs into the owner worktree.",
-      "These paths are read-only references. Do not modify files in those worktrees.",
+      "[Department Branch Artifacts]",
+      "The following delegated-task worktrees contain official child branch outputs that will be absorbed into the owner branch.",
+      "Inspect them as needed, but do not modify files inside those worktrees directly.",
       ...lines,
     ].join("\n");
   }

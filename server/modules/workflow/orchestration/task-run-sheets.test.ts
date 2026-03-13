@@ -357,4 +357,25 @@ describe("task run sheets", () => {
       db.close();
     }
   });
+
+  it("ready_for_parent_ingest stage도 review 진입 상태로 표시한다", () => {
+    const db = setupDb();
+    try {
+      db.prepare(
+        "INSERT INTO tasks (id, title, description, status, workflow_pack_key, project_path, source_task_id, created_at, started_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      ).run("task-child", "Child task", "Ready to ingest", "review", "development", "/tmp/project", "parent-1", 100, 120, 130);
+
+      upsertTaskRunSheet(db as any, {
+        taskId: "task-child",
+        stage: "ready_for_parent_ingest",
+        updatedAt: 200,
+      });
+
+      const row = readTaskRunSheetForTask(db as any, "task-child");
+      expect(row?.stage).toBe("ready_for_parent_ingest");
+      expect(row?.snapshot.review_checklist.entered_review).toBe(true);
+    } finally {
+      db.close();
+    }
+  });
 });

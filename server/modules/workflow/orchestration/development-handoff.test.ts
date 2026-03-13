@@ -132,6 +132,16 @@ describe("development handoff metadata", () => {
     ).toBe("Task branch PR created; awaiting dev review");
   });
 
+  it("ready_for_parent_ingest state summary를 노출한다", () => {
+    expect(
+      buildDevelopmentHandoffSummary({
+        state: "ready_for_parent_ingest",
+        pendingRetry: false,
+        prGateStatus: null,
+      }),
+    ).toBe("Ready for parent branch ingestion");
+  });
+
   it("preserves existing development_handoff while patching development_review_audit", () => {
     const db = createDb();
     try {

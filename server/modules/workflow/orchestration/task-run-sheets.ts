@@ -11,6 +11,7 @@ export type TaskRunSheetStage =
   | "queued"
   | "in_progress"
   | "review_ready"
+  | "ready_for_parent_ingest"
   | "human_review"
   | "merging"
   | "done"
@@ -683,7 +684,13 @@ export function buildTaskRunSheetSnapshot(db: DbLike, params: {
       })),
     },
     review_checklist: {
-      entered_review: reviewEnteredAt != null || params.stage === "review_ready" || params.stage === "human_review" || params.stage === "merging" || params.stage === "done",
+      entered_review:
+        reviewEnteredAt != null ||
+        params.stage === "review_ready" ||
+        params.stage === "ready_for_parent_ingest" ||
+        params.stage === "human_review" ||
+        params.stage === "merging" ||
+        params.stage === "done",
       blocked_review: quality.summary.blocked_review,
       waiting_on_subtasks: unfinishedSubtasks > 0,
       waiting_on_child_reviews: waitingChildReviews > 0,

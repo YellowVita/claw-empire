@@ -7,6 +7,7 @@ export type DevelopmentHandoffState =
   | "queued"
   | "in_progress"
   | "review_ready"
+  | "ready_for_parent_ingest"
   | "human_review"
   | "merging"
   | "done"
@@ -91,6 +92,8 @@ export function buildDevelopmentHandoffSummary(input: {
       return "Implementation in progress";
     case "review_ready":
       return "Ready for human review";
+    case "ready_for_parent_ingest":
+      return "Ready for parent branch ingestion";
     case "human_review":
       return "Waiting for human review";
     case "merging":
@@ -112,6 +115,7 @@ export function normalizeDevelopmentHandoffMetadata(raw: unknown): DevelopmentHa
     state !== "queued" &&
     state !== "in_progress" &&
     state !== "review_ready" &&
+    state !== "ready_for_parent_ingest" &&
     state !== "human_review" &&
     state !== "merging" &&
     state !== "done" &&

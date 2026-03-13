@@ -183,6 +183,7 @@ export interface WorkflowCoreExports {
   broadcast(type: string, payload: unknown): void;
   createWorktree: (...args: any[]) => any;
   mergeWorktree: (...args: any[]) => any;
+  ingestChildBranchIntoParent: (...args: any[]) => any;
   mergeToDevAndCreatePR: (...args: any[]) => any;
   pushTaskBranchAndCreatePR: (...args: any[]) => any;
   cleanupWorktree: (...args: any[]) => any;
