@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
+import type { CreateSubtaskFromCliOptions, CreateSubtaskFromCliResult } from "./subtask-seeding.ts";
 
 type CliRuntimeDeps = {
   db: any;
@@ -16,7 +17,12 @@ type CliRuntimeDeps = {
   killPidTree: (pid: number) => void;
   appendTaskLog: (taskId: string | null, kind: string, message: string) => void;
   activeProcesses: Map<string, ChildProcess>;
-  createSubtaskFromCli: (taskId: string, toolUseId: string, title: string) => void;
+  createSubtaskFromCli: (
+    taskId: string,
+    toolUseId: string,
+    title: string,
+    options?: CreateSubtaskFromCliOptions,
+  ) => CreateSubtaskFromCliResult;
   completeSubtaskFromCli: (toolUseId: string) => void;
 };
 
@@ -62,7 +68,7 @@ export function createCliRuntimeTools(deps: CliRuntimeDeps) {
           const input = j.input as Record<string, unknown> | undefined;
           const title = (input?.description as string) || (input?.prompt as string)?.slice(0, 100) || "Sub-task";
 
-          createSubtaskFromCli(taskId, toolUseId, title);
+          createSubtaskFromCli(taskId, toolUseId, title, { source: "claude_task" });
         }
 
         // Detect sub-agent completion: tool_result with tool === "Task" (Claude Code)
@@ -84,7 +90,7 @@ export function createCliRuntimeTools(deps: CliRuntimeDeps) {
                 .split("\n")[0]
                 .replace(/^Task:\s*/, "")
                 .slice(0, 100);
-              createSubtaskFromCli(taskId, itemId, title);
+              createSubtaskFromCli(taskId, itemId, title, { source: "codex_spawn_agent" });
             }
           }
         }
@@ -97,7 +103,10 @@ export function createCliRuntimeTools(deps: CliRuntimeDeps) {
             if (item.tool === "spawn_agent") {
               const itemId = item.id as string;
               const threadIds = (item.receiver_thread_ids as string[]) || [];
-              if (itemId && threadIds[0]) {
+              const existing = itemId
+                ? ((dbPrepareSubtaskByToolUseId().get(itemId) as { id: string } | undefined) ?? null)
+                : null;
+              if (existing && itemId && threadIds[0]) {
                 codexThreadToSubtask.set(threadIds[0], itemId);
               }
             } else if (item.tool === "close_agent") {
@@ -125,7 +134,7 @@ export function createCliRuntimeTools(deps: CliRuntimeDeps) {
                 const stId = `gemini-plan-${st.title.slice(0, 30).replace(/\s/g, "-")}-${Date.now()}`;
                 const existing = dbPrepareOpenSubtaskByTitle().get(taskId, st.title) as { id: string } | undefined;
                 if (!existing) {
-                  createSubtaskFromCli(taskId, stId, st.title);
+                  createSubtaskFromCli(taskId, stId, st.title, { source: "gemini_plan" });
                 }
               }
             } catch {
@@ -370,6 +379,7 @@ export function createCliRuntimeTools(deps: CliRuntimeDeps) {
 
   return {
     codexThreadToSubtask,
+    parseAndCreateSubtasks,
     spawnCliAgent,
   };
 }

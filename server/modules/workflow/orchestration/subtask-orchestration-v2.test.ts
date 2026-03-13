@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildOwnerIntegrationInstruction,
   getLegacyForeignDelegationReadiness,
   inferOrchestrationPhaseFromSubtask,
 } from "./subtask-orchestration-v2.ts";
@@ -44,5 +45,12 @@ describe("subtask orchestration v2 helpers", () => {
 
     expect(readiness.ready).toBe(false);
     expect(readiness.ownerPrepBlockerCount).toBe(1);
+  });
+
+  it("tells owner integration runs to use formal delegation instead of internal foreign-worker spawns", () => {
+    const instruction = buildOwnerIntegrationInstruction("진짜 진짜 시작");
+
+    expect(instruction).toContain("Do not spawn internal workers to impersonate foreign departments");
+    expect(instruction).toContain("create a formal cross-department subtask");
   });
 });

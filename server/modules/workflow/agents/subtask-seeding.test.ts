@@ -33,7 +33,9 @@ function setupDb(): DatabaseSync {
       assigned_agent_id TEXT,
       department_id TEXT,
       workflow_pack_key TEXT,
-      project_id TEXT
+      project_id TEXT,
+      orchestration_version INTEGER,
+      orchestration_stage TEXT
     );
 
     CREATE TABLE subtasks (
@@ -133,6 +135,193 @@ describe("createSubtaskFromCli", () => {
       expect(created.target_department_id).toBe("qa");
       expect(created.blocked_reason).toBe("품질관리팀 협업 대기");
       expect(created.assigned_agent_id).toBe("qa-lead");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("V2 owner_integrate 단계에서는 Codex spawn_agent 내부 워커를 공식 서브태스크로 승격하지 않는다", () => {
+    const db = setupDb();
+    const appendTaskLog = vi.fn();
+    try {
+      db.prepare("UPDATE tasks SET orchestration_version = 2, orchestration_stage = 'owner_integrate' WHERE id = ?").run(
+        "task-1",
+      );
+
+      const routing = createSubtaskRoutingTools({
+        db,
+        DEPT_KEYWORDS: {
+          qa: ["qa", "테스트", "검증"],
+          dev: ["개발", "구현", "코딩"],
+        },
+        detectTargetDepartments: () => [],
+        runAgentOneShot: vi.fn(),
+        resolveProjectPath: () => "C:/workspace/project",
+        resolveLang: () => "ko",
+        findTeamLeader: (departmentId: string) => ({ id: `${departmentId}-lead` }),
+        getDeptName: (departmentId: string) => (departmentId === "dev" ? "개발팀" : departmentId),
+        pickL: (pool: any, lang: string) => pool[lang]?.[0] ?? pool.ko[0],
+        l: (ko: string[], en: string[], ja = en, zh = en) => ({ ko, en, ja, zh }),
+        broadcast: vi.fn(),
+        appendTaskLog,
+        notifyCeo: vi.fn(),
+      });
+
+      const seeding = createSubtaskSeedingTools({
+        db,
+        nowMs: () => 1_000,
+        broadcast: vi.fn(),
+        analyzeSubtaskDepartment: routing.analyzeSubtaskDepartment,
+        rerouteSubtasksByPlanningLeader: vi.fn(),
+        findTeamLeader: (departmentId: string) => ({ id: `${departmentId}-lead` }),
+        getDeptName: (departmentId: string) => (departmentId === "dev" ? "개발팀" : departmentId),
+        getPreferredLanguage: () => "ko",
+        resolveLang: () => "ko",
+        l: (ko: string[], en: string[], ja = en, zh = en) => ({ ko, en, ja, zh }),
+        pickL: (pool: any, lang: string) => pool[lang]?.[0] ?? pool.ko[0],
+        appendTaskLog,
+        notifyCeo: vi.fn(),
+      });
+
+      const result = seeding.createSubtaskFromCli("task-1", "tool-codex", "개발팀 역할로 API를 구현하세요.", {
+        source: "codex_spawn_agent",
+      });
+
+      const count = db.prepare("SELECT COUNT(*) AS cnt FROM subtasks").get() as { cnt: number };
+
+      expect(result).toEqual({ created: false });
+      expect(count.cnt).toBe(0);
+      expect(appendTaskLog).toHaveBeenCalledWith(
+        "task-1",
+        "system",
+        expect.stringContaining("Owner integrate internal worker kept log-only"),
+      );
+    } finally {
+      db.close();
+    }
+  });
+
+  it("V2 owner_integrate 단계에서는 Claude Task 내부 워커도 공식 서브태스크로 승격하지 않는다", () => {
+    const db = setupDb();
+    const appendTaskLog = vi.fn();
+    try {
+      db.prepare("UPDATE tasks SET orchestration_version = 2, orchestration_stage = 'owner_integrate' WHERE id = ?").run(
+        "task-1",
+      );
+
+      const routing = createSubtaskRoutingTools({
+        db,
+        DEPT_KEYWORDS: {
+          qa: ["qa", "테스트", "검증"],
+          dev: ["개발", "구현", "코딩"],
+        },
+        detectTargetDepartments: () => [],
+        runAgentOneShot: vi.fn(),
+        resolveProjectPath: () => "C:/workspace/project",
+        resolveLang: () => "ko",
+        findTeamLeader: (departmentId: string) => ({ id: `${departmentId}-lead` }),
+        getDeptName: (departmentId: string) => (departmentId === "qa" ? "품질관리팀" : departmentId),
+        pickL: (pool: any, lang: string) => pool[lang]?.[0] ?? pool.ko[0],
+        l: (ko: string[], en: string[], ja = en, zh = en) => ({ ko, en, ja, zh }),
+        broadcast: vi.fn(),
+        appendTaskLog,
+        notifyCeo: vi.fn(),
+      });
+
+      const seeding = createSubtaskSeedingTools({
+        db,
+        nowMs: () => 1_000,
+        broadcast: vi.fn(),
+        analyzeSubtaskDepartment: routing.analyzeSubtaskDepartment,
+        rerouteSubtasksByPlanningLeader: vi.fn(),
+        findTeamLeader: (departmentId: string) => ({ id: `${departmentId}-lead` }),
+        getDeptName: (departmentId: string) => (departmentId === "qa" ? "품질관리팀" : departmentId),
+        getPreferredLanguage: () => "ko",
+        resolveLang: () => "ko",
+        l: (ko: string[], en: string[], ja = en, zh = en) => ({ ko, en, ja, zh }),
+        pickL: (pool: any, lang: string) => pool[lang]?.[0] ?? pool.ko[0],
+        appendTaskLog,
+        notifyCeo: vi.fn(),
+      });
+
+      const result = seeding.createSubtaskFromCli(
+        "task-1",
+        "tool-claude",
+        "역할: QA팀장. 개발팀 산출물을 다시 검증하세요.",
+        { source: "claude_task" },
+      );
+
+      const count = db.prepare("SELECT COUNT(*) AS cnt FROM subtasks").get() as { cnt: number };
+
+      expect(result).toEqual({ created: false });
+      expect(count.cnt).toBe(0);
+      expect(appendTaskLog).toHaveBeenCalledWith(
+        "task-1",
+        "system",
+        expect.stringContaining("Owner integrate internal worker kept log-only"),
+      );
+    } finally {
+      db.close();
+    }
+  });
+
+  it("V2 owner_integrate 단계에서도 선언적 plan 기반 서브태스크 생성은 유지한다", () => {
+    const db = setupDb();
+    try {
+      db.prepare("UPDATE tasks SET orchestration_version = 2, orchestration_stage = 'owner_integrate' WHERE id = ?").run(
+        "task-1",
+      );
+
+      const routing = createSubtaskRoutingTools({
+        db,
+        DEPT_KEYWORDS: {
+          qa: ["qa", "테스트", "검증"],
+          dev: ["개발", "구현", "코딩"],
+        },
+        detectTargetDepartments: () => [],
+        runAgentOneShot: vi.fn(),
+        resolveProjectPath: () => "C:/workspace/project",
+        resolveLang: () => "ko",
+        findTeamLeader: (departmentId: string) => ({ id: `${departmentId}-lead` }),
+        getDeptName: (departmentId: string) => (departmentId === "qa" ? "품질관리팀" : departmentId),
+        pickL: (pool: any, lang: string) => pool[lang]?.[0] ?? pool.ko[0],
+        l: (ko: string[], en: string[], ja = en, zh = en) => ({ ko, en, ja, zh }),
+        broadcast: vi.fn(),
+        appendTaskLog: vi.fn(),
+        notifyCeo: vi.fn(),
+      });
+
+      const seeding = createSubtaskSeedingTools({
+        db,
+        nowMs: () => 1_000,
+        broadcast: vi.fn(),
+        analyzeSubtaskDepartment: routing.analyzeSubtaskDepartment,
+        rerouteSubtasksByPlanningLeader: vi.fn(),
+        findTeamLeader: (departmentId: string) => ({ id: `${departmentId}-lead` }),
+        getDeptName: (departmentId: string) => (departmentId === "qa" ? "품질관리팀" : departmentId),
+        getPreferredLanguage: () => "ko",
+        resolveLang: () => "ko",
+        l: (ko: string[], en: string[], ja = en, zh = en) => ({ ko, en, ja, zh }),
+        pickL: (pool: any, lang: string) => pool[lang]?.[0] ?? pool.ko[0],
+        appendTaskLog: vi.fn(),
+        notifyCeo: vi.fn(),
+      });
+
+      const result = seeding.createSubtaskFromCli(
+        "task-1",
+        "tool-plan",
+        "QA 검증 문서를 준비하세요.",
+        { source: "http_plan" },
+      );
+
+      const created = db.prepare("SELECT status, target_department_id FROM subtasks").get() as {
+        status: string;
+        target_department_id: string | null;
+      };
+
+      expect(result).toEqual({ created: true });
+      expect(created.status).toBe("blocked");
+      expect(created.target_department_id).toBe("qa");
     } finally {
       db.close();
     }

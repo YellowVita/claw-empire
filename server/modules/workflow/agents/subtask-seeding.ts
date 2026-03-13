@@ -1,7 +1,12 @@
 import { randomUUID } from "node:crypto";
 import type { Lang } from "../../../types/lang.ts";
 import { resolveConstrainedAgentScopeForTask } from "../../routes/core/tasks/execution-run-auto-assign.ts";
-import { inferOrchestrationPhaseFromSubtask, type OrchestrationV2Phase } from "../orchestration/subtask-orchestration-v2.ts";
+import {
+  getTaskOrchestrationStage,
+  inferOrchestrationPhaseFromSubtask,
+  isTaskOrchestrationV2,
+  type OrchestrationV2Phase,
+} from "../orchestration/subtask-orchestration-v2.ts";
 
 type SubtaskSeedingDeps = {
   db: any;
@@ -27,6 +32,16 @@ type ApprovedPlanSeedOptions = {
   skipPlannedMeeting?: boolean;
 };
 
+export type CliSubtaskSource = "claude_task" | "codex_spawn_agent" | "http_plan" | "gemini_plan";
+
+export type CreateSubtaskFromCliOptions = {
+  source?: CliSubtaskSource;
+};
+
+export type CreateSubtaskFromCliResult = {
+  created: boolean;
+};
+
 export function createSubtaskSeedingTools(deps: SubtaskSeedingDeps) {
   const {
     db,
@@ -44,35 +59,62 @@ export function createSubtaskSeedingTools(deps: SubtaskSeedingDeps) {
     notifyCeo,
   } = deps;
 
-  function createSubtaskFromCli(taskId: string, toolUseId: string, title: string): void {
-    const subId = randomUUID();
-    const parentAgent = db.prepare("SELECT assigned_agent_id FROM tasks WHERE id = ?").get(taskId) as
-      | { assigned_agent_id: string | null }
+  function createSubtaskFromCli(
+    taskId: string,
+    toolUseId: string,
+    title: string,
+    options: CreateSubtaskFromCliOptions = {},
+  ): CreateSubtaskFromCliResult {
+    const parentTask = db
+      .prepare(
+        `
+          SELECT assigned_agent_id, department_id, workflow_pack_key, project_id, orchestration_version, orchestration_stage
+          FROM tasks
+          WHERE id = ?
+        `,
+      )
+      .get(taskId) as
+      | {
+          assigned_agent_id: string | null;
+          department_id: string | null;
+          workflow_pack_key: string | null;
+          project_id: string | null;
+          orchestration_version: number | null;
+          orchestration_stage: string | null;
+        }
       | undefined;
+    if (!parentTask) return { created: false };
 
+    const source = options.source ?? "claude_task";
+    const isInternalWorker = source === "claude_task" || source === "codex_spawn_agent";
+    if (isInternalWorker && isTaskOrchestrationV2(parentTask) && getTaskOrchestrationStage(parentTask) === "owner_integrate") {
+      appendTaskLog(
+        taskId,
+        "system",
+        `Owner integrate internal worker kept log-only: skipped official subtask creation (source=${source}, title=${title.slice(0, 80)})`,
+      );
+      return { created: false };
+    }
+
+    const subId = randomUUID();
     db.prepare(
       `
     INSERT INTO subtasks (id, task_id, title, status, assigned_agent_id, cli_tool_use_id, created_at)
     VALUES (?, ?, ?, 'in_progress', ?, ?, ?)
   `,
-    ).run(subId, taskId, title, parentAgent?.assigned_agent_id ?? null, toolUseId, nowMs());
+    ).run(subId, taskId, title, parentTask.assigned_agent_id ?? null, toolUseId, nowMs());
 
     // Detect if this subtask belongs to a foreign department
-    const parentTaskDept = db
-      .prepare("SELECT department_id, workflow_pack_key, project_id FROM tasks WHERE id = ?")
-      .get(taskId) as
-      | { department_id: string | null; workflow_pack_key: string | null; project_id: string | null }
-      | undefined;
-    const targetDeptId = analyzeSubtaskDepartment(title, parentTaskDept?.department_id ?? null);
+    const targetDeptId = analyzeSubtaskDepartment(title, parentTask.department_id ?? null);
 
     if (targetDeptId) {
       const constrainedAgentIds = resolveConstrainedAgentScopeForTask(db as any, {
-        project_id: parentTaskDept?.project_id ?? null,
-        workflow_pack_key: parentTaskDept?.workflow_pack_key ?? null,
-        department_id: parentTaskDept?.department_id ?? null,
+        project_id: parentTask.project_id ?? null,
+        workflow_pack_key: parentTask.workflow_pack_key ?? null,
+        department_id: parentTask.department_id ?? null,
       });
       const targetLeader = findTeamLeader(targetDeptId, constrainedAgentIds);
-      const targetDeptName = getDeptName(targetDeptId, parentTaskDept?.workflow_pack_key ?? null);
+      const targetDeptName = getDeptName(targetDeptId, parentTask.workflow_pack_key ?? null);
       const lang = getPreferredLanguage();
       const blockedReason = pickL(
         l(
@@ -85,11 +127,12 @@ export function createSubtaskSeedingTools(deps: SubtaskSeedingDeps) {
       );
       db.prepare(
         "UPDATE subtasks SET target_department_id = ?, status = 'blocked', blocked_reason = ?, assigned_agent_id = ? WHERE id = ?",
-      ).run(targetDeptId, blockedReason, targetLeader?.id ?? (parentAgent?.assigned_agent_id ?? null), subId);
+      ).run(targetDeptId, blockedReason, targetLeader?.id ?? (parentTask.assigned_agent_id ?? null), subId);
     }
 
     const subtask = db.prepare("SELECT * FROM subtasks WHERE id = ?").get(subId);
     broadcast("subtask_update", subtask);
+    return { created: true };
   }
 
   function completeSubtaskFromCli(toolUseId: string): void {

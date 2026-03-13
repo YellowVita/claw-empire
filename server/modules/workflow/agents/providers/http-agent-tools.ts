@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import type { ChildProcess } from "node:child_process";
 import type { DecryptedOAuthToken } from "./types.ts";
 import { createStreamTools } from "./stream-tools.ts";
+import type { CreateSubtaskFromCliOptions, CreateSubtaskFromCliResult } from "../subtask-seeding.ts";
 
 type DbLike = {
   prepare: (sql: string) => {
@@ -17,7 +18,12 @@ type CreateHttpAgentToolsDeps = {
   activeProcesses: Map<string, ChildProcess>;
   broadcast: (event: string, payload: unknown) => void;
   normalizeStreamChunk: (raw: Buffer | string, opts?: { dropCliNoise?: boolean }) => string;
-  createSubtaskFromCli: (taskId: string, cliToolUseId: string, title: string) => void;
+  createSubtaskFromCli: (
+    taskId: string,
+    cliToolUseId: string,
+    title: string,
+    options?: CreateSubtaskFromCliOptions,
+  ) => CreateSubtaskFromCliResult;
   completeSubtaskFromCli: (cliToolUseId: string) => void;
   handleTaskRunComplete: (taskId: string, exitCode: number) => void;
   setActiveOAuthAccount: (provider: string, accountId: string) => void;

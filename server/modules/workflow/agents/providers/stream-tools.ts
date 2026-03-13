@@ -1,3 +1,5 @@
+import type { CliSubtaskSource, CreateSubtaskFromCliOptions, CreateSubtaskFromCliResult } from "../subtask-seeding.ts";
+
 type DbLike = {
   prepare: (sql: string) => {
     get: (...args: any[]) => unknown;
@@ -8,14 +10,24 @@ type CreateStreamToolsDeps = {
   db: DbLike;
   broadcast: (event: string, payload: unknown) => void;
   normalizeStreamChunk: (raw: Buffer | string, opts?: { dropCliNoise?: boolean }) => string;
-  createSubtaskFromCli: (taskId: string, cliToolUseId: string, title: string) => void;
+  createSubtaskFromCli: (
+    taskId: string,
+    cliToolUseId: string,
+    title: string,
+    options?: CreateSubtaskFromCliOptions,
+  ) => CreateSubtaskFromCliResult;
   completeSubtaskFromCli: (cliToolUseId: string) => void;
 };
 
 export function createStreamTools(deps: CreateStreamToolsDeps) {
   const { db, broadcast, normalizeStreamChunk, createSubtaskFromCli, completeSubtaskFromCli } = deps;
 
-  function parseHttpAgentSubtasks(taskId: string, textChunk: string, accum: { buf: string }): void {
+  function parseHttpAgentSubtasks(
+    taskId: string,
+    textChunk: string,
+    accum: { buf: string },
+    source: Extract<CliSubtaskSource, "http_plan" | "gemini_plan"> = "http_plan",
+  ): void {
     accum.buf += textChunk;
     // Only scan when we see a closing brace (potential JSON end)
     if (!accum.buf.includes("}")) return;
@@ -31,7 +43,7 @@ export function createStreamTools(deps: CreateStreamToolsDeps) {
             .prepare("SELECT id FROM subtasks WHERE task_id = ? AND title = ? AND status != 'done'")
             .get(taskId, st.title) as { id: string } | undefined;
           if (!existing) {
-            createSubtaskFromCli(taskId, stId, st.title);
+            createSubtaskFromCli(taskId, stId, st.title, { source });
           }
         }
       } catch {
@@ -115,7 +127,7 @@ export function createStreamTools(deps: CreateStreamToolsDeps) {
           safeWrite(text);
           if (taskId) {
             broadcast("cli_output", { task_id: taskId, stream: "stdout", data: text });
-            parseHttpAgentSubtasks(taskId, text, subtaskAccum);
+            parseHttpAgentSubtasks(taskId, text, subtaskAccum, "http_plan");
           }
         }
       } catch {
@@ -161,7 +173,7 @@ export function createStreamTools(deps: CreateStreamToolsDeps) {
                   safeWrite(text);
                   if (taskId) {
                     broadcast("cli_output", { task_id: taskId, stream: "stdout", data: text });
-                    parseHttpAgentSubtasks(taskId, text, subtaskAccum);
+                    parseHttpAgentSubtasks(taskId, text, subtaskAccum, "gemini_plan");
                   }
                 }
               }

@@ -132,6 +132,8 @@ export function buildOwnerIntegrationInstruction(taskTitle: string): string {
     `Task: ${taskTitle}`,
     "Integrate completed department deliverables into the owner worktree.",
     "Read sibling delegated task worktrees as reference only.",
+    "Do not spawn internal workers to impersonate foreign departments during owner_integrate.",
+    "If additional foreign-department work is required, create a formal cross-department subtask so delegation can run through the official workflow.",
     "Do not re-run foreign department work. Consolidate, resolve conflicts, and prepare the final review package.",
   ].join("\n");
 }

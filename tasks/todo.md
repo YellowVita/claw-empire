@@ -1,3 +1,19 @@
+# Owner-Integrate Internal Worker Separation
+
+- [x] `createSubtaskFromCli` source 메타 추가 및 `owner_integrate` 내부 워커 skip 처리
+- [x] `cli-runtime`에서 Claude/Codex 내부 워커 source 전달 및 thread mapping 재검증 추가
+- [x] owner integration 지시문 강화
+- [x] 회귀 테스트 추가 및 타깃 검증 실행
+
+## Review Results
+
+- `owner_integrate` 단계에서 `claude_task`, `codex_spawn_agent`는 공식 `subtasks` 생성 없이 로그만 남기도록 변경
+- `spawn_agent item.completed`는 DB에 실제 subtask가 존재할 때만 `codexThreadToSubtask`를 매핑하도록 보강
+- `http_plan`, `gemini_plan` 기반의 선언적 subtask 생성은 기존 동작 유지
+- 검증
+  - `pnpm exec vitest --config server/vitest.config.ts run server/modules/workflow/agents/subtask-seeding.test.ts server/modules/workflow/agents/cli-runtime.test.ts server/modules/workflow/orchestration/subtask-orchestration-v2.test.ts` 통과
+  - `pnpm run typecheck` 통과
+
 # Phase 1 Plan Execution: Prevent task pollution on merge failure
 
 - [x] `server/modules/workflow/orchestration/review-finalize-tools.ts` 수정
