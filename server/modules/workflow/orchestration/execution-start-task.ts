@@ -348,7 +348,7 @@ export function createExecutionStartTaskTools(deps: CreateExecutionStartTaskTool
         execAgent.personality ? `Personality: ${execAgent.personality}` : "",
         deptConstraint,
         deptPromptBlock,
-        `NOTE: You are working in an isolated Git worktree branch (climpire/${taskShortId}). Commit your changes normally.`,
+        `NOTE: You are working in an isolated Git worktree branch (climpire/${taskShortId}). Do not commit or push during execution. Only prepare a commit message draft if helpful after tests pass and the user approves. Final merge is handled by the system after review approval.`,
         interruptPromptBlock,
         continuationInstruction,
         runInstruction,

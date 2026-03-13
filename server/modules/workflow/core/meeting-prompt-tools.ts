@@ -66,6 +66,22 @@ export function createMeetingPromptTools(deps: CreateMeetingPromptToolsDeps) {
                   "- Do not propose Python renderers (moviepy/Pillow) or any non-Remotion pipeline.",
                 ].join("\n")
         : "";
+    const outputRuleLines =
+      opts.meetingType === "review"
+        ? [
+            "- Return one natural chat message only (no JSON, no markdown).",
+            "- Keep it concise: 2-5 sentences.",
+            "- State your conclusion in the first sentence.",
+            "- Include at least one concrete reason or risk.",
+            "- Include at least one next action or residual risk.",
+            "- Do not call tools, run commands, or inspect files. Respond from the provided context only.",
+          ]
+        : [
+            "- Return one natural chat message only (no JSON, no markdown).",
+            "- Keep it concise: 1-3 sentences.",
+            "- Make your stance explicit and actionable.",
+            "- Do not call tools, run commands, or inspect files. Respond from the provided context only.",
+          ];
     return [
       `[CEO OFFICE ${meetingLabel}]`,
       `Task: ${opts.taskTitle}`,
@@ -76,10 +92,7 @@ export function createMeetingPromptTools(deps: CreateMeetingPromptToolsDeps) {
       localeInstruction(lang),
       videoPlanningInvariant,
       "Output rules:",
-      "- Return one natural chat message only (no JSON, no markdown).",
-      "- Keep it concise: 1-3 sentences.",
-      "- Make your stance explicit and actionable.",
-      "- Do not call tools, run commands, or inspect files. Respond from the provided context only.",
+      ...outputRuleLines,
       opts.stanceHint ? `Required stance: ${opts.stanceHint}` : "",
       `Current turn objective: ${opts.turnObjective}`,
       "",

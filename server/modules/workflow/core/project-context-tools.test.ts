@@ -61,6 +61,21 @@ afterEach(() => {
 });
 
 describe("createProjectContextTools", () => {
+  it("adds planning and verification rules to execution prompts", () => {
+    const tools = createProjectContextTools({
+      db: noopDb as any,
+      isGitRepo,
+      taskWorktrees: new Map(),
+    });
+
+    const prompt = tools.buildTaskExecutionPrompt(["[Task] Prompt alignment"]);
+
+    expect(prompt).toContain("[Planning & Verification Contract / 계획·검증 계약]");
+    expect(prompt).toContain("tasks/todo.md");
+    expect(prompt).toContain("verification evidence");
+    expect(prompt).toContain("Never declare the task complete without proof");
+  });
+
   it("invalidates cached context when tracked files change without a new commit", () => {
     const repoPath = createTempRepo();
     const tools = createProjectContextTools({

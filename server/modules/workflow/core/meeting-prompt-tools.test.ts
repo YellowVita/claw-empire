@@ -88,4 +88,41 @@ describe("buildMeetingPrompt", () => {
     expect(getDeptName).toHaveBeenCalledWith("dev", "video_preprod");
     expect(prompt).toContain("Remotion");
   });
+
+  it("keeps planned meetings short and action-oriented", () => {
+    const tools = createTools();
+    const prompt = tools.buildMeetingPrompt(createAgent(), {
+      meetingType: "planned",
+      round: 1,
+      taskTitle: "Kickoff task",
+      taskDescription: "Need supplement items",
+      transcript: [],
+      turnObjective: "Open the meeting",
+      lang: "en",
+    });
+
+    expect(prompt).toContain("- Keep it concise: 1-3 sentences.");
+    expect(prompt).toContain("- Make your stance explicit and actionable.");
+    expect(prompt).not.toContain("- Keep it concise: 2-5 sentences.");
+    expect(prompt).not.toContain("- State your conclusion in the first sentence.");
+  });
+
+  it("requires denser review conclusions with reason and next step", () => {
+    const tools = createTools();
+    const prompt = tools.buildMeetingPrompt(createAgent(), {
+      meetingType: "review",
+      round: 2,
+      taskTitle: "Review task",
+      taskDescription: "Need final judgment",
+      transcript: [],
+      turnObjective: "Provide review conclusion",
+      lang: "en",
+    });
+
+    expect(prompt).toContain("- Keep it concise: 2-5 sentences.");
+    expect(prompt).toContain("- State your conclusion in the first sentence.");
+    expect(prompt).toContain("- Include at least one concrete reason or risk.");
+    expect(prompt).toContain("- Include at least one next action or residual risk.");
+    expect(prompt).not.toContain("- Keep it concise: 1-3 sentences.");
+  });
 });

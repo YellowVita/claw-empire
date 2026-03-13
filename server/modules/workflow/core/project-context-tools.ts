@@ -33,6 +33,13 @@ export function createProjectContextTools(deps: CreateProjectContextToolsDeps) {
     "[Git Workflow Guardrail / Git 워크플로우 가드레일]",
     "- Do NOT run git merge/rebase/cherry-pick/push during task execution. Merge is performed only by the system after final review approval / 작업 실행 중 git merge/rebase/cherry-pick/push 금지. 병합은 최종 리뷰 승인 후 시스템이 수행",
   ];
+  const PLANNING_AND_VERIFICATION_POLICY_LINES = [
+    "[Planning & Verification Contract / 계획·검증 계약]",
+    "- For non-trivial tasks, update tasks/todo.md with a checklist before major implementation work and keep it current as you progress / 비단순 작업은 주요 구현 전에 tasks/todo.md 체크리스트를 갱신하고 진행 중에도 최신 상태를 유지",
+    "- Before reporting completion, run relevant tests/checks or inspect logs and include the verification evidence in your report / 완료 보고 전에 관련 테스트·체크를 수행하거나 로그를 확인하고 검증 근거를 보고에 포함",
+    "- If expected and actual behavior differ, report the gap explicitly before asking for completion / 기대 결과와 실제 결과가 다르면 완료 처리 전에 그 차이를 명시",
+    "- Never declare the task complete without proof / 증거 없이 작업 완료를 선언하지 마세요",
+  ];
 
   const WARNING_FIX_OVERRIDE_LINE =
     "- Exception override: User explicitly requested warning-level fixes for this task. You may fix the requested MEDIUM/LOW items / 예외: 이 작업에서 사용자 요청 시 MEDIUM/LOW도 해당 요청 범위 내에서 수정 가능";
@@ -66,6 +73,7 @@ export function createProjectContextTools(deps: CreateProjectContextToolsDeps) {
     return [
       ...parts,
       EXECUTION_CONTINUITY_POLICY_LINES.join("\n"),
+      PLANNING_AND_VERIFICATION_POLICY_LINES.join("\n"),
       buildMvpCodeReviewPolicyBlock(Boolean(opts.allowWarningFix)),
     ]
       .filter(Boolean)
