@@ -13,6 +13,7 @@ import {
   getTaskOrchestrationStage,
   inferOrchestrationPhaseFromSubtask,
   isTaskOrchestrationV2,
+  ORCHESTRATION_V2_VERSION,
   ORCHESTRATION_V2_FOREIGN_PARALLELISM,
 } from "../../workflow/orchestration/subtask-orchestration-v2.ts";
 import { readYoloModeEnabled } from "../../routes/ops/messages/decision-inbox/yolo-mode.ts";
@@ -190,6 +191,10 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
       .trimEnd();
   }
 
+  function normalizeText(value: unknown): string {
+    return typeof value === "string" ? value.trim() : "";
+  }
+
   function updateTaskOrchestrationStage(taskId: string, stage: string, status?: string): void {
     const t = nowMs();
     if (status) {
@@ -203,6 +208,92 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
       db.prepare("UPDATE tasks SET orchestration_stage = ?, updated_at = ? WHERE id = ?").run(stage, t, taskId);
     }
     broadcast("task_update", db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId));
+  }
+
+  function maybeUpgradeLegacyDevelopmentRootTaskToV2(
+    parentTask: {
+      id: string;
+      title: string;
+      description?: string | null;
+      status: string;
+      project_id?: string | null;
+      project_path?: string | null;
+      department_id: string | null;
+      assigned_agent_id?: string | null;
+      workflow_pack_key?: string | null;
+      source_task_id?: string | null;
+      orchestration_version?: number | null;
+      orchestration_stage?: string | null;
+    },
+  ):
+    | {
+        id: string;
+        title: string;
+        description: string | null;
+        status: string;
+        project_id: string | null;
+        project_path: string | null;
+        department_id: string | null;
+        assigned_agent_id: string | null;
+        workflow_pack_key: string | null;
+        source_task_id: string | null;
+        orchestration_version: number | null;
+        orchestration_stage: string | null;
+      }
+    | typeof parentTask {
+    if (normalizeText(parentTask.workflow_pack_key) !== "development") return parentTask;
+    if (normalizeText(parentTask.source_task_id)) return parentTask;
+    if (Number(parentTask.orchestration_version ?? 1) >= ORCHESTRATION_V2_VERSION) return parentTask;
+
+    const openSubtasks = db
+      .prepare("SELECT * FROM subtasks WHERE task_id = ? AND status NOT IN ('done', 'cancelled') ORDER BY created_at")
+      .all(parentTask.id) as unknown as SubtaskRow[];
+    if (openSubtasks.length === 0) return parentTask;
+
+    let nextStage: string | null = null;
+    if (parentTask.status === "review") {
+      nextStage = "review";
+    } else {
+      const readiness = getLegacyForeignDelegationReadiness(parentTask, openSubtasks);
+      if (readiness.ownerPrepBlockerCount > 0) {
+        nextStage = "owner_prep";
+      } else if (openSubtasks.some((subtask) => inferOrchestrationPhaseFromSubtask(subtask) === "foreign_collab")) {
+        nextStage = "foreign_collab";
+      } else if (openSubtasks.some((subtask) => inferOrchestrationPhaseFromSubtask(subtask) === "owner_integrate")) {
+        nextStage = "owner_integrate";
+      }
+    }
+    if (!nextStage) return parentTask;
+
+    db.prepare("UPDATE tasks SET orchestration_version = ?, orchestration_stage = ?, updated_at = ? WHERE id = ?").run(
+      ORCHESTRATION_V2_VERSION,
+      nextStage,
+      nowMs(),
+      parentTask.id,
+    );
+    appendTaskLog(parentTask.id, "system", `Legacy development root task upgraded to V2 orchestration (stage=${nextStage})`);
+
+    const updatedParentTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(parentTask.id) as
+      | {
+          id: string;
+          title: string;
+          description: string | null;
+          status: string;
+          project_id: string | null;
+          project_path: string | null;
+          department_id: string | null;
+          assigned_agent_id: string | null;
+          workflow_pack_key: string | null;
+          source_task_id: string | null;
+          orchestration_version: number | null;
+          orchestration_stage: string | null;
+        }
+      | undefined;
+    if (updatedParentTask) {
+      broadcast("task_update", updatedParentTask);
+      return updatedParentTask;
+    }
+    return parentTask;
   }
 
   function buildSiblingWorktreeReferenceBlock(taskId: string, projectPath: string): string {
@@ -458,7 +549,7 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
       return;
     }
 
-    const parentTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId) as
+    let parentTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId) as
       | {
           id: string;
           title: string;
@@ -468,6 +559,8 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
           project_path: string | null;
           department_id: string | null;
           assigned_agent_id: string | null;
+          workflow_pack_key: string | null;
+          source_task_id: string | null;
           orchestration_version: number | null;
           orchestration_stage: string | null;
         }
@@ -476,6 +569,7 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
       clearDelegationRetry(taskId);
       return;
     }
+    parentTask = maybeUpgradeLegacyDevelopmentRootTaskToV2(parentTask) as typeof parentTask;
     const lang = resolveLang(parentTask.description ?? parentTask.title);
     const isV2 = isTaskOrchestrationV2(parentTask);
     const orchestrationStage = getTaskOrchestrationStage(parentTask);

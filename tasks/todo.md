@@ -83,3 +83,118 @@
   - `pnpm run typecheck` 통과
   - server workflow/task-report regression tests 통과
   - `TaskReportPopup` component tests 통과
+
+# Upstream v2.0.4 Merge Assessment
+
+- [x] 원본 `GreenSheep01201/claw-empire`를 `upstream` 리모트로 정리하고 `v2.0.4` fetch
+- [x] `main` 기준 통합용 브랜치 `codex/merge-upstream-v2.0.4` 생성
+- [x] `upstream`의 `v2.0.4`를 `--no-commit --no-ff`로 머지 시뮬레이션
+- [x] 충돌 파일과 비충돌 변경 파일을 분류하고 핵심 리스크 요약
+- [x] 작업트리를 원상복구하고 안전한 통합 절차 제안
+
+## Review Results
+
+- `main...upstream/main` 기준 분기 상태: 로컬 포크가 63커밋 선행, 원본이 42커밋 선행
+- 실제 `git merge --no-commit --no-ff v2.0.4` 시 직접 충돌 5건 확인
+  - `README.md`
+  - `server/modules/lifecycle.ts`
+  - `server/modules/workflow/orchestration/report-workflow-tools.ts`
+  - `src/components/settings/types.ts`
+  - `tests/e2e/ci-api-ops-and-docs.spec.ts`
+- 자동 병합된 변경은 다수였고, 범위는 Docker 배포, API preset/Kimi provider, lifecycle recovery, API assignment, E2E cleanup까지 확장됨
+- 작업트리는 `git merge --abort`로 복구했고, 현재 남은 로컬 변경은 이 `tasks/todo.md` 기록뿐
+
+# Upstream v2.0.4 Merge Integration
+
+- [x] 통합 브랜치 `codex/merge-upstream-v2.0.4`에서 `v2.0.4` 머지 재실행
+- [x] 충돌 파일 5개 수동 해소
+- [x] 타입/빌드/테스트로 통합 검증
+- [x] 결과 요약 및 `main` 반영 절차 정리
+
+## Review Results
+
+- 충돌 해소 파일
+  - `README.md`
+  - `server/modules/lifecycle.ts`
+  - `server/modules/workflow/orchestration/report-workflow-tools.ts`
+  - `src/components/settings/types.ts`
+  - `tests/e2e/ci-api-ops-and-docs.spec.ts`
+- 추가 통합 작업
+  - `server/modules/lifecycle/orphan-working-agent-recovery.ts` 추가
+  - `server/modules/lifecycle/orphan-working-agent-recovery.test.ts` 추가
+  - `server/db/queries/agent-queries.ts`에 stale working agent 조회/조건부 해제 쿼리 추가
+  - `server/modules/routes/core/tasks/execution-run.test.ts` 타입 보정
+- 검증
+  - `pnpm run typecheck` 통과
+  - `pnpm exec vitest --config server/vitest.config.ts run server/modules/lifecycle/orphan-working-agent-recovery.test.ts server/modules/lifecycle/startup-orphan-worktree-cleanup.test.ts server/modules/lifecycle/review-recovery.test.ts` 통과
+  - `pnpm run build` 통과
+  - `pnpm run test:e2e` 실패: `scripts/run-e2e.mjs` 단계에서 `spawn EINVAL`
+
+# E2E Spawn EINVAL Fix
+
+- [x] `scripts/run-e2e.mjs`의 Windows spawn 실패 최소 재현
+- [x] 원인에 맞는 런처 수정
+- [x] `pnpm run typecheck`, `pnpm run build`, `pnpm run test:e2e` 재검증
+
+## Review Results
+
+- 원인: Windows에서 `child_process.spawn('pnpm.cmd', ...)`가 즉시 `EINVAL`로 실패
+- 수정: `scripts/run-e2e.mjs`가 Windows에서 `.cmd`를 직접 spawn하지 않고 `cmd.exe /d /s /c ...`로 실행하도록 변경
+- 추가 수정: `tests/e2e/ci-api-ops-and-docs.spec.ts`에 `cleanupE2EResources` import 복구
+- 검증
+  - `pnpm run typecheck` 통과
+  - `pnpm run build` 통과
+  - `pnpm run test:e2e -- --list` 통과
+  - `pnpm exec playwright install chromium` 실행
+  - `pnpm run test:e2e` 통과
+
+# Review Queue Cleanup
+
+- [x] `review`에 남아 있는 delegated task/worktree를 `main` 기준으로 분류
+- [x] 이미 상위 통합본에 반영된 브랜치는 `discard`로 정리
+- [x] 추가 반영이 필요한 브랜치는 별도 보류 사유를 남기고 보고
+
+## Review Results
+
+- 상위 완료 태스크 `2375e68e-0fa5-4719-8388-61f59fe354dd` 로그에서 delegated child 7건이 부모 완료 시점에 논리적으로 닫힌 상태임을 확인
+- 남아 있던 `review` 태스크 7건은 모두 문서 보완용 delegated collaboration branch였고, 공통적으로 `Merge failed; manual resolution required` 상태였음
+- 각 태스크는 `discard`로 워크트리/브랜치를 정리한 뒤 `done` + `hidden=1`로 전환
+- 정리 후 검증 결과
+  - `/api/tasks?status=review` => 0건
+  - `/api/worktrees` => 0건
+
+# Prompt-Workflow Alignment
+
+- [x] `server/modules/workflow/core/project-context-tools.ts` 실행 정책 블록에 계획/검증 계약 추가
+- [x] `server/modules/workflow/orchestration/execution-start-task.ts` worktree 안내 문구를 no-commit 정책으로 교체
+- [x] `server/modules/workflow/core/meeting-prompt-tools.ts` 회의 타입별 출력 규칙 분기
+- [x] prompt builder unit tests 추가 및 회귀 확인
+
+## Review Results
+
+- 실행 공통 정책에 `Planning & Verification Contract` 블록 추가
+- isolated worktree 안내에서 일반 커밋 허용 문구 제거, no-commit + test/user-approval 조건 명시
+- `planned` 회의는 1~3문장 유지, `review` 회의는 2~5문장 + 결론/근거/다음 액션 규칙 추가
+- 검증
+  - `pnpm exec vitest --config server/vitest.config.ts run server/modules/workflow/core/project-context-tools.test.ts server/modules/workflow/core/meeting-prompt-tools.test.ts` 통과
+  - `pnpm run typecheck` 통과
+
+# Development Pack V2 Orchestration Alignment
+
+- [x] `POST /api/tasks`의 development 루트 태스크를 V2 owner_prep으로 생성
+- [x] direct-chat task 생성 경로를 동일 규칙으로 정렬
+- [x] legacy development 루트 태스크 lazy migration 추가
+- [x] 관련 테스트 추가 및 타깃 검증 실행
+
+## Review Results
+
+- `POST /api/tasks`와 direct-chat task 생성 경로에서 `development` 루트 태스크에 `orchestration_version=2`, `orchestration_stage='owner_prep'`를 기본 저장하도록 변경
+- `subtask-delegation`에 legacy development root task lazy migration 추가
+  - `review` 상태면 `review`
+  - `owner_prep` blocker가 남아 있으면 `owner_prep`
+  - blocker가 없고 foreign subtask가 남아 있으면 `foreign_collab`
+  - foreign 없이 owner-integrate subtask만 남아 있으면 `owner_integrate`
+- `PATCH /api/tasks` 동작은 바꾸지 않았고, lazy migration은 위임 시점에만 수행
+- 검증
+  - `pnpm exec vitest --config server/vitest.config.ts run server/modules/routes/core/tasks/crud.workflow-pack-filter.test.ts server/modules/routes/collab/direct-chat-task-flow.pack-inference.test.ts server/modules/routes/collab/subtask-delegation.v2.test.ts server/modules/routes/collab/task-delegation.skip-v2.test.ts` 통과
+  - `pnpm run typecheck` 통과

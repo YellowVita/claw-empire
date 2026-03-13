@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Lang } from "../../../types/lang.ts";
 import { resolveWorkflowPackKeyForTask } from "../../workflow/packs/task-pack-resolver.ts";
 import { isWorkflowPackKey } from "../../workflow/packs/definitions.ts";
+import { ORCHESTRATION_V2_VERSION } from "../../workflow/orchestration/subtask-orchestration-v2.ts";
 import type { DelegationOptions } from "./project-resolution.ts";
 import type { AgentRow, DirectChatDeps } from "./direct-chat-types.ts";
 
@@ -60,6 +61,7 @@ export function createDirectTaskFlow(deps: TaskFlowDeps) {
       explicitPackKey,
       projectId: selectedProject.id,
     });
+    const useDevelopmentTaskOrchestrationV2 = workflowPackKey === "development";
     const projectCoreGoal = selectedProject.coreGoal || "";
     const projectContextHint = deps.normalizeTextField(options.projectContext) || projectCoreGoal;
     const detectedPath =
@@ -79,8 +81,12 @@ export function createDirectTaskFlow(deps: TaskFlowDeps) {
     deps.db
       .prepare(
         `
-    INSERT INTO tasks (id, title, description, department_id, assigned_agent_id, project_id, status, priority, task_type, workflow_pack_key, project_path, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, 'planned', 1, 'general', ?, ?, ?, ?)
+    INSERT INTO tasks (
+      id, title, description, department_id, assigned_agent_id, project_id,
+      status, priority, task_type, workflow_pack_key, orchestration_version, orchestration_stage,
+      project_path, created_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, 'planned', 1, 'general', ?, ?, ?, ?, ?, ?)
   `,
       )
       .run(
@@ -91,6 +97,8 @@ export function createDirectTaskFlow(deps: TaskFlowDeps) {
         agent.id,
         selectedProject.id,
         workflowPackKey,
+        useDevelopmentTaskOrchestrationV2 ? ORCHESTRATION_V2_VERSION : null,
+        useDevelopmentTaskOrchestrationV2 ? "owner_prep" : null,
         detectedPath,
         t,
         t,

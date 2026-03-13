@@ -59,6 +59,8 @@ function createTaskCrudHarness(): { db: DatabaseSync; routes: Map<string, RouteH
       workflow_pack_source TEXT,
       workflow_meta_json TEXT,
       output_format TEXT,
+      orchestration_version INTEGER,
+      orchestration_stage TEXT,
       project_path TEXT,
       base_branch TEXT,
       result TEXT,
@@ -430,6 +432,8 @@ describe("task CRUD workflow pack filter", () => {
       expect(payload.task.project_id).toBe("project-novel");
       expect(payload.task.project_path).toBe(path.normalize("/tmp/novel-project"));
       expect(payload.task.development_handoff).toBeNull();
+      expect((payload.task as any).orchestration_version).toBeNull();
+      expect((payload.task as any).orchestration_stage).toBeNull();
       const meta = JSON.parse(payload.task.workflow_meta_json ?? "{}");
       expect(meta.pack_override_source).toBeNull();
       expect(meta.pack_override_fields).toEqual([]);
@@ -484,6 +488,41 @@ describe("task CRUD workflow pack filter", () => {
         routing_keywords: ["project-only"],
         qa_rules: { failOnMissingSections: true },
       });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("POST /api/tasks는 development 루트 태스크를 V2 owner_prep으로 생성한다", () => {
+    const { db, routes } = createTaskCrudHarness();
+    try {
+      const handler = routes.get("POST /api/tasks") as RouteHandler | undefined;
+      expect(handler).toBeTypeOf("function");
+
+      const res = createFakeResponse();
+      handler?.(
+        {
+          body: {
+            title: "Development task",
+            workflow_pack_key: "development",
+          },
+        },
+        res,
+      );
+
+      expect(res.statusCode).toBe(200);
+      const payload = res.payload as {
+        task: {
+          workflow_pack_key: string;
+          orchestration_version: number | null;
+          orchestration_stage: string | null;
+          development_handoff: { state: string } | null;
+        };
+      };
+      expect(payload.task.workflow_pack_key).toBe("development");
+      expect(payload.task.orchestration_version).toBe(2);
+      expect(payload.task.orchestration_stage).toBe("owner_prep");
+      expect(payload.task.development_handoff).toMatchObject({ state: "queued" });
     } finally {
       db.close();
     }

@@ -19,6 +19,7 @@ import {
   readDevelopmentHandoffFromTaskLike,
   upsertDevelopmentHandoffMetadata,
 } from "../../../workflow/orchestration/development-handoff.ts";
+import { ORCHESTRATION_V2_VERSION } from "../../../workflow/orchestration/subtask-orchestration-v2.ts";
 
 export type TaskCrudRouteDeps = Pick<
   RuntimeContext,
@@ -457,15 +458,17 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
       projectPath: resolvedProjectPath,
       context: "task-create",
     });
+    const useDevelopmentTaskOrchestrationV2 = workflowPackSelection.packKey === "development";
 
     db.prepare(
       `
     INSERT INTO tasks (
       id, title, description, department_id, assigned_agent_id, project_id,
       status, priority, task_type, workflow_pack_key, workflow_pack_source, workflow_meta_json, output_format,
+      orchestration_version, orchestration_stage,
       project_path, base_branch, created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
     ).run(
       id,
@@ -481,6 +484,8 @@ export function registerTaskCrudRoutes(deps: TaskCrudRouteDeps): void {
       workflowPackSelection.source,
       workflowMetaJson,
       typeof (body as any).output_format === "string" ? (body as any).output_format : null,
+      useDevelopmentTaskOrchestrationV2 ? ORCHESTRATION_V2_VERSION : null,
+      useDevelopmentTaskOrchestrationV2 ? "owner_prep" : null,
       resolvedProjectPath,
       (body as any).base_branch ?? null,
       t,
