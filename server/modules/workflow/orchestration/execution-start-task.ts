@@ -15,6 +15,7 @@ import {
 import { buildIntegrationRepairPromptBlock, normalizeIntegrationRepairContext } from "./integration-repair-context.ts";
 import { deleteTaskRetryQueueRow, runTaskExecutionHooks } from "./task-execution-policy.ts";
 import { upsertTaskRunSheet } from "./task-run-sheets.ts";
+import { buildTaskWorkspacePromptBlock, writeTaskReadonlySummary } from "../core/task-workspace.ts";
 
 type CreateExecutionStartTaskToolsDeps = {
   nowMs: RuntimeContext["nowMs"];
@@ -345,6 +346,19 @@ export function createExecutionStartTaskTools(deps: CreateExecutionStartTaskTool
       taskLang,
     );
     const availableSkillsPromptBlock = buildAvailableSkillsPromptBlock(provider);
+    const runSheet = upsertTaskRunSheet(db as any, {
+      taskId,
+      stage: "in_progress",
+      updatedAt: nowMs(),
+    });
+    const readOnlySummaryPath =
+      runSheet && worktreePath
+        ? writeTaskReadonlySummary(worktreePath, taskId, runSheet.summaryMarkdown)
+        : null;
+    const taskWorkspacePromptBlock = buildTaskWorkspacePromptBlock({
+      taskId,
+      readOnlySummaryPath,
+    });
     const spawnPrompt = buildTaskExecutionPrompt(
       [
         availableSkillsPromptBlock,
@@ -362,6 +376,7 @@ export function createExecutionStartTaskTools(deps: CreateExecutionStartTaskTool
         execAgent.personality ? `Personality: ${execAgent.personality}` : "",
         deptConstraint,
         deptPromptBlock,
+        taskWorkspacePromptBlock,
         `NOTE: You are working in an isolated Git worktree branch (climpire/${taskShortId}). Do not commit or push during execution. Only prepare a commit message draft if helpful after tests pass and the user approves. Final merge is handled by the system after review approval.`,
         interruptPromptBlock,
         continuationInstruction,
@@ -386,11 +401,6 @@ export function createExecutionStartTaskTools(deps: CreateExecutionStartTaskTool
     }
 
     appendTaskLog(taskId, "system", `RUN start (agent=${execAgent.name}, provider=${provider})`);
-    upsertTaskRunSheet(db as any, {
-      taskId,
-      stage: "in_progress",
-      updatedAt: nowMs(),
-    });
     if (provider === "api") {
       const controller = new AbortController();
       const fakePid = getNextHttpAgentPid();

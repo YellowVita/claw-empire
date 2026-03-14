@@ -4,6 +4,14 @@ import type { TaskQualityRun } from "./task-quality-evidence.ts";
 import { summarizeTaskExecutionEvents } from "./task-execution-events.ts";
 import { syncDevelopmentHandoffFromRunSheet } from "./development-handoff.ts";
 import { normalizeDevelopmentReviewAuditMetadata } from "./development-handoff.ts";
+import {
+  TASK_WORKSPACE_LESSONS_LABEL,
+  TASK_WORKSPACE_PLAN_LABEL,
+  TASK_WORKSPACE_REVIEW_LABEL,
+  getTaskReadonlySummaryRelativePath,
+  getTaskRuntimeNotesRelativePath,
+  getTaskSubtaskNotesRelativePath,
+} from "../core/task-workspace.ts";
 
 type DbLike = Pick<DatabaseSync, "prepare">;
 
@@ -101,6 +109,22 @@ export type TaskRunSheetSnapshot = {
   handoff: {
     status: string;
     summary: string | null;
+  };
+  task_workspace: {
+    source_of_truth: "task_run_sheet";
+    plan_workspace: string;
+    review_notes_workspace: string;
+    lessons_log_workspace: string;
+    runtime_notes_path: string;
+    subtask_notes_path: string;
+    readonly_summary_path: string;
+    review_notes: string[];
+    child_progress: Array<{
+      task_id: string;
+      title: string;
+      status: string;
+      stage: string | null;
+    }>;
   };
   timeline: {
     created_at: number | null;
@@ -219,6 +243,17 @@ function buildEmptySnapshot(): TaskRunSheetSnapshot {
       status: "",
       summary: null,
     },
+    task_workspace: {
+      source_of_truth: "task_run_sheet",
+      plan_workspace: TASK_WORKSPACE_PLAN_LABEL,
+      review_notes_workspace: TASK_WORKSPACE_REVIEW_LABEL,
+      lessons_log_workspace: TASK_WORKSPACE_LESSONS_LABEL,
+      runtime_notes_path: "",
+      subtask_notes_path: "",
+      readonly_summary_path: "",
+      review_notes: [],
+      child_progress: [],
+    },
     timeline: {
       created_at: null,
       started_at: null,
@@ -335,6 +370,68 @@ function loadLatestReportMessage(db: DbLike, taskId: string): string | null {
     return normalizeText(row?.content);
   } catch {
     return null;
+  }
+}
+
+function listRecentTaskMessages(db: DbLike, taskId: string, limit = 4): Array<{
+  message_type: string;
+  content: string;
+  created_at: number;
+}> {
+  try {
+    return db
+      .prepare(
+        `
+          SELECT message_type, content, created_at
+          FROM messages
+          WHERE task_id = ?
+            AND message_type IN ('report', 'status_update', 'chat')
+          ORDER BY created_at DESC
+          LIMIT ?
+        `,
+      )
+      .all(taskId, limit)
+      .map((row: any) => ({
+        message_type: String(row.message_type ?? ""),
+        content: String(row.content ?? ""),
+        created_at: Number(row.created_at ?? 0) || 0,
+      }));
+  } catch {
+    return [];
+  }
+}
+
+function listChildTaskProgress(db: DbLike, taskId: string): Array<{
+  task_id: string;
+  title: string;
+  status: string;
+  stage: string | null;
+}> {
+  try {
+    return db
+      .prepare(
+        `
+          SELECT
+            child.id AS task_id,
+            child.title AS title,
+            child.status AS status,
+            run.stage AS stage
+          FROM tasks child
+          LEFT JOIN task_run_sheets run ON run.task_id = child.id
+          WHERE child.source_task_id = ?
+          ORDER BY child.updated_at DESC
+          LIMIT 12
+        `,
+      )
+      .all(taskId)
+      .map((row: any) => ({
+        task_id: String(row.task_id ?? ""),
+        title: clipText(row.title, 180) ?? "",
+        status: String(row.status ?? ""),
+        stage: normalizeText(row.stage),
+      }));
+  } catch {
+    return [];
   }
 }
 
@@ -612,6 +709,27 @@ export function renderTaskRunSheetMarkdown(input: {
     `- Status: ${snapshot.handoff.status || "-"}`,
     `- Summary: ${snapshot.handoff.summary || "-"}`,
     "",
+    "## Task Workspace",
+    `- Source Of Truth: ${snapshot.task_workspace.source_of_truth}`,
+    `- Plan Workspace: ${snapshot.task_workspace.plan_workspace || "-"}`,
+    `- Review Notes Workspace: ${snapshot.task_workspace.review_notes_workspace || "-"}`,
+    `- Lessons Log Workspace: ${snapshot.task_workspace.lessons_log_workspace || "-"}`,
+    `- Runtime Notes Path: ${snapshot.task_workspace.runtime_notes_path || "-"}`,
+    `- Subtask Notes Path: ${snapshot.task_workspace.subtask_notes_path || "-"}`,
+    `- Read-Only Summary Path: ${snapshot.task_workspace.readonly_summary_path || "-"}`,
+    ...(
+      snapshot.task_workspace.review_notes.length > 0
+        ? snapshot.task_workspace.review_notes.map((entry) => `- Review Note: ${entry}`)
+        : ["- Review Note: -"]
+    ),
+    ...(
+      snapshot.task_workspace.child_progress.length > 0
+        ? snapshot.task_workspace.child_progress.map(
+            (entry) => `- Child Progress: ${entry.title || entry.task_id} [${entry.status}${entry.stage ? ` / ${entry.stage}` : ""}]`,
+          )
+        : ["- Child Progress: -"]
+    ),
+    "",
     "## Timeline",
     `- Created At: ${snapshot.timeline.created_at ?? "-"}`,
     `- Started At: ${snapshot.timeline.started_at ?? "-"}`,
@@ -638,6 +756,8 @@ export function buildTaskRunSheetSnapshot(db: DbLike, params: {
   const reviewEnteredAt = extractReviewEnteredAt(logs);
   const unfinishedSubtasks = countUnfinishedSubtasks(db, task.id);
   const waitingChildReviews = countChildTasksWaitingForReview(db, task.id, task.source_task_id);
+  const recentMessages = listRecentTaskMessages(db, task.id, 4);
+  const childProgress = listChildTaskProgress(db, task.id);
   const resultSummary = clipText(task.result, 320);
   const diffSummary = extractDiffSummary(logs);
   const implementationHighlights = extractImplementationHighlights(logs);
@@ -708,6 +828,19 @@ export function buildTaskRunSheetSnapshot(db: DbLike, params: {
       status: task.status,
       summary: handoffSummary,
     },
+    task_workspace: {
+      source_of_truth: "task_run_sheet",
+      plan_workspace: TASK_WORKSPACE_PLAN_LABEL,
+      review_notes_workspace: TASK_WORKSPACE_REVIEW_LABEL,
+      lessons_log_workspace: TASK_WORKSPACE_LESSONS_LABEL,
+      runtime_notes_path: getTaskRuntimeNotesRelativePath(task.id),
+      subtask_notes_path: getTaskSubtaskNotesRelativePath(task.id),
+      readonly_summary_path: getTaskReadonlySummaryRelativePath(task.id),
+      review_notes: recentMessages
+        .map((message) => clipText(`[${message.message_type}] ${message.content}`, 220))
+        .filter((entry): entry is string => Boolean(entry)),
+      child_progress: childProgress,
+    },
     timeline: {
       created_at: task.created_at,
       started_at: task.started_at,
@@ -722,16 +855,16 @@ export function upsertTaskRunSheet(db: DbLike, input: {
   taskId: string;
   stage: TaskRunSheetStage;
   updatedAt?: number;
-}): void {
+}): { snapshot: TaskRunSheetSnapshot; summaryMarkdown: string } | null {
   const task = loadTaskRow(db, input.taskId);
-  if (!task || task.workflow_pack_key !== "development") return;
+  if (!task || task.workflow_pack_key !== "development") return null;
 
   const snapshot = buildTaskRunSheetSnapshot(db, {
     taskId: input.taskId,
     stage: input.stage,
     updatedAt: input.updatedAt ?? Date.now(),
   });
-  if (!snapshot) return;
+  if (!snapshot) return null;
 
   const updatedAt = input.updatedAt ?? Date.now();
   const createdAt = task.created_at ?? updatedAt;
@@ -782,6 +915,10 @@ export function upsertTaskRunSheet(db: DbLike, input: {
     snapshot,
     updatedAt,
   });
+  return {
+    snapshot,
+    summaryMarkdown,
+  };
 }
 
 export function readTaskRunSheetForTask(db: DbLike, taskId: string): TaskRunSheet | null {

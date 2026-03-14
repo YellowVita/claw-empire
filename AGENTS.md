@@ -50,7 +50,7 @@ These rules are additive and do NOT delete existing orchestration rules below.
 - Keep one clear objective per subagent.
 
 ### 3) Self-Improvement Loop
-- After user correction, update `tasks/lessons.md` with prevention rules.
+- After user correction, update the lessons log workspace with prevention rules.
 - Turn repeated mistakes into explicit guardrails.
 - Review relevant lessons at session start when applicable.
 
@@ -71,12 +71,12 @@ These rules are additive and do NOT delete existing orchestration rules below.
 
 ## Task Management
 
-1. Plan first: write checklist in `tasks/todo.md`.
+1. Plan first: keep the checklist in the task run sheet / plan workspace.
 2. Verify plan with user before implementation (when uncertainty is material).
 3. Track progress by marking completed checklist items.
 4. Explain major changes with concise high-level summaries.
-5. Add review results to `tasks/todo.md`.
-6. Capture lessons in `tasks/lessons.md` after corrections.
+5. Add review results to the review notes workspace.
+6. Capture lessons in the lessons log workspace after corrections.
 
 ## Core Principles
 

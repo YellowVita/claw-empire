@@ -2,23 +2,18 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { getTaskShortId } from "./lifecycle.ts";
+import {
+  TASK_WORKSPACE_RUNTIME_ARTIFACT_EXACT_PATHS,
+  TASK_WORKSPACE_RUNTIME_ARTIFACT_PREFIXES,
+  TASK_WORKSPACE_RUNTIME_ARTIFACT_RESET_TARGETS,
+} from "../task-workspace.ts";
 
 export const DIFF_SUMMARY_NONE = "__DIFF_NONE__";
 export const DIFF_SUMMARY_ERROR = "__DIFF_ERROR__";
 
-const RUNTIME_TASK_ARTIFACT_EXACT_PATHS = new Set([
-  "tasks/todo.md",
-  "tasks/lessons.md",
-  "tasks/review.md",
-]);
-const RUNTIME_TASK_ARTIFACT_PREFIXES = ["tasks/runtime/", "tasks/subtasks/"];
-const RUNTIME_TASK_ARTIFACT_RESET_TARGETS = [
-  "tasks/todo.md",
-  "tasks/lessons.md",
-  "tasks/review.md",
-  "tasks/runtime",
-  "tasks/subtasks",
-];
+const RUNTIME_TASK_ARTIFACT_EXACT_PATHS = new Set(TASK_WORKSPACE_RUNTIME_ARTIFACT_EXACT_PATHS);
+const RUNTIME_TASK_ARTIFACT_PREFIXES = [...TASK_WORKSPACE_RUNTIME_ARTIFACT_PREFIXES];
+const RUNTIME_TASK_ARTIFACT_RESET_TARGETS = [...TASK_WORKSPACE_RUNTIME_ARTIFACT_RESET_TARGETS];
 
 const AUTO_COMMIT_ALLOWED_UNTRACKED_EXTENSIONS = new Set([
   ".ts",
@@ -161,11 +156,8 @@ export function ensureRuntimeTaskArtifactLocalExcludes(repoPath: string): void {
   const infoDir = path.join(gitDir, "info");
   const excludePath = path.join(infoDir, "exclude");
   const lines = [
-    "tasks/todo.md",
-    "tasks/lessons.md",
-    "tasks/review.md",
-    "tasks/runtime/",
-    "tasks/subtasks/",
+    ...TASK_WORKSPACE_RUNTIME_ARTIFACT_EXACT_PATHS,
+    ...TASK_WORKSPACE_RUNTIME_ARTIFACT_PREFIXES,
   ];
   try {
     fs.mkdirSync(infoDir, { recursive: true });

@@ -89,7 +89,9 @@ describe("worktree merge audit helpers", () => {
     const repo = initRepo("claw-auto-commit-runtime-tasks-");
     tempDirs.push(repo);
     fs.mkdirSync(path.join(repo, "tasks"), { recursive: true });
+    fs.mkdirSync(path.join(repo, ".climpire", "runtime"), { recursive: true });
     fs.writeFileSync(path.join(repo, "tasks", "todo.md"), "- local checklist\n", "utf8");
+    fs.writeFileSync(path.join(repo, ".climpire", "runtime", "task-run-sheet-task123456.md"), "# readonly summary\n", "utf8");
     fs.writeFileSync(path.join(repo, "feature.txt"), "feature\n", "utf8");
 
     const result = autoCommitWorktreePendingChanges(
@@ -101,6 +103,7 @@ describe("worktree merge audit helpers", () => {
     expect(result.committed).toBe(true);
     expect(runGit(repo, ["show", "--name-only", "--pretty=format:%s", "HEAD"])).toContain("feature.txt");
     expect(runGit(repo, ["show", "--name-only", "--pretty=format:%s", "HEAD"])).not.toContain("tasks/todo.md");
+    expect(runGit(repo, ["show", "--name-only", "--pretty=format:%s", "HEAD"])).not.toContain(".climpire/runtime");
   });
 
   it("returns post-merge HEAD SHA and target branch on merge success", () => {

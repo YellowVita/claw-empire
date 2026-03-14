@@ -3,6 +3,11 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { createPromptSkillsHelper } from "./prompt-skills.ts";
+import {
+  TASK_WORKSPACE_LESSONS_LABEL,
+  TASK_WORKSPACE_PLAN_LABEL,
+  TASK_WORKSPACE_REVIEW_LABEL,
+} from "./task-workspace.ts";
 
 type DbLike = {
   prepare: (sql: string) => {
@@ -35,7 +40,9 @@ export function createProjectContextTools(deps: CreateProjectContextToolsDeps) {
   ];
   const PLANNING_AND_VERIFICATION_POLICY_LINES = [
     "[Planning & Verification Contract / 계획·검증 계약]",
-    "- For non-trivial tasks, update tasks/todo.md with a checklist before major implementation work and keep it current as you progress / 비단순 작업은 주요 구현 전에 tasks/todo.md 체크리스트를 갱신하고 진행 중에도 최신 상태를 유지",
+    `- For non-trivial tasks, keep the plan in ${TASK_WORKSPACE_PLAN_LABEL} and treat the task run sheet / DB snapshot as the source of truth / 비단순 작업은 ${TASK_WORKSPACE_PLAN_LABEL} 기준으로 계획을 유지하고 task run sheet 및 DB snapshot을 정본으로 취급`,
+    `- Store review decisions in ${TASK_WORKSPACE_REVIEW_LABEL}; shared checklist files are not canonical / 리뷰 결정은 ${TASK_WORKSPACE_REVIEW_LABEL}에 기록하고 공유 체크리스트 파일을 정본으로 취급하지 마세요`,
+    `- Lessons belong to ${TASK_WORKSPACE_LESSONS_LABEL} rather than shared runtime checklist files / 교훈은 ${TASK_WORKSPACE_LESSONS_LABEL}에 남기고 공유 런타임 체크리스트 파일에 의존하지 마세요`,
     "- Before reporting completion, run relevant tests/checks or inspect logs and include the verification evidence in your report / 완료 보고 전에 관련 테스트·체크를 수행하거나 로그를 확인하고 검증 근거를 보고에 포함",
     "- If expected and actual behavior differ, report the gap explicitly before asking for completion / 기대 결과와 실제 결과가 다르면 완료 처리 전에 그 차이를 명시",
     "- Never declare the task complete without proof / 증거 없이 작업 완료를 선언하지 마세요",

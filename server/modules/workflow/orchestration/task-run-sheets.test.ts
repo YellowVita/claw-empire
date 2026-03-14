@@ -247,6 +247,9 @@ describe("task run sheets", () => {
       expect(row?.summary_markdown).toContain("PR Feedback Gate: blocked");
       expect(row?.summary_markdown).toContain("Ignored Optional Checks: 2");
       expect(row?.summary_markdown).toContain("Ignored Check: optional / preview");
+      expect(row?.summary_markdown).toContain("## Task Workspace");
+      expect(row?.snapshot.task_workspace.source_of_truth).toBe("task_run_sheet");
+      expect(row?.snapshot.task_workspace.readonly_summary_path).toContain(".climpire/runtime/task-run-sheet-");
       expect(workflowMeta.development_handoff).toEqual(
         expect.objectContaining({
           state: "review_ready",
@@ -287,6 +290,17 @@ describe("task run sheets", () => {
           pr_feedback_gate: null,
         },
         handoff: { status: "in_progress", summary: "Working" },
+        task_workspace: {
+          source_of_truth: "task_run_sheet",
+          plan_workspace: "task run sheet current_plan",
+          review_notes_workspace: "task run sheet review_checklist + recent review messages",
+          lessons_log_workspace: "lessons log workspace",
+          runtime_notes_path: "tasks/runtime/task0000.md",
+          subtask_notes_path: "tasks/subtasks/task0000.md",
+          readonly_summary_path: ".climpire/runtime/task-run-sheet-task0000.md",
+          review_notes: [],
+          child_progress: [],
+        },
         timeline: {
           created_at: 1,
           started_at: 2,
@@ -323,6 +337,17 @@ describe("task run sheets", () => {
           pr_feedback_gate: null,
         },
         handoff: { status: "in_progress", summary: "Working" },
+        task_workspace: {
+          source_of_truth: "task_run_sheet",
+          plan_workspace: "task run sheet current_plan",
+          review_notes_workspace: "task run sheet review_checklist + recent review messages",
+          lessons_log_workspace: "lessons log workspace",
+          runtime_notes_path: "tasks/runtime/task0000.md",
+          subtask_notes_path: "tasks/subtasks/task0000.md",
+          readonly_summary_path: ".climpire/runtime/task-run-sheet-task0000.md",
+          review_notes: [],
+          child_progress: [],
+        },
         timeline: {
           created_at: 1,
           started_at: 2,

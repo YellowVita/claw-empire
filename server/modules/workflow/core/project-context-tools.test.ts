@@ -71,7 +71,8 @@ describe("createProjectContextTools", () => {
     const prompt = tools.buildTaskExecutionPrompt(["[Task] Prompt alignment"]);
 
     expect(prompt).toContain("[Planning & Verification Contract / 계획·검증 계약]");
-    expect(prompt).toContain("tasks/todo.md");
+    expect(prompt).toContain("task run sheet current_plan");
+    expect(prompt).not.toContain("update tasks/todo.md");
     expect(prompt).toContain("verification evidence");
     expect(prompt).toContain("Never declare the task complete without proof");
   });
