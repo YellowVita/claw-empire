@@ -4,6 +4,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createReviewFinalizeTools } from "./review-finalize-tools.ts";
+import type { ChildBranchIngestionResult } from "../core/worktree/merge.ts";
 
 const tempDirs: string[] = [];
 
@@ -175,7 +176,7 @@ function createTools(options?: {
     conflicts?: string[];
     autoCommitSha?: string;
     ingestCommitSha?: string;
-  };
+  } & Pick<ChildBranchIngestionResult, "needsAiResolution" | "parentHeadSha" | "childHeadSha">;
 }) {
   const projectPath = options?.projectPath ?? createTempDir("claw-pr-gate-project-");
   if (options?.mergeStrategyMode) {

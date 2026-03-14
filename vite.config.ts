@@ -22,7 +22,7 @@ const isServerResponse = (res: ProxyErrorResponse): res is ServerResponse<Incomi
 
 const silenceEpipe = (proxy: ProxyLike) => {
   proxy.on("error", (err: NodeJS.ErrnoException, _req, res) => {
-    if (err.code === "EPIPE" || err.code === "ECONNRESET") return;
+    if (err.code === "EPIPE" || err.code === "ECONNRESET" || err.code === "ECONNABORTED") return;
     if (res && isServerResponse(res) && !res.headersSent) {
       res.writeHead(502);
       res.end();
@@ -30,7 +30,7 @@ const silenceEpipe = (proxy: ProxyLike) => {
   });
   proxy.on("proxyReqWs", (_proxyReq, _req, socket) => {
     socket.on("error", (err: NodeJS.ErrnoException) => {
-      if (err.code === "EPIPE" || err.code === "ECONNRESET") return;
+      if (err.code === "EPIPE" || err.code === "ECONNRESET" || err.code === "ECONNABORTED") return;
     });
   });
 };

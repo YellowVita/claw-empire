@@ -1,3 +1,22 @@
+# Dev Proxy Recovery
+
+- [x] `vite` 프록시와 API 바인딩 경로를 재현해서 실제 장애 지점을 분리
+- [x] `server/modules/lifecycle.ts`에서 런타임 `HOST`가 `undefined`로 덮어써지는 문제 수정
+- [x] `vite.config.ts`에서 `ECONNABORTED` 프록시 소음을 무시하도록 보강
+- [x] 프록시/브라우저/타입체크로 정상 동작 재검증
+
+## Review Results
+
+- 원인: `startLifecycle()`가 `ctx.HOST`를 구조분해해 설정 파일의 `HOST` 상수를 가려버렸고, 그 결과 API가 `127.0.0.1` 대신 `undefined`로 listen 하면서 dev 프록시가 `502 Bad Gateway`를 반환함
+- 수정: `app.listen()`과 기동 로그가 `server/config/runtime.ts`의 실제 `HOST` 값을 사용하도록 정리
+- 추가 보정: Vite 프록시가 개발 중 소켓 중단에서 `ECONNABORTED`를 불필요하게 에러 로그로 남기지 않도록 무시 코드 추가
+- 검증:
+  - `http://127.0.0.1:8800/api/health` => `200`
+  - `http://127.0.0.1:8800/api/auth/session` => `200`
+  - API listen 주소가 `127.0.0.1:8790`으로 복구된 것 확인
+  - Playwright로 메인 화면이 로딩 화면에서 벗어나 실제 오피스 화면까지 렌더링되는 것 확인
+  - `pnpm run typecheck` 통과
+
 # Owner-Integrate Internal Worker Separation
 
 - [x] `createSubtaskFromCli` source 메타 추가 및 `owner_integrate` 내부 워커 skip 처리
@@ -10,6 +29,19 @@
 - `owner_integrate` 단계에서 `claude_task`, `codex_spawn_agent`는 공식 `subtasks` 생성 없이 로그만 남기도록 변경
 - `spawn_agent item.completed`는 DB에 실제 subtask가 존재할 때만 `codexThreadToSubtask`를 매핑하도록 보강
 - `http_plan`, `gemini_plan` 기반의 선언적 subtask 생성은 기존 동작 유지
+- 검증
+  - `pnpm exec vitest --config server/vitest.config.ts run server/modules/workflow/agents/subtask-seeding.test.ts server/modules/workflow/agents/cli-runtime.test.ts server/modules/workflow/orchestration/subtask-orchestration-v2.test.ts` 통과
+  - `pnpm run typecheck` 통과
+
+# V2 Internal Worker Delegation Scope Expansion
+
+- [x] V2 전 단계에서 내부 워커의 외부 부서 승격 차단으로 일반화
+- [x] 관련 회귀 테스트를 `owner_prep`/비-V2 범위까지 보강
+
+## Review Results
+
+- `createSubtaskFromCli`는 이제 `owner_integrate` 한정이 아니라 `V2 전체`에서 내부 워커(`claude_task`, `codex_spawn_agent`)의 외부 부서 승격을 차단
+- 차단 조건은 `V2 + 내부 워커 + foreign department 라우팅`이며, 비-V2와 선언적 plan 생성은 유지
 - 검증
   - `pnpm exec vitest --config server/vitest.config.ts run server/modules/workflow/agents/subtask-seeding.test.ts server/modules/workflow/agents/cli-runtime.test.ts server/modules/workflow/orchestration/subtask-orchestration-v2.test.ts` 통과
   - `pnpm run typecheck` 통과

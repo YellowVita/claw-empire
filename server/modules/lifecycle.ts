@@ -3,7 +3,7 @@ import type { WebSocket as WsSocket } from "ws";
 import path from "path";
 
 import type { RuntimeContext } from "../types/runtime-context.ts";
-import { HOST, PKG_VERSION, PORT } from "../config/runtime.ts";
+import { HOST as RUNTIME_HOST, PKG_VERSION, PORT } from "../config/runtime.ts";
 import { notifyTaskStatus } from "../gateway/client.ts";
 import { startDiscordReceiver } from "../messenger/discord-receiver.ts";
 import { startTelegramReceiver } from "../messenger/telegram-receiver.ts";
@@ -155,7 +155,6 @@ export function startLifecycle(ctx: RuntimeContext): void {
     distDir,
     express,
     getDecryptedOAuthToken,
-    HOST,
     isIncomingMessageAuthenticated,
     isIncomingMessageOriginTrusted,
     isProduction,
@@ -236,8 +235,8 @@ export function startLifecycle(ctx: RuntimeContext): void {
   const telegramReceiver = startTelegramReceiver({ db });
   const discordReceiver = startDiscordReceiver({ db });
 
-  const httpServer = app.listen(PORT, HOST, () => {
-    console.log(`[Claw-Empire] v${PKG_VERSION} listening on http://${HOST}:${PORT} (db: ${dbPath})`);
+  const httpServer = app.listen(PORT, RUNTIME_HOST, () => {
+    console.log(`[Claw-Empire] v${PKG_VERSION} listening on http://${RUNTIME_HOST}:${PORT} (db: ${dbPath})`);
     if (isProduction) {
       console.log(`[Claw-Empire] mode: production (serving UI from ${distDir})`);
     } else {
